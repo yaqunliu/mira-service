@@ -36,6 +36,7 @@ dependencies = [
     "pillow>=10.0.0",
     "aiofiles>=23.0.0",
     "loguru>=0.7.0",
+    "ufile>=2.0.0",
 ]
 
 [project.optional-dependencies]

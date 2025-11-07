@@ -60,11 +60,14 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     
-    # 云存储配置
+    # 云存储配置 (US3)
     US3_PUBLIC_KEY: str = ""
     US3_PRIVATE_KEY: str = ""
+    DOWNLOAD_SUFFIX: str = ""
+    UPLOAD_SUFFIX: str = ""
+    DEFAULT_BUCKET: str = ""
     US3_BUCKET: str = ""
-    US3_REGION: str = "cn-sh2"
+    US3_REGION: str = ""
     
     # 日志配置
     LOG_LEVEL: str = "INFO"
