@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  # PostgreSQL数据库
+  postgres:
+    image: postgres:15
+    container_name: video_generator_db
+    environment:
+      POSTGRES_DB: video_generator
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - video_generator_network
+
+  # Redis缓存
+  redis:
+    image: redis:7-alpine
+    container_name: video_generator_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - video_generator_network
+
+  # FastAPI应用
+  api:
+    build: .
+    container_name: video_generator_api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=video_generator
+      - DATABASE_USER=postgres
+      - DATABASE_PASSWORD=password
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    networks:
+      - video_generator_network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+volumes:
+  postgres_data:
+
+networks:
+  video_generator_network:
+    driver: bridge
