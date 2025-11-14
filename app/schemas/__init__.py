@@ -1,10 +1,10 @@
 from .user import User, UserCreate, UserUpdate
-from .novel import Novel, NovelCreate, NovelUpdate, Chapter, ChapterCreate
+from .novel import Novel, NovelCreate, NovelUpdate
 from .creation import Creation, CreationCreate, CreationUpdate
 from .character import Character, CharacterCreate, CharacterUpdate
 from .scene import Scene, SceneCreate, SceneUpdate
 from .shot import Shot, ShotCreate, ShotUpdate
-from .resource import Resource, ResourceCreate
+from .chapter import Chapter, ChapterCreate
 
 __all__ = [
     "User", "UserCreate", "UserUpdate",
@@ -14,5 +14,4 @@ __all__ = [
     "Character", "CharacterCreate", "CharacterUpdate",
     "Scene", "SceneCreate", "SceneUpdate",
     "Shot", "ShotCreate", "ShotUpdate",
-    "Resource", "ResourceCreate",
 ]

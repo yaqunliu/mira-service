@@ -31,13 +31,21 @@ def parse_novel_metadata(content: str, filename: str) -> Dict[str, str]:
         if not line:
             continue
             
-        # 尝试匹配标题模式
+        # 尝试匹配标题模式（必须包含书名号）
         if not title:
-            # 标题通常是较短的行，不包含特殊符号
-            if len(line) < 50 and not re.search(r'[第章节回]', line):
-                # 可能是标题
-                if i < 3:  # 前3行更可能是标题
-                    title = line
+            # 匹配包含书名号的行（《》、【】、『』）
+            book_quote_pattern = r'[《》【】『』]'
+            if re.search(book_quote_pattern, line):
+                # 提取书名号中的内容
+                # 匹配《》、【】、『』中的内容
+                title_match = re.search(r'[《【『]([^》】』]+)[》】』]', line)
+                if title_match:
+                    title = title_match.group(1).strip()
+                    # 如果同一行包含作者信息，也提取出来
+                    # 例如：《小说标题》作者：xxx
+                    author_in_line = re.search(r'[》】』]\s*(?:作者|作者：|作者:|by|By)\s*[:：]?\s*(.+)', line, re.IGNORECASE)
+                    if author_in_line and not author:
+                        author = author_in_line.group(1).strip()
                     continue
         
         # 尝试匹配作者模式

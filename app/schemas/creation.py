@@ -4,7 +4,7 @@ from datetime import datetime
 
 
 class CreationBase(BaseModel):
-    title: str
+    title: Optional[str] = None  # 可选，如果未提供则根据 novel 和 chapter 动态生成
     status: str = "created"
 
 

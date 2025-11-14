@@ -346,6 +346,7 @@ class US3Client:
             包含下载结果的字典
         """
         try:
+            bucket = self._get_bucket(bucket)
             # 如果没有指定保存路径，使用put_key作为文件名
             if not save_file:
                 save_file = os.path.basename(put_key)

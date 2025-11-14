@@ -13,6 +13,7 @@ class Novel(Base):
     author = Column(String(100))
     chapter_count = Column(Integer, default=0)
     status = Column(String(20), default="uploaded")  # uploaded, processing, completed
+    task_id = Column(String(100), nullable=True, index=True)  # Celery任务ID，用于关联任务状态查询
     
     # 外键
     owner_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)

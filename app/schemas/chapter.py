@@ -7,6 +7,7 @@ class ChapterBase(BaseModel):
     content_url: Optional[str] = None
     chapter_number: int
     word_count: int = 0
+    preview: Optional[str] = None  # 章节内容预览，前30个字
 
 
 class ChapterCreate(ChapterBase):

@@ -50,7 +50,14 @@ class Settings(BaseSettings):
         return self
     
     # Redis配置
-    REDIS_URL: str = "redis://localhost:6379/0"
+    # Redis 数据库编号说明：
+    # - /0: 数据库0（默认数据库）
+    # - /1: 数据库1
+    # - Redis 默认有 16 个数据库（0-15）
+    # - 不同数据库之间数据完全隔离
+    REDIS_URL: str = "redis://localhost:6379/0"  # 通用 Redis URL（向后兼容）
+    REDIS_BROKER_URL: str = "redis://localhost:6379/0"  # Celery Broker（任务队列）
+    REDIS_BACKEND_URL: str = "redis://localhost:6379/1"  # Celery Backend（结果存储）
     
     # 文件上传配置
     UPLOAD_DIR: str = "./uploads"
@@ -58,16 +65,17 @@ class Settings(BaseSettings):
     
     # AI服务配置
     OPENAI_API_KEY: str = ""
-    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_BASE_URL: str = ""
+    MODEL_NAME: str = ""
     
     # 云存储配置 (US3)
     US3_PUBLIC_KEY: str = ""
     US3_PRIVATE_KEY: str = ""
+    US3_BUCKET: str = ""  # US3 存储桶名称
+    US3_REGION: str = ""  # US3 区域
     DOWNLOAD_SUFFIX: str = ""
     UPLOAD_SUFFIX: str = ""
     DEFAULT_BUCKET: str = ""
-    US3_BUCKET: str = ""
-    US3_REGION: str = ""
     
     # 日志配置
     LOG_LEVEL: str = "INFO"

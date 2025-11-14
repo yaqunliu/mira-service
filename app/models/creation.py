@@ -21,6 +21,7 @@ class Creation(Base):
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    current_task_id = Column(String(100), nullable=True, index=True)  # Celery任务ID，用于关联当前正在执行任务的状态
     
     # 关系
     owner = relationship("User", back_populates="creations")
@@ -28,4 +29,3 @@ class Creation(Base):
     chapter = relationship("Chapter", back_populates="creation")
     characters = relationship("Character", back_populates="creation")
     scenes = relationship("Scene", back_populates="creation", cascade="all, delete-orphan")
-    resources = relationship("Resource", back_populates="creation")

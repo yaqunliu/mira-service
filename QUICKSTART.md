@@ -41,7 +41,9 @@ uv run python scripts/create_superuser.py
 
 ## 3. 启动服务
 
-### 开发模式
+### 启动 FastAPI 服务
+
+#### 开发模式
 ```bash
 # 方式1: 使用启动脚本 (推荐)
 uv run python run.py
@@ -50,10 +52,31 @@ uv run python run.py
 uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 生产模式
+#### 生产模式
 ```bash
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
+
+### 启动 Celery Worker
+
+**重要**: Celery Worker 需要在项目根目录下启动，用于处理异步任务（如小说上传处理）。
+
+```bash
+# 方式1: 使用启动脚本 (推荐)
+./start_celery.sh
+
+# 方式2: 手动启动（必须在项目根目录）
+cd /path/to/video-generator
+uv run celery -A app.core.celery_app.app worker -l INFO
+
+# 方式3: 后台运行
+uv run celery -A app.core.celery_app.app worker -l INFO --detach
+```
+
+**注意**:
+- 必须在项目根目录运行，不能在其他目录
+- 确保 Redis 服务已启动
+- 确保 `.env` 文件配置正确
 
 ### Docker方式
 ```bash
