@@ -55,3 +55,9 @@ class DatabaseError(BaseServiceException):
     def __init__(self, message: str = "数据库操作失败", detail: Optional[str] = None):
         super().__init__(message, status_code=500, detail=detail)
 
+
+class AlreadyExistsError(BaseServiceException):
+    """已存在异常"""
+    
+    def __init__(self, message: str = "资源已存在", detail: Optional[str] = None):
+        super().__init__(message, status_code=400, detail=detail)

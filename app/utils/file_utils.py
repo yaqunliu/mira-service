@@ -1,8 +1,10 @@
 import os
 import uuid
+from pathlib import Path
 from typing import Optional
 from fastapi import UploadFile
 from app.core.config import settings
+from app.core.logger import logger
 
 
 def generate_unique_filename(original_filename: str) -> str:
@@ -65,3 +67,38 @@ def delete_file(file_path: str) -> bool:
         return False
     except Exception:
         return False
+
+
+def read_prompt_file(filename: str) -> str:
+    """
+    读取 prompt 文件内容
+    
+    Args:
+        filename: prompt 文件名（如 "playbook.md"），相对于 app/prompt/ 目录
+        
+    Returns:
+        prompt 文件内容（字符串）
+        
+    Raises:
+        FileNotFoundError: 当文件不存在时
+        IOError: 当文件读取失败时
+    """
+    # 获取项目根目录（app 目录的父目录）
+    app_dir = Path(__file__).parent.parent
+    prompt_dir = app_dir / "prompt"
+    prompt_file = prompt_dir / filename
+    
+    if not prompt_file.exists():
+        error_msg = f"Prompt 文件不存在: {prompt_file}"
+        logger.error(error_msg)
+        raise FileNotFoundError(error_msg)
+    
+    try:
+        with open(prompt_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        logger.debug(f"成功读取 prompt 文件: {filename}")
+        return content
+    except Exception as e:
+        error_msg = f"读取 prompt 文件失败: {filename}, 错误: {str(e)}"
+        logger.error(error_msg)
+        raise IOError(error_msg) from e

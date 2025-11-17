@@ -1,14 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
 from app.schemas.creation import CreationCreate
-from app.models.chapter import Chapter
-from app.models.creation import Creation
-from app.models.novel import Novel
-from app.tasks.creation_task import process_creation_init
-from app.core.logger import logger
+from app.services.creation_service import CreationService
+from app.core.exceptions import BaseServiceException
+
 router = APIRouter()
 
 
@@ -18,32 +16,42 @@ async def create_creation(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
-    """创建新的视频创作项目"""
-    logger.info(f"创建新的视频创作项目: {creation_data}")
-    novel_id = creation_data.novel_id
-    chapter_id = creation_data.chapter_id
-    # 根据chapter_id获取chapter内容
-    novel = db.query(Novel).filter(Novel.novel_id == novel_id).first()
-    chapter = db.query(Chapter).filter(Chapter.chapter_id == chapter_id).first()
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    if not novel:
-        raise HTTPException(status_code=404, detail="Novel not found")
-    chapter_content_url = chapter.content_url
-
+    """
+    创建新的视频创作项目
+    
+    参数验证：
+    - 验证 novel_id 和 chapter_id 是否有效
+    - 验证用户权限
+    """
+    # 获取用户ID
     try:
-        task = process_creation_init.delay(
-            novel_id=novel_id,
-            chapter_id=chapter_id,
-            chapter_content_url=chapter_content_url
+        user_id = user.user_id
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail="获取用户信息失败"
         )
+    
+    # 调用服务层处理业务逻辑
+    try:
+        creation_id = CreationService.create_creation(
+            db=db,
+            novel_id=creation_data.novel_id,
+            chapter_id=creation_data.chapter_id,
+            user_id=user_id
+        )
+        
+        # 转换为响应格式
         return {
-            "task_id": task.id,
+            "creation_id": creation_id,
             "message": "创作初始化成功"
         }
-    except Exception as e:
-        logger.error(f"创作初始化任务失败: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="创作初始化失败")
+    except BaseServiceException as e:
+        # 将业务异常转换为HTTP异常
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail
+        )
     
    
 

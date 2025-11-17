@@ -155,6 +155,7 @@ logs/
 *.log
 temp/
 tmp/
+ai_res/
 
 # 数据库文件
 *.db

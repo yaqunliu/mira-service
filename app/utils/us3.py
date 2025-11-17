@@ -354,7 +354,8 @@ class US3Client:
             logger.info(f"开始下载文件: {bucket}/{put_key} -> {save_file}")
             
             # 下载文件
-            ret, resp = self.file_manager.download_file(bucket, put_key, save_file)
+            ret, resp = self.file_manager.download_file(bucket, put_key, save_file, False)
+            logger.info(f"download file response: {resp}")
             
             if resp.status_code == 200:
                 logger.info(f"文件下载成功: {bucket}/{put_key} -> {save_file}")
