@@ -1,10 +1,13 @@
-from sqlalchemy.orm import Session
-from typing import Tuple
+from sqlalchemy.orm import Session, selectinload, Load
+from sqlalchemy import asc, desc
+from typing import Tuple, Optional, List
 from app.models.novel import Novel
 from app.models.chapter import Chapter
 from app.models.creation import Creation
+from app.models.scene import Scene
+from app.models.shot import Shot
 from app.schemas.creation import CreationStatus
-from app.tasks.creation_task import process_creation_init
+from app.tasks.creation_task import process_creation_init_task
 from app.core.logger import logger
 from app.core.exceptions import NotFoundError, DatabaseError, PermissionError, AlreadyExistsError
 
@@ -13,7 +16,7 @@ class CreationService:
     """创作服务类"""
     
     @staticmethod
-    def create_creation(
+    def create_creation_service(
         db: Session,
         novel_id: int,
         chapter_id: int,
@@ -70,6 +73,155 @@ class CreationService:
         logger.info(f"创作项目创建成功: creation_id={creation.creation_id}, task_id={task_id}")
         return creation.creation_id
     
+    @staticmethod
+    def get_creations_service(
+        db: Session,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        status_filter: Optional[str] = None,
+        order_by: str = "created_at",
+        order: str = "desc"
+    ) -> Tuple[List[Creation], int]:
+        """
+        获取创作记录列表（支持分页）
+        
+        Args:
+            db: 数据库会话
+            user_id: 用户ID
+            page: 页码，从1开始
+            page_size: 每页数量，最大100
+            status_filter: 状态过滤（可选）
+            order_by: 排序字段（created_at, updated_at, title）
+            order: 排序方向（asc, desc）
+            
+        Returns:
+            (创作记录列表, 总数) 元组
+        """
+        # 构建查询
+        query = db.query(Creation).filter(Creation.owner_id == user_id)
+        
+        # 状态过滤
+        if status_filter:
+            query = query.filter(Creation.status == status_filter)
+        
+        # 排序
+        order_column = None
+        if order_by == "created_at":
+            order_column = Creation.created_at
+        elif order_by == "updated_at":
+            order_column = Creation.updated_at
+        elif order_by == "title":
+            order_column = Creation.title
+        else:
+            order_column = Creation.created_at  # 默认按创建时间
+        
+        if order.lower() == "asc":
+            query = query.order_by(asc(order_column))
+        else:
+            query = query.order_by(desc(order_column))
+        
+        # 计算总数
+        total = query.count()
+        
+        # 分页
+        skip = (page - 1) * page_size
+        creations = query.offset(skip).limit(page_size).all()
+        
+        return creations, total
+
+    @staticmethod
+    def get_creation_service(db: Session, creation_id: Optional[int] = None) -> Optional[Creation]:
+        """
+        获取创作记录（包含关联数据）
+        
+        Args:
+            db: 数据库会话
+            creation_id: 创作ID
+            
+        Returns:
+            创作记录对象（包含预加载的关联数据）
+        """
+        # 先加载 Creation 及其直接关联的数据
+        creation = db.query(Creation).options(
+            selectinload(Creation.characters),
+            selectinload(Creation.scenes).selectinload(Scene.shots),
+            selectinload(Creation.novel),
+            selectinload(Creation.chapter)
+            # selectinload(Creation.owner)
+        ).filter(Creation.creation_id == creation_id).first()
+        
+        if not creation:
+            return None
+        
+        # 单独加载所有 shots 的 characters（多对多关系）
+        # 收集所有 shot_id
+        shot_ids = [shot.shot_id for scene in creation.scenes for shot in scene.shots]
+        
+        # 如果有 shots，则单独查询并加载它们的 characters
+        if shot_ids:
+            # 查询所有相关的 shots 并加载它们的 characters
+            shots_with_chars = db.query(Shot).filter(Shot.shot_id.in_(shot_ids)).options(
+                selectinload(Shot.characters)
+            ).all()
+            
+            # 打印每个 shot 及其关联的 characters 信息
+            logger.info(f"加载了 {len(shots_with_chars)} 个 shots 的 characters")
+            for shot in shots_with_chars:
+                char_info = [
+                    f"character_id={char.character_id}, name={char.name}"
+                    for char in shot.characters
+                ]
+                logger.info(
+                    f"Shot ID={shot.shot_id}, title={shot.title}, "
+                    f"characters_count={len(shot.characters)}, "
+                    f"characters=[{', '.join(char_info)}]"
+                )
+            
+            # 创建一个 shot_id 到 characters 列表的映射
+            shot_characters_map = {
+                shot.shot_id: list(shot.characters)  # 复制列表，避免引用问题
+                for shot in shots_with_chars
+            }
+            logger.info(f"创建了 shot_characters_map，包含 {len(shot_characters_map)} 个 shots: {list(shot_characters_map.keys())}")
+            
+            # 将已加载的 characters 关联到 creation 中的 shot 对象
+            logger.info(f"开始关联 characters 到 creation 中的 shots，scenes 数量: {len(creation.scenes)}")
+            for scene_idx, scene in enumerate(creation.scenes):
+                logger.info(f"处理 Scene {scene_idx + 1} (scene_id={scene.scene_id})，包含 {len(scene.shots)} 个 shots")
+                for shot_idx, shot in enumerate(scene.shots):
+                    logger.info(f"  处理 Shot {shot_idx + 1} (shot_id={shot.shot_id}, title={shot.title})")
+                    if shot.shot_id in shot_characters_map:
+                        # 获取该 shot 的 characters 列表
+                        characters_list = shot_characters_map[shot.shot_id]
+                        # 清空现有的 characters（如果有）
+                        shot.characters.clear()
+                        # 添加新的 characters（确保在同一个 session 中）
+                        for char in characters_list:
+                            # 确保 character 对象在当前 session 中
+                            char_in_session = db.merge(char)
+                            shot.characters.append(char_in_session)
+                        
+                        logger.info(
+                            f"  ✓ 已关联 Shot ID={shot.shot_id}，characters 数量: {len(shot.characters)}"
+                        )
+                        # 验证：打印每个 character 的信息
+                        for char in shot.characters:
+                            logger.info(f"    - Character ID={char.character_id}, name={char.name}")
+                    else:
+                        logger.warning(
+                            f"  ✗ Shot ID={shot.shot_id} 不在 shot_characters_map 中，无法关联 characters"
+                        )
+                
+                # 在 scene 级别验证
+                logger.info(f"  Scene {scene_idx + 1} 处理完成，验证所有 shots 的 characters:")
+                for shot in scene.shots:
+                    logger.info(
+                        f"    Shot ID={shot.shot_id}: {len(shot.characters)} 个 characters"
+                    )
+        
+        return creation
+
     @staticmethod
     def _validate_inputs(
         db: Session,
@@ -169,17 +321,22 @@ class CreationService:
         """
         try:
             # 创建 Celery 任务
-            task = process_creation_init.delay(
-                novel_id=novel_id,
-                chapter_id=chapter_id,
-                creation_id=creation_id,
-                chapter_content_url=chapter_content_url
+            logger.info(f"准备创建创作初始化任务: novel_id={novel_id}, chapter_id={chapter_id}, creation_id={creation_id}")
+            
+            # 使用 apply_async 可以更好地控制任务发送
+            task = process_creation_init_task.apply_async(
+                args=(novel_id, chapter_id, creation_id, chapter_content_url),
+                countdown=0  # 立即执行
             )
             task_id = task.id
-            logger.info(f"已创建创作初始化任务: task_id={task_id}, creation_id={creation_id}")
+            logger.info(f"已创建创作初始化任务: task_id={task_id}, creation_id={creation_id}, task_state={task.state}")
+            
+            # 验证任务是否成功发送到队列
+            if not task_id:
+                raise ValueError("任务ID为空，任务可能未成功发送")
             
             return task_id
             
         except Exception as e:
             logger.error(f"创建创作初始化任务失败: {str(e)}", exc_info=True)
-            raise DatabaseError(detail="创作初始化失败") from e
+            raise DatabaseError(detail=f"创作初始化失败: {str(e)}") from e

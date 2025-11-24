@@ -8,7 +8,7 @@ from pathlib import Path
 from app.core.celery_app import celery_app
 from app.utils.us3 import US3Client
 from app.utils.file_utils import read_prompt_file
-from app.utils.llm import LLMClient
+from app.utils.ai_client import AIClient
 from app.core.config import settings
 from app.core.logger import logger
 from app.db.session import SessionLocal
@@ -20,11 +20,12 @@ from app.models.shot import Shot
 from app.schemas.creation import CreationStatus
 from app.utils.task_types import TaskType
 
-@celery_app.task(bind=True, name="process_creation_init")
-def process_creation_init(self, novel_id: int, chapter_id: int, creation_id: int, chapter_content_url: str):
+@celery_app.task(bind=True, name="process_creation_init_task")
+def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id: int, chapter_content_url: str):
     """处理创作初始化任务"""
     db: Session = SessionLocal()
     temp_file_path = None
+    logger.info(f"开始处理创作初始化任务: novel_id={novel_id}, chapter_id={chapter_id}, creation_id={creation_id}")
     try:
         self.update_state(
             state='PROGRESS',
@@ -62,9 +63,9 @@ def process_creation_init(self, novel_id: int, chapter_id: int, creation_id: int
 
         # TODO: 生成剧本 - 临时简化开发，直接返回 demo.json 数据
         # 正式环境应使用以下代码：
-        # llm_client = LLMClient()
+        # ai_client = AIClient()
         # prompt_playbook = read_prompt_file("playbook.md")
-        # playbook = llm_client.gen_playbook_by_chapter(
+        # playbook = ai_client.gen_playbook_by_chapter(
         #     prompt=prompt_playbook, 
         #     chapter_content=chapter_content
         # )
@@ -96,31 +97,49 @@ def process_creation_init(self, novel_id: int, chapter_id: int, creation_id: int
         # 解析并保存角色信息
         character_map = {}  # 用于存储角色名到 Character 对象的映射
         characters_data = playbook.get('人物特征库', {})
+        created_count = 0
+        reused_count = 0
+        
         for char_name, char_info in characters_data.items():
-            # 解析特征标签（可能是字符串或列表）
-            tags = char_info.get('特征标签', '')
-            if isinstance(tags, str):
-                tags_list = [tag.strip() for tag in tags.split('、') if tag.strip()]
-            else:
-                tags_list = tags if isinstance(tags, list) else []
+            # 检查该小说中是否已存在同名角色
+            existing_character = db.query(Character).filter(
+                Character.novel_id == novel_id,
+                Character.name == char_name
+            ).first()
             
-            character = Character(
-                name=char_name,
-                status='new',
-                basic_info=char_info.get('基础信息', ''),
-                appearance=char_info.get('容貌特征', ''),
-                body=char_info.get('身材特征', ''),
-                hair=char_info.get('头发', ''),
-                clothing=char_info.get('服装', ''),
-                tags=json.dumps(tags_list, ensure_ascii=False) if tags_list else None,
-                creation_id=creation_id,
-                novel_id=novel_id
-            )
-            db.add(character)
-            character_map[char_name] = character
+            if existing_character:
+                # 如果已存在，使用已有角色
+                character_map[char_name] = existing_character
+                reused_count += 1
+                logger.info(f"复用已有角色: {char_name} (character_id={existing_character.character_id})")
+            else:
+                # 如果不存在，创建新角色
+                # 解析特征标签（可能是字符串或列表）
+                tags = char_info.get('特征标签', '')
+                if isinstance(tags, str):
+                    tags_list = [tag.strip() for tag in tags.split('、') if tag.strip()]
+                else:
+                    tags_list = tags if isinstance(tags, list) else []
+                
+                character = Character(
+                    name=char_name,
+                    status='new',
+                    basic_info=char_info.get('基础信息', ''),
+                    appearance=char_info.get('容貌特征', ''),
+                    body=char_info.get('身材特征', ''),
+                    hair=char_info.get('头发', ''),
+                    clothing=char_info.get('服装', ''),
+                    tags=tags_list if tags_list else None,  # 直接存储列表，SQLAlchemy 会自动序列化
+                    creation_id=creation_id,
+                    novel_id=novel_id
+                )
+                db.add(character)
+                character_map[char_name] = character
+                created_count += 1
+                logger.info(f"创建新角色: {char_name}")
         
         db.flush()  # 刷新以获取 character_id，但不提交事务
-        logger.info(f"成功创建 {len(character_map)} 个角色记录")
+        logger.info(f"角色处理完成: 新建 {created_count} 个，复用 {reused_count} 个，总计 {len(character_map)} 个角色")
         
         # 解析并保存场景和分镜信息
         scenes_data = playbook.get('场景拆解', [])
@@ -163,21 +182,28 @@ def process_creation_init(self, novel_id: int, chapter_id: int, creation_id: int
                 db.add(shot)
                 db.flush()  # 获取 shot_id
                 
-                # 关联分镜和角色
+                # 关联分镜和角色（多对多关系）
                 shot_characters = shot_data.get('画面人物', [])
-                for char_name in shot_characters:
-                    if char_name in character_map:
-                        shot.characters.append(character_map[char_name])
+                if shot_characters:
+                    for char_name in shot_characters:
+                        if char_name in character_map:
+                            character = character_map[char_name]
+                            shot.characters.append(character)
+                            logger.debug(f"关联分镜 {shot.shot_id} 和角色 {character.character_id} ({char_name})")
+                    # 关联后立即 flush，确保多对多关系被保存到关联表
+                    db.flush()
                 
                 total_shots += 1
             
+            # 在场景循环结束后 flush，确保关联关系被保存
             db.flush()
         
         # 修改creation的状态为playbook_generated，current_task_id为空
         creation.status = CreationStatus.PLAYBOOK_GENERATED
         creation.current_task_id = None
         db.commit()
-        logger.info(f"成功创建 {len(scenes_data)} 个场景记录和 {total_shots} 个分镜记录")
+        db.refresh(creation)  # 刷新对象以确保数据同步
+        logger.info(f"成功创建 {len(scenes_data)} 个场景记录和 {total_shots} 个分镜记录，创作状态已更新: status={creation.status}, current_task_id={creation.current_task_id}")
         
         return {
             "playbook": playbook,
@@ -193,7 +219,8 @@ def process_creation_init(self, novel_id: int, chapter_id: int, creation_id: int
         }
 
     except Exception as e:
-        logger.error(f"创作初始化任务失败: {str(e)}")
+        logger.error(f"创作初始化任务失败: {str(e)}", exc_info=True)
+        db.rollback()  # 确保回滚事务
         raise self.retry(exc=e, countdown=60, max_retries=3)
     finally:
         # 清理临时文件（finally 块确保无论成功还是异常都会执行清理）

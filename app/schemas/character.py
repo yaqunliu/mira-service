@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -11,7 +11,7 @@ class CharacterBase(BaseModel):
     body: Optional[str] = None
     hair: Optional[str] = None
     clothing: Optional[str] = None
-    tags: Optional[str] = None
+    tags: Optional[List[str]] = None  # JSON数组
     image_prompt: Optional[str] = None
     visual_style: Optional[str] = None
 
@@ -29,11 +29,16 @@ class CharacterUpdate(BaseModel):
     body: Optional[str] = None
     hair: Optional[str] = None
     clothing: Optional[str] = None
-    tags: Optional[str] = None
+    tags: Optional[List[str]] = None  # JSON数组
     image_prompt: Optional[str] = None
     visual_style: Optional[str] = None
     image_url: Optional[str] = None
 
+
+class CharacterGenerateImagesRequest(BaseModel):
+    """生成角色图片请求"""
+    character_ids: List[int]
+    visual_style: str
 
 class Character(CharacterBase):
     character_id: int

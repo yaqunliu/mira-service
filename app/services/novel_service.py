@@ -6,7 +6,7 @@ from sqlalchemy import desc, asc
 from fastapi import UploadFile
 from app.models.novel import Novel
 from app.models.chapter import Chapter
-from app.tasks.novel_tasks import process_novel_upload
+from app.tasks.novel_tasks import process_novel_upload_task
 from app.core.logger import logger
 from app.core.exceptions import (
     FileSizeExceededError,
@@ -22,7 +22,7 @@ class NovelService:
     """小说服务类"""
     
     @staticmethod
-    async def upload_novel_file(
+    async def upload_novel_file_service(
         db: Session,
         file: UploadFile,
         user_id: int
@@ -96,7 +96,7 @@ class NovelService:
         
         # 3. 任务投递
         try:
-            task = process_novel_upload.delay(
+            task = process_novel_upload_task.delay(
                 user_id=user_id,
                 temp_file_path=temp_file_path,
                 original_filename=file.filename
@@ -113,7 +113,7 @@ class NovelService:
             raise DatabaseError(detail="上传小说任务失败")
     
     @staticmethod
-    def get_novels(
+    def get_novels_service(
         db: Session,
         user_id: int,
         page: int = 1,
@@ -208,7 +208,7 @@ class NovelService:
             raise DatabaseError(detail=f"查询小说列表失败: {str(e)}")
     
     @staticmethod
-    def get_novel_by_id(
+    def get_novel_by_id_service(
         db: Session,
         novel_id: int,
         user_id: int
@@ -232,7 +232,7 @@ class NovelService:
         raise BaseServiceException("功能尚未实现", status_code=501)
     
     @staticmethod
-    def get_novel_chapters(
+    def get_novel_chapters_service(
         db: Session,
         novel_id: int,
         user_id: int

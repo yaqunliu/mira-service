@@ -10,7 +10,7 @@ app = Celery(
     "video_generator",
     broker=settings.REDIS_BROKER_URL,  # 使用数据库0存储任务队列
     backend=settings.REDIS_BACKEND_URL,  # 使用数据库1存储任务结果
-    include=["app.tasks.novel_tasks", "app.tasks.creation_task"]
+    include=["app.tasks.novel_tasks", "app.tasks.creation_task", "app.tasks.character_task"]
 )
 
 # Celery 配置
@@ -25,6 +25,11 @@ app.conf.update(
     task_soft_time_limit=25 * 60,  # 25分钟软超时
     worker_prefetch_multiplier=1,
     task_acks_late=True,
+    # 解决 worker 启动后第一个任务失败的问题
+    broker_connection_retry_on_startup=True,  # 启动时自动重试连接 broker
+    broker_connection_retry=True,  # 启用连接重试
+    broker_connection_max_retries=10,  # 最大重试次数
+    broker_connection_retry_delay=1.0,  # 重试延迟（秒）
 )
 
 # 为了向后兼容，也导出 celery_app 别名

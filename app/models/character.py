@@ -1,4 +1,5 @@
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.base import Base
@@ -18,7 +19,7 @@ class Character(Base):
     body = Column(Text)  # 身材描述
     hair = Column(Text)  # 发型描述
     clothing = Column(Text)  # 服装描述
-    tags = Column(Text)  # 标签 (JSON数组)
+    tags = Column(ARRAY(String))  # 标签 (字符串数组)
     
     # 图片相关
     image_prompt = Column(Text)  # 图片生成提示词

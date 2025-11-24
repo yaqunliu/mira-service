@@ -16,8 +16,8 @@ from app.core.logger import logger
 from app.utils.task_types import TaskType
 
 
-@celery_app.task(bind=True, name="process_novel_upload")
-def process_novel_upload(
+@celery_app.task(bind=True, name="process_novel_upload_task")
+def process_novel_upload_task(
     self,
     user_id: int,
     temp_file_path: str,
@@ -236,7 +236,7 @@ def process_novel_upload(
             logger.info(f"已删除临时文件: {temp_file_path}")
         
         return {
-            "success": True,
+            "success": success_count == total_chapters,
             "task_type": TaskType.NOVEL_UPLOAD,  # 标识任务类型，便于前端识别
             "novel_id": novel_id,
             "title": metadata['title'],

@@ -7,11 +7,12 @@ from app.db.session import get_db
 from app.models.user import User
 from app.schemas.user import UserCreate, User, Token
 from app.api.deps import get_current_user
+from app.utils.response import success_response
 
 router = APIRouter()
 
 
-@router.post("/register", response_model=User, status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(
     user_data: UserCreate,
     db: Session = Depends(get_db)
@@ -45,10 +46,13 @@ async def register(
     db.commit()
     db.refresh(new_user)
     
-    return new_user
+    return success_response(
+        data=User.model_validate(new_user).model_dump(),
+        message="用户注册成功"
+    )
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login")
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
@@ -68,13 +72,16 @@ async def login(
     # 创建访问令牌
     access_token = create_access_token(subject=user.username)
     
-    return {
-        "access_token": access_token,
-        "token_type": "bearer"
-    }
+    return success_response(
+        data={
+            "access_token": access_token,
+            "token_type": "bearer"
+        },
+        message="登录成功"
+    )
 
 
-@router.post("/refresh", response_model=Token)
+@router.post("/refresh")
 async def refresh_token(
     current_user: User = Depends(get_current_user)
 ):
@@ -82,7 +89,10 @@ async def refresh_token(
     # 生成新的访问令牌
     access_token = create_access_token(subject=current_user.username)
     
-    return {
-        "access_token": access_token,
-        "token_type": "bearer"
-    }
+    return success_response(
+        data={
+            "access_token": access_token,
+            "token_type": "bearer"
+        },
+        message="令牌刷新成功"
+    )

@@ -48,7 +48,7 @@ def get_task_type_from_name(task_name: str) -> TaskType:
     从 Celery 任务名称推断任务类型
     
     Args:
-        task_name: Celery 任务名称（如 "process_novel_upload"）
+        task_name: Celery 任务名称（如 "process_novel_upload_task"）
         
     Returns:
         任务类型枚举

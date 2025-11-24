@@ -6,6 +6,11 @@ from .scene import Scene, SceneCreate, SceneUpdate
 from .shot import Shot, ShotCreate, ShotUpdate
 from .chapter import Chapter, ChapterCreate
 
+# 重建模型以解析前向引用
+Creation.model_rebuild()
+Scene.model_rebuild()
+Shot.model_rebuild()
+
 __all__ = [
     "User", "UserCreate", "UserUpdate",
     "Novel", "NovelCreate", "NovelUpdate", 

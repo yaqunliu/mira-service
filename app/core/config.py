@@ -66,7 +66,8 @@ class Settings(BaseSettings):
     # AI服务配置
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = ""
-    MODEL_NAME: str = ""
+    LLM_MODEL_NAME: str = ""
+    IMAGE_MODEL_NAME: str = ""
     
     # 云存储配置 (US3)
     US3_PUBLIC_KEY: str = ""

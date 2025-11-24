@@ -1,4 +1,5 @@
 import sys
+import logging
 from loguru import logger
 from app.core.config import settings
 
@@ -7,6 +8,13 @@ def setup_logging():
     """配置日志系统"""
     # 移除默认的logger
     logger.remove()
+    
+    # 关闭 SQLAlchemy 的日志输出（使用标准 logging 模块）
+    # 设置 SQLAlchemy 相关日志级别为 WARNING，避免打印 SQL 查询
+    logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.pool').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.dialects').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.orm').setLevel(logging.WARNING)
     
     # 添加控制台输出
     logger.add(

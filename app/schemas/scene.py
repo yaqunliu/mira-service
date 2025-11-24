@@ -1,4 +1,6 @@
-from typing import Optional
+from __future__ import annotations
+
+from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -30,6 +32,8 @@ class Scene(SceneBase):
     creation_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
+    # 关系字段（可选，只有在使用 selectinload 预加载时才会有数据）
+    shots: Optional[List["Shot"]] = None
     
     class Config:
         from_attributes = True

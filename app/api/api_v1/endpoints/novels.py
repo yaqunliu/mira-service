@@ -6,6 +6,7 @@ from app.models.user import User
 from app.services.novel_service import NovelService
 from app.core.logger import logger
 from app.core.exceptions import BaseServiceException
+from app.utils.response import success_response
 
 router = APIRouter()
 
@@ -57,18 +58,20 @@ async def upload_novel(
     
     # 调用服务层处理业务逻辑
     try:
-        task_id = await NovelService.upload_novel_file(
+        task_id = await NovelService.upload_novel_file_service(
             db=db,
             file=file,
             user_id=user_id
         )
         
         # 转换为响应格式
-        return {
-            "task_id": task_id,
-            "message": "文件已接收，正在处理中",
-            "status": "processing"
-        }
+        return success_response(
+            data={
+                "task_id": task_id,
+                "status": "processing"
+            },
+            message="文件已接收，正在处理中"
+        )
     except BaseServiceException as e:
         # 将业务异常转换为HTTP异常
         raise HTTPException(
@@ -115,7 +118,7 @@ async def get_novels(
     """
     # 调用服务层获取数据
     try:
-        novels, total = NovelService.get_novels(
+        novels, total = NovelService.get_novels_service(
             db=db,
             user_id=user.user_id,
             page=page,
@@ -170,15 +173,17 @@ async def get_novels(
             "chapters": chapters,
         })
     
-    return {
-        "items": items,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "total_pages": total_pages,
-        "has_next": page < total_pages,
-        "has_prev": page > 1
-    }
+    return success_response(
+        data={
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_prev": page > 1
+        }
+    )
 
 
 @router.get("/{novel_id}")
@@ -193,15 +198,18 @@ async def get_novel(
     注意：当实现后，需要在API层将Novel对象转换为响应格式
     """
     try:
-        novel = NovelService.get_novel_by_id(db=db, novel_id=novel_id, user_id=user.user_id)
+        novel = NovelService.get_novel_by_id_service(db=db, novel_id=novel_id, user_id=user.user_id)
     except BaseServiceException as e:
         # 将业务异常转换为HTTP异常
         raise HTTPException(
             status_code=e.status_code,
             detail=e.detail
         )
-    # TODO: 将Novel对象转换为响应格式
-    return novel
+    # 将Novel对象转换为响应格式
+    return success_response(
+        data=novel,
+        message="小说获取成功"
+    )
 
 
 @router.get("/{novel_id}/chapters")
@@ -216,15 +224,18 @@ async def get_novel_chapters(
     注意：当实现后，需要在API层将Chapter对象列表转换为响应格式
     """
     try:
-        chapters = NovelService.get_novel_chapters(db=db, novel_id=novel_id, user_id=user.user_id)
+        chapters = NovelService.get_novel_chapters_service(db=db, novel_id=novel_id, user_id=user.user_id)
     except BaseServiceException as e:
         # 将业务异常转换为HTTP异常
         raise HTTPException(
             status_code=e.status_code,
             detail=e.detail
         )
-    # TODO: 将Chapter对象列表转换为响应格式
-    return chapters
+    # 将Chapter对象列表转换为响应格式
+    return success_response(
+        data=chapters,
+        message="章节列表获取成功"
+    )
 
 
 @router.delete("/{novel_id}")
@@ -239,12 +250,15 @@ async def delete_novel(
     注意：当实现后，需要在API层构造删除成功的响应
     """
     try:
-        NovelService.delete_novel(db=db, novel_id=novel_id, user_id=user.user_id)
+        NovelService.delete_novel_service(db=db, novel_id=novel_id, user_id=user.user_id)
     except BaseServiceException as e:
         # 将业务异常转换为HTTP异常
         raise HTTPException(
             status_code=e.status_code,
             detail=e.detail
         )
-    # TODO: 返回删除成功的响应格式
-    return {"message": "删除成功"}
+    # 返回删除成功的响应格式
+    return success_response(
+        data=None,
+        message="删除成功"
+    )

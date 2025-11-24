@@ -544,6 +544,27 @@ class US3Client:
             error_msg = f"上传目录异常: {str(e)}"
             logger.error(error_msg)
             raise US3UploadError(error_msg)
+    
+    def get_file_url(self, put_key: str, bucket: str = None) -> str:
+        """
+        生成文件的访问URL
+        
+        Args:
+            put_key: 文件在空间中的名称
+            bucket: 存储空间名称，如果为None则使用默认bucket
+            
+        Returns:
+            文件的访问URL
+        """
+        bucket = self._get_bucket(bucket)
+        # US3 URL格式: https://{bucket}.{download_suffix}/{put_key}
+        if not self.download_suffix:
+            raise ValueError("DOWNLOAD_SUFFIX 未配置，无法生成文件URL")
+        
+        # 确保put_key不以/开头
+        put_key = put_key.lstrip('/')
+        url = f"https://{bucket}{self.download_suffix}/{put_key}"
+        return url
 
 
 # 便捷函数

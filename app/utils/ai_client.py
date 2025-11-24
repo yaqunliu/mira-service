@@ -14,14 +14,14 @@ from app.core.logger import logger
 import openai
 
 
-class LLMClient:
+class AIClient:
     """AI 生成内容客户端
 
     统一管理 AI 模型调用，支持 LLM 文本生成、图片生成、音频生成等功能
     """
 
     def __init__(
-        self, api_key: str = None, base_url: str = None, model_name: str = None
+        self, api_key: str = None, base_url: str = None, llm_model_name: str = None, image_model_name: str = None
     ):
         """
         初始化 AIGC 客户端
@@ -29,23 +29,25 @@ class LLMClient:
         Args:
             api_key: OpenAI API 密钥，默认从配置读取
             base_url: API 基础 URL，默认从配置读取
-            model_name: 模型名称，默认从配置读取
+            llm_model_name: 模型名称，默认从配置读取
         """
         self.api_key = api_key or settings.OPENAI_API_KEY
         self.base_url = base_url or settings.OPENAI_BASE_URL
-        self.model_name = model_name or settings.MODEL_NAME
+        self.llm_model_name = llm_model_name or settings.LLM_MODEL_NAME
+        self.image_model_name = image_model_name or settings.IMAGE_MODEL_NAME
+        logger.info(f"生图模型: {self.image_model_name}")
 
         if not self.api_key:
             raise ValueError("OpenAI API Key 未配置")
         if not self.base_url:
             raise ValueError("OpenAI Base URL 未配置")
-        if not self.model_name:
+        if not self.llm_model_name:
             raise ValueError("Model Name 未配置")
 
         # 初始化 OpenAI 客户端（可复用）
-        self.llm_client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
+        self.ai_client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
 
-        logger.info(f"AIGC客户端初始化成功，模型: {self.model_name}")
+        logger.info(f"AIGC客户端初始化成功，BaseURL: {self.base_url}")
 
     def _save_ai_response(self, content: str, model: str = None, file_type: str = "txt") -> str:
         """
@@ -66,8 +68,8 @@ class LLMClient:
             
             # 生成文件名：时间戳_模型名.json
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # 精确到毫秒
-            model_name = (model or self.model_name).replace("/", "_").replace(":", "_")
-            filename = f"{timestamp}_{model_name}.{file_type}"
+            llm_model_name = (model or self.llm_model_name).replace("/", "_").replace(":", "_")
+            filename = f"{timestamp}_{llm_model_name}.{file_type}"
             file_path = ai_res_dir / filename
             
             # 写入文件
@@ -126,12 +128,12 @@ class LLMClient:
         Returns:
             AI 响应内容
         """
-        model = model or self.model_name
+        model = model or self.llm_model_name
         logger.debug(f"LLM 调用开始，模型: {model}")
 
         
         try:
-            response = self.llm_client.chat.completions.create(
+            response = self.ai_client.chat.completions.create(
                 model=model, 
                 messages=messages, 
                 max_tokens=12288,
@@ -205,12 +207,31 @@ class LLMClient:
                 raise ValueError("AI 返回内容为空")
             
             # 将 AI 返回内容写入文件以便分析
-            self._save_ai_response(ai_content, model=model or self.model_name, file_type="json")
+            self._save_ai_response(ai_content, model=model or self.llm_model_name, file_type="json")
             
             logger.info(f"AI 返回内容解析: {self._parse_json_response(ai_content)}")
             return self._parse_json_response(ai_content)
 
         except Exception as e:
             logger.error(f"生成剧本失败: {e}")
+            raise
+    
+    def generate_image_by_prompt(self, prompt: str, model: str = None, aspectRatio: str = "576x1024") -> str:
+        """
+        根据提示词生成图片
+        """
+        logger.info(f"生成图片开始，模型: {model or self.image_model_name}, 提示词: {prompt}")
+        try:
+            response = self.ai_client.images.generate(
+                model=model or self.image_model_name,
+                prompt=prompt,
+                size=aspectRatio,
+            )
+            logger.info(f"生成图片size: {aspectRatio}")
+            image_url = response.data[0].url
+            logger.info(f"生成图片成功: {image_url}")
+            return image_url
+        except Exception as e:
+            logger.error(f"生成图片失败: {e}")
             raise
 

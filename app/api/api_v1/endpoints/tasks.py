@@ -17,6 +17,7 @@ from app.models.creation import Creation
 from app.core.celery_app import celery_app
 from app.core.logger import logger
 from app.utils.task_types import TaskType, get_task_type_from_name
+from app.utils.response import success_response
 
 router = APIRouter()
 
@@ -345,7 +346,10 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
                 "progress": None,
             })
         
-        return response
+        return success_response(
+            data=response,
+            message=response.get("message", "任务状态查询成功")
+        )
         
     except Exception as e:
         logger.error(f"查询任务状态失败: {str(e)}")
@@ -372,18 +376,21 @@ async def get_task_novel(task_id: str, db: Session = Depends(get_db)):
     novel = db.query(Novel).filter(Novel.task_id == task_id).first()
     
     if novel:
-        return {
-            "task_id": task_id,
-            "novel_id": novel.novel_id,
-            "novel": {
+        return success_response(
+            data={
+                "task_id": task_id,
                 "novel_id": novel.novel_id,
-                "title": novel.title,
-                "author": novel.author,
-                "status": novel.status,
-                "chapter_count": novel.chapter_count,
-                "created_at": novel.created_at,
-            }
-        }
+                "novel": {
+                    "novel_id": novel.novel_id,
+                    "title": novel.title,
+                    "author": novel.author,
+                    "status": novel.status,
+                    "chapter_count": novel.chapter_count,
+                    "created_at": novel.created_at,
+                }
+            },
+            message="小说信息获取成功"
+        )
     
     # 如果数据库中没有找到，尝试从任务结果中获取
     try:
@@ -394,18 +401,21 @@ async def get_task_novel(task_id: str, db: Session = Depends(get_db)):
                 novel_id = result["novel_id"]
                 novel = db.query(Novel).filter(Novel.novel_id == novel_id).first()
                 if novel:
-                    return {
-                        "task_id": task_id,
-                        "novel_id": novel_id,
-                        "novel": {
-                            "novel_id": novel.novel_id,
-                            "title": novel.title,
-                            "author": novel.author,
-                            "status": novel.status,
-                            "chapter_count": novel.chapter_count,
-                            "created_at": novel.created_at,
-                        }
-                    }
+                    return success_response(
+                        data={
+                            "task_id": task_id,
+                            "novel_id": novel_id,
+                            "novel": {
+                                "novel_id": novel.novel_id,
+                                "title": novel.title,
+                                "author": novel.author,
+                                "status": novel.status,
+                                "chapter_count": novel.chapter_count,
+                                "created_at": novel.created_at,
+                            }
+                        },
+                        message="小说信息获取成功"
+                    )
     except Exception as e:
         logger.error(f"从任务结果获取小说信息失败: {str(e)}")
     

@@ -27,5 +27,5 @@ class Creation(Base):
     owner = relationship("User", back_populates="creations")
     novel = relationship("Novel", back_populates="creations")
     chapter = relationship("Chapter", back_populates="creation")
-    characters = relationship("Character", back_populates="creation")
-    scenes = relationship("Scene", back_populates="creation", cascade="all, delete-orphan")
+    characters = relationship("Character", back_populates="creation", order_by="Character.character_id")
+    scenes = relationship("Scene", back_populates="creation", cascade="all, delete-orphan", order_by="Scene.scene_id")
