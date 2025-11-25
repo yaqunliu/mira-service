@@ -17,6 +17,7 @@ COPY pyproject.toml ./
 COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
+COPY README.md ./
 
 # 安装Python依赖
 RUN uv pip install --system -e .

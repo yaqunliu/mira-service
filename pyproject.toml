@@ -37,6 +37,7 @@ dependencies = [
     "aiofiles>=23.0.0",
     "loguru>=0.7.0",
     "ufile>=2.0.0",
+    "openai>=2.8.1",
 ]
 
 [project.optional-dependencies]
