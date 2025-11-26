@@ -63,23 +63,23 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
 
         # TODO: 生成剧本 - 临时简化开发，直接返回 demo.json 数据
         # 正式环境应使用以下代码：
-        # ai_client = AIClient()
-        # prompt_playbook = read_prompt_file("playbook.md")
-        # playbook = ai_client.gen_playbook_by_chapter(
-        #     prompt=prompt_playbook, 
-        #     chapter_content=chapter_content
-        # )
+        ai_client = AIClient()
+        prompt_playbook = read_prompt_file("playbook.md")
+        playbook = ai_client.gen_playbook_by_chapter(
+            prompt=prompt_playbook, 
+            chapter_content=chapter_content
+        )
         
         # 临时方案：直接读取 demo.json 文件
-        app_dir = Path(__file__).parent.parent.parent
-        demo_file = app_dir / "ai_res" / "demo.json"
-        logger.info(f"使用演示数据: {demo_file}")
+        # app_dir = Path(__file__).parent.parent.parent
+        # demo_file = app_dir / "ai_res" / "demo.json"
+        # logger.info(f"使用演示数据: {demo_file}")
         
-        if not demo_file.exists():
-            raise FileNotFoundError(f"演示数据文件不存在: {demo_file}")
+        # if not demo_file.exists():
+        #     raise FileNotFoundError(f"演示数据文件不存在: {demo_file}")
         
-        with open(demo_file, 'r', encoding='utf-8') as f:
-            playbook = json.load(f)
+        # with open(demo_file, 'r', encoding='utf-8') as f:
+        #     playbook = json.load(f)
         
         logger.info(f"成功加载演示数据，包含 {len(playbook.get('场景拆解', []))} 个场景")
         

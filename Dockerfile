@@ -18,6 +18,8 @@ COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 COPY README.md ./
+COPY start_celery.sh ./
+COPY stop_celery.sh ./
 
 # 安装Python依赖
 RUN uv pip install --system -e .
