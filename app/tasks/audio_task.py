@@ -101,7 +101,7 @@ def _generate_srt_content(shots_data: List[Dict[str, Any]]) -> str:
     return "\n".join(srt_lines)
 
 
-def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str) -> dict:
+def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str, voice_speed: float = 1.0) -> dict:
     """
     生成单个分镜的音频（线程安全函数）
     
@@ -109,6 +109,7 @@ def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str) -
         shot_id: 分镜ID
         creation_id: 创作ID（用于生成存储路径）
         voice_id: 语音模型ID
+        voice_speed: 语速设置，范围 0-10，默认 1.0
         
     Returns:
         包含分镜ID、音频URL、时长等信息的字典
@@ -132,6 +133,7 @@ def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str) -
                 "shot_id": shot_id,
                 "shot_title": shot.title,
                 "shot_number": shot.shot_number,
+                "scene_id": shot.scene_id,
                 "success": False,
                 "error": "没有旁白文本",
                 "narration": None,
@@ -142,10 +144,16 @@ def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str) -
         
         # 调用 Fish Audio TTS
         fish_client = get_fish_audio_client()
+        # 将 voice_speed 转换为 Fish Audio 的 speed 参数
+        # Fish Audio 的 speed 范围通常是 0.5-2.0，我们需要将 0-10 映射到这个范围
+        # 假设 1.0 对应正常语速，0 对应最慢（0.5），10 对应最快（2.0）
+        # 线性映射：speed = 0.5 + (voice_speed / 10) * 1.5
+        fish_speed = 0.5 + (voice_speed / 10.0) * 1.5
         audio_bytes = fish_client.text_to_speech_bytes(
             text=shot.narration,
             reference_id=voice_id,
-            format="mp3"
+            format="mp3",
+            speed=fish_speed
         )
         
         # 获取音频时长
@@ -189,6 +197,7 @@ def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str) -
             "shot_id": shot_id,
             "shot_title": shot.title,
             "shot_number": shot.shot_number,
+            "scene_id": shot.scene_id,
             "success": True,
             "audio_url": audio_url,
             "duration_ms": duration_ms,
@@ -199,8 +208,20 @@ def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str) -
     except Exception as e:
         logger.error(f"分镜 {shot_id} 音频生成失败: {str(e)}", exc_info=True)
         db.rollback()
+        scene_id = 0
+        shot_number = 0
+        # 尝试从数据库获取 scene_id 和 shot_number
+        try:
+            shot = db.query(Shot).filter(Shot.shot_id == shot_id).first()
+            if shot:
+                scene_id = shot.scene_id
+                shot_number = shot.shot_number
+        except:
+            pass
         return {
             "shot_id": shot_id,
+            "shot_number": shot_number,
+            "scene_id": scene_id,
             "success": False,
             "error": str(e)
         }
@@ -228,10 +249,10 @@ def _merge_audio_files(audio_results: List[Dict], creation_id: int) -> Optional[
     merged_path = None
     
     try:
-        # 按 shot_number 排序
+        # 按 (scene_id, shot_number) 排序
         sorted_results = sorted(
             [r for r in audio_results if r.get("success") and r.get("audio_bytes")],
-            key=lambda x: x.get("shot_number", 0)
+            key=lambda x: (x.get("scene_id", 0), x.get("shot_number", 0))
         )
         
         if not sorted_results:
@@ -309,10 +330,10 @@ def _generate_and_upload_srt(audio_results: List[Dict], creation_id: int) -> Opt
     """
     temp_path = None
     try:
-        # 按 shot_number 排序
+        # 按 (scene_id, shot_number) 排序
         sorted_results = sorted(
             [r for r in audio_results if r.get("success") and r.get("duration_ms")],
-            key=lambda x: x.get("shot_number", 0)
+            key=lambda x: (x.get("scene_id", 0), x.get("shot_number", 0))
         )
         
         if not sorted_results:
@@ -371,11 +392,11 @@ def _generate_and_upload_srt(audio_results: List[Dict], creation_id: int) -> Opt
 
 
 @celery_app.task(bind=True, name="generate_single_shot_audio_task")
-def generate_single_shot_audio_task(self, shot_id: int, creation_id: int, voice_id: str) -> dict:
+def generate_single_shot_audio_task(self, shot_id: int, creation_id: int, voice_id: str, voice_speed: float = 1.0) -> dict:
     """
     Celery任务：生成单个分镜的音频
     """
-    logger.info(f"开始执行分镜音频生成任务: shot_id={shot_id}")
+    logger.info(f"开始执行分镜音频生成任务: shot_id={shot_id}, voice_speed={voice_speed}")
     
     self.update_state(
         state="PROGRESS",
@@ -387,7 +408,7 @@ def generate_single_shot_audio_task(self, shot_id: int, creation_id: int, voice_
         }
     )
     
-    result = _generate_single_shot_audio(shot_id, creation_id, voice_id)
+    result = _generate_single_shot_audio(shot_id, creation_id, voice_id, voice_speed)
     # 移除 audio_bytes，避免序列化问题
     result.pop("audio_bytes", None)
     result["task_type"] = TaskType.AUDIO_GENERATION
@@ -395,12 +416,12 @@ def generate_single_shot_audio_task(self, shot_id: int, creation_id: int, voice_
 
 
 @celery_app.task(bind=True, name="generate_creation_audio_task")
-def generate_creation_audio_task(self, creation_id: int, voice_id: str, force_regenerate: bool = False):
+def generate_creation_audio_task(self, creation_id: int, voice_id: str, voice_speed: float = 1.0, force_regenerate: bool = False):
     """
     生成创作下所有分镜的音频 + 字幕（主任务）
     
     流程：
-    1. 更新创作的 voice_id
+    1. 更新创作的 voice_id 和 voice_speed
     2. 并发生成所有分镜的音频
     3. 合并所有音频
     4. 生成 SRT 字幕
@@ -409,6 +430,7 @@ def generate_creation_audio_task(self, creation_id: int, voice_id: str, force_re
     Args:
         creation_id: 创作ID
         voice_id: 语音模型ID
+        voice_speed: 语速设置，范围 0-10，默认 1.0
         force_regenerate: 是否强制重新生成
         
     Returns:
@@ -425,6 +447,7 @@ def generate_creation_audio_task(self, creation_id: int, voice_id: str, force_re
         if not force_regenerate and creation.audio_url and creation.subtitle_url:
             logger.info(f"创作 {creation_id} 音频和字幕已存在，跳过生成")
             creation.voice_id = voice_id
+            creation.voice_speed = voice_speed
             creation.current_task_id = None
             db.commit()
             return {
@@ -432,6 +455,7 @@ def generate_creation_audio_task(self, creation_id: int, voice_id: str, force_re
                 "task_type": TaskType.BATCH_AUDIO_GENERATION,
                 "creation_id": creation_id,
                 "voice_id": voice_id,
+                "voice_speed": voice_speed,
                 "total": 0,
                 "success_count": 0,
                 "failed_count": 0,
@@ -442,8 +466,9 @@ def generate_creation_audio_task(self, creation_id: int, voice_id: str, force_re
                 "results": []
             }
         
-        # 更新创作的 voice_id
+        # 更新创作的 voice_id 和 voice_speed
         creation.voice_id = voice_id
+        creation.voice_speed = voice_speed
         db.commit()
         
         # 查询所有场景和分镜
@@ -509,7 +534,7 @@ def generate_creation_audio_task(self, creation_id: int, voice_id: str, force_re
         max_workers = min(3, total_shots)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_shot = {
-                executor.submit(_generate_single_shot_audio, shot["shot_id"], creation_id, voice_id): shot
+                executor.submit(_generate_single_shot_audio, shot["shot_id"], creation_id, voice_id, voice_speed): shot
                 for shot in all_shots
             }
             
@@ -633,6 +658,6 @@ def generate_creation_audio_task(self, creation_id: int, voice_id: str, force_re
                 "error": error_msg,
             }
         )
-        raise BaseServiceException(detail=error_msg)
+        raise BaseServiceException(message=error_msg)
     finally:
         db.close()

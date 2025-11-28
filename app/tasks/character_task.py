@@ -266,4 +266,4 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
                 "error": error_msg,
             },
         )
-        raise BaseServiceException(detail=error_msg)
+        raise BaseServiceException(message=error_msg)

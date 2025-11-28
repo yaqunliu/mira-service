@@ -256,7 +256,7 @@ class NovelService:
         raise BaseServiceException("功能尚未实现", status_code=501)
     
     @staticmethod
-    def delete_novel(
+    def delete_novel_service(
         db: Session,
         novel_id: int,
         user_id: int
@@ -273,9 +273,33 @@ class NovelService:
             None
             
         Raises:
-            HTTPException: 当小说不存在或用户无权限时
+            NotFoundError: 当小说不存在时
+            PermissionError: 当用户无权限时
+            DatabaseError: 当删除失败时
         """
-        # TODO: 实现删除小说逻辑
-        from app.core.exceptions import BaseServiceException
-        raise BaseServiceException("功能尚未实现", status_code=501)
+        from app.core.exceptions import NotFoundError, PermissionError, DatabaseError
+        
+        logger.info(f"删除小说: novel_id={novel_id}, user_id={user_id}")
+        
+        # 查询小说
+        novel = db.query(Novel).filter(Novel.novel_id == novel_id).first()
+        
+        if not novel:
+            raise NotFoundError(detail="小说不存在")
+        
+        # 验证权限
+        if novel.owner_id != user_id:
+            raise PermissionError(detail="无权限删除该小说")
+        
+        try:
+            # 删除小说（级联删除相关的 chapters）
+            # chapters 关系已设置 cascade="all, delete-orphan"，会自动删除
+            db.delete(novel)
+            db.commit()
+            
+            logger.info(f"小说已删除: novel_id={novel_id}, user_id={user_id}")
+        except Exception as e:
+            logger.error(f"删除小说失败: {str(e)}", exc_info=True)
+            db.rollback()
+            raise DatabaseError(detail=f"删除小说失败: {str(e)}") from e
 

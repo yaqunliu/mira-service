@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, Float
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.base import Base
@@ -15,6 +15,7 @@ class Creation(Base):
     audio_url = Column(String(500))  # 最终音频URL（合并后的完整音频）
     subtitle_url = Column(String(500))  # 字幕文件URL（SRT格式）
     voice_id = Column(String(100), nullable=True)  # Fish Audio 语音模型ID，用于TTS生成
+    voice_speed = Column(Float, default=1.0, nullable=False)  # 语速设置，范围 0-10，默认 1.0
     
     # 外键
     owner_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)

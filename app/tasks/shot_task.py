@@ -25,7 +25,7 @@ from app.utils.us3 import US3Client
 
 def _generate_single_shot_image(shot_id: int, creation_id: int) -> dict:
     """
-    生成单个分镜的图片（线程安全函数）
+    生成单个分镜的图片（线程安全函数，使用图生图）
     
     Args:
         shot_id: 分镜ID
@@ -41,9 +41,13 @@ def _generate_single_shot_image(shot_id: int, creation_id: int) -> dict:
     db: Session = SessionLocal()
     temp_file_path = None
     try:
+        # 加载shot及其关联的角色和场景
         shot = (
             db.query(Shot)
-            .options(selectinload(Shot.scene))
+            .options(
+                selectinload(Shot.scene),
+                selectinload(Shot.characters)
+            )
             .filter(Shot.shot_id == shot_id)
             .first()
         )
@@ -61,24 +65,106 @@ def _generate_single_shot_image(shot_id: int, creation_id: int) -> dict:
                 "skipped": True
             }
         
-        # 检查是否有图片生成提示词
-        if not shot.image_prompt:
-            logger.warning(f"分镜 {shot_id} 没有图片提示词，跳过生成")
+        # 检查是否有分镜描述（用于生成prompt）
+        if not shot.description and not shot.image_prompt:
+            logger.warning(f"分镜 {shot_id} 没有分镜描述或图片提示词，跳过生成")
             return {
                 "shot_id": shot_id,
                 "shot_title": shot.title,
                 "success": False,
-                "error": "没有图片提示词",
+                "error": "没有分镜描述或图片提示词",
                 "skipped": True
             }
         
-        # 使用分镜的 image_prompt 调用生图 API
-        logger.info(f"开始为分镜 {shot_id} 生成图片，提示词长度: {len(shot.image_prompt)}")
+        # 获取关联的角色及其图片URL
+        character_images = []
+        character_profiles = []
+        for character in shot.characters:
+            if character.image_url:
+                character_images.append(character.image_url)
+                # 构建角色档案描述
+                profile_parts = []
+                if character.name:
+                    profile_parts.append(f"姓名: {character.name}")
+                if character.appearance:
+                    profile_parts.append(f"外貌: {character.appearance}")
+                if character.body:
+                    profile_parts.append(f"身材: {character.body}")
+                if character.hair:
+                    profile_parts.append(f"发型: {character.hair}")
+                if character.clothing:
+                    profile_parts.append(f"服装: {character.clothing}")
+                if profile_parts:
+                    character_profiles.append("，".join(profile_parts))
         
-        # 调用生图API
-        temp_image_url = AIClient().generate_image_by_prompt(
-            prompt=shot.image_prompt,
-        )
+        # 如果没有角色图片，使用文生图；如果有角色图片，使用图生图
+        use_reference_images = len(character_images) > 0
+        if use_reference_images:
+            logger.info(f"分镜 {shot_id} 关联了 {len(character_images)} 个角色的图片，使用图生图")
+        else:
+            logger.info(f"分镜 {shot_id} 没有关联角色或角色没有图片，使用文生图")
+        
+        # 获取上一分镜的描述（用于上下文连贯性）
+        # 优先使用提示词，如果不存在则使用旁白，如果上一分镜不存在则留空
+        previous_shot_description = None
+        if shot.shot_number > 1:
+            # 查找同一场景中上一个分镜
+            previous_shot = (
+                db.query(Shot)
+                .filter(
+                    Shot.scene_id == shot.scene_id,
+                    Shot.shot_number < shot.shot_number
+                )
+                .order_by(Shot.shot_number.desc())
+                .first()
+            )
+            if previous_shot:
+                # 优先使用image_prompt（提示词），如果不存在则使用narration（旁白）
+                # 不使用description（描述）
+                previous_shot_description = previous_shot.image_prompt or previous_shot.narration
+                if previous_shot_description:
+                    logger.info(f"找到上一分镜上下文: {previous_shot.shot_id} (使用{'提示词' if previous_shot.image_prompt else '旁白'})")
+        
+        # 使用LLM生成英文提示词
+        ai_client = AIClient()
+        current_shot_description = shot.description or shot.image_prompt or ""
+        
+        if use_reference_images:
+            # 有角色图片时，使用完整的提示词生成流程（包含角色档案）
+            logger.info(f"开始为分镜 {shot_id} 生成图片提示词（包含角色档案）")
+            english_prompt = ai_client.generate_shot_image_prompt(
+                character_profiles=character_profiles,
+                previous_shot_description=previous_shot_description,
+                current_shot_description=current_shot_description
+            )
+            logger.info(f"生成的英文提示词长度: {len(english_prompt)}")
+            
+            # 使用图生图API生成图片
+            logger.info(f"开始为分镜 {shot_id} 进行图生图，参考图片数量: {len(character_images)}")
+            temp_image_url = ai_client.generate_image_by_reference(
+                prompt=english_prompt,
+                reference_images=character_images,
+                aspect_ratio="16:9"
+            )
+        else:
+            # 没有角色图片时，直接使用分镜的描述或提示词，使用文生图
+            logger.info(f"开始为分镜 {shot_id} 使用文生图")
+            # 如果有image_prompt，直接使用；否则使用description
+            prompt_text = shot.image_prompt or shot.description or ""
+            if not prompt_text:
+                logger.warning(f"分镜 {shot_id} 没有可用的提示词或描述")
+                return {
+                    "shot_id": shot_id,
+                    "shot_title": shot.title,
+                    "success": False,
+                    "error": "没有可用的提示词或描述",
+                    "skipped": True
+                }
+            
+            temp_image_url = ai_client.generate_image_by_prompt(
+                prompt=prompt_text,
+                aspectRatio="1920x1080"  # 16:9 比例
+            )
         
         # 从临时URL下载图像并上传到US3进行持久化
         try:
@@ -369,7 +455,7 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
                 "error": error_msg,
             }
         )
-        raise BaseServiceException(detail=error_msg)
+        raise BaseServiceException(message=error_msg)
     finally:
         db.close()
 
@@ -490,6 +576,6 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
                 "error": error_msg,
             },
         )
-        raise BaseServiceException(detail=error_msg)
+        raise BaseServiceException(message=error_msg)
 
 

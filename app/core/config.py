@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     LLM_MODEL_NAME: str = ""
     IMAGE_MODEL_NAME: str = ""
     
+    # AI 重试配置
+    AI_MAX_RETRIES: int = 3  # 最大重试次数
+    AI_TIMEOUT: int = 120  # 超时时间（秒）
+    AI_RETRY_DELAY: int = 2  # 重试间隔（秒）
+    
     # 云存储配置 (US3)
     US3_PUBLIC_KEY: str = ""
     US3_PRIVATE_KEY: str = ""

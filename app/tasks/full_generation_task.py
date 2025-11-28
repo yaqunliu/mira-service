@@ -61,29 +61,42 @@ def _format_srt_time(ms: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
 
 
-def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str) -> dict:
+def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str, voice_speed: float = 1.0) -> dict:
     """生成单个分镜的音频"""
     db: Session = SessionLocal()
     temp_file_path = None
+    scene_id = 0
+    shot_number = 0
     try:
         shot = db.query(Shot).filter(Shot.shot_id == shot_id).first()
         if not shot:
             raise NotFoundError(detail=f"分镜不存在: shot_id={shot_id}")
         
+        # 保存 scene_id 和 shot_number 用于错误处理
+        scene_id = shot.scene_id
+        shot_number = shot.shot_number
+        
         if not shot.narration:
             return {
                 "shot_id": shot_id,
-                "shot_number": shot.shot_number,
+                "shot_number": shot_number,
+                "scene_id": scene_id,
                 "success": False,
                 "error": "没有旁白文本",
                 "skipped": True
             }
         
         fish_client = get_fish_audio_client()
+        # 将 voice_speed 转换为 Fish Audio 的 speed 参数
+        # Fish Audio 的 speed 范围通常是 0.5-2.0，我们需要将 0-10 映射到这个范围
+        # 假设 1.0 对应正常语速，0 对应最慢（0.5），10 对应最快（2.0）
+        # 线性映射：speed = 0.5 + (voice_speed / 10) * 1.5
+        fish_speed = 0.5 + (voice_speed / 10.0) * 1.5
         audio_bytes = fish_client.text_to_speech_bytes(
             text=shot.narration,
             reference_id=voice_id,
-            format="mp3"
+            format="mp3",
+            speed=fish_speed
         )
         
         duration_ms = _get_audio_duration_ms(audio_bytes)
@@ -110,6 +123,7 @@ def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str) -
         return {
             "shot_id": shot_id,
             "shot_number": shot.shot_number,
+            "scene_id": shot.scene_id,
             "success": True,
             "audio_url": audio_url,
             "duration_ms": duration_ms,
@@ -120,7 +134,13 @@ def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str) -
     except Exception as e:
         logger.error(f"分镜 {shot_id} 音频生成失败: {e}")
         db.rollback()
-        return {"shot_id": shot_id, "success": False, "error": str(e)}
+        return {
+            "shot_id": shot_id,
+            "shot_number": shot_number,
+            "scene_id": scene_id,
+            "success": False,
+            "error": str(e)
+        }
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             try:
@@ -138,7 +158,7 @@ def _merge_audio_files(audio_results: List[Dict], creation_id: int) -> Optional[
     try:
         sorted_results = sorted(
             [r for r in audio_results if r.get("success") and r.get("audio_bytes")],
-            key=lambda x: x.get("shot_number", 0)
+            key=lambda x: (x.get("scene_id", 0), x.get("shot_number", 0))
         )
         
         if not sorted_results:
@@ -195,7 +215,7 @@ def _generate_srt(audio_results: List[Dict], creation_id: int) -> Optional[str]:
     try:
         sorted_results = sorted(
             [r for r in audio_results if r.get("success") and r.get("duration_ms")],
-            key=lambda x: x.get("shot_number", 0)
+            key=lambda x: (x.get("scene_id", 0), x.get("shot_number", 0))
         )
         
         if not sorted_results:
@@ -247,12 +267,15 @@ def _generate_srt(audio_results: List[Dict], creation_id: int) -> Optional[str]:
 # ============== 视频相关函数 ==============
 
 VIDEO_EFFECTS = [
-    # {"name": "zoom_in", "filter": "zoompan=z='min(zoom+0.0015,1.5)':d={duration}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30"},
-    # {"name": "zoom_out", "filter": "zoompan=z='if(lte(zoom,1.0),1.5,max(1.001,zoom-0.0015))':d={duration}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30"},
-    {"name": "pan_left_to_right", "filter": "zoompan=z=1.3:d={duration}:x='if(lte(on,1),0,min(x+2,(iw-iw/zoom)))':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30"},
-    {"name": "pan_right_to_left", "filter": "zoompan=z=1.3:d={duration}:x='if(lte(on,1),(iw-iw/zoom),max(x-2,0))':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30"},
-    {"name": "pan_top_to_bottom", "filter": "zoompan=z=1.3:d={duration}:x='iw/2-(iw/zoom/2)':y='if(lte(on,1),0,min(y+2,(ih-ih/zoom)))':s=1920x1080:fps=30"},
-    {"name": "pan_bottom_to_top", "filter": "zoompan=z=1.3:d={duration}:x='iw/2-(iw/zoom/2)':y='if(lte(on,1),(ih-ih/zoom),max(y-2,0))':s=1920x1080:fps=30"},
+    # 平移特效：使用基于帧数的线性插值，让移动更平滑
+    # 从左到右：从0平滑移动到 (iw-iw/zoom)，使用 on/duration 进行线性插值
+    {"name": "pan_left_to_right", "filter": "zoompan=z=1.3:d={duration}:x='(iw-iw/zoom)*on/{duration}':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30"},
+    # 从右到左：从 (iw-iw/zoom) 平滑移动到 0
+    {"name": "pan_right_to_left", "filter": "zoompan=z=1.3:d={duration}:x='(iw-iw/zoom)*(1-on/{duration})':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30"},
+    # 从上到下：从0平滑移动到 (ih-ih/zoom)
+    {"name": "pan_top_to_bottom", "filter": "zoompan=z=1.3:d={duration}:x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*on/{duration}':s=1920x1080:fps=30"},
+    # 从下到上：从 (ih-ih/zoom) 平滑移动到 0
+    {"name": "pan_bottom_to_top", "filter": "zoompan=z=1.3:d={duration}:x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*(1-on/{duration})':s=1920x1080:fps=30"},
 ]
 
 
@@ -272,7 +295,12 @@ def _generate_shot_video(image_path: str, duration_ms: int, output_path: str) ->
     try:
         effect = random.choice(VIDEO_EFFECTS)
         duration_seconds = duration_ms / 1000.0
-        duration_frames = int(duration_seconds * 30)
+        # 计算总帧数，确保特效持续整个视频时长
+        # fps=30，所以总帧数 = 时长(秒) * 30
+        duration_frames = int(round(duration_seconds * 30))
+        # 确保至少生成1帧
+        if duration_frames < 1:
+            duration_frames = 1
         filter_str = effect["filter"].format(duration=duration_frames)
         
         cmd = [
@@ -283,10 +311,60 @@ def _generate_shot_video(image_path: str, duration_ms: int, output_path: str) ->
         ]
         
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.error(f"FFmpeg 生成视频失败: {result.stderr}")
+            logger.error(f"执行的命令: {' '.join(cmd)}")
         return result.returncode == 0
     except Exception as e:
         logger.error(f"生成视频片段失败: {e}")
         return False
+
+
+def _generate_single_shot_video(shot_id: int, image_url: str, duration_ms: int, shot_number: int, scene_id: int = 0) -> dict:
+    """生成单个分镜的视频片段"""
+    image_path = None
+    video_path = None
+    try:
+        # 下载图片
+        image_path = _download_file(image_url, suffix=".png")
+        
+        # 创建临时视频文件
+        fd, video_path = tempfile.mkstemp(suffix=".mp4")
+        os.close(fd)
+        
+        # 生成视频
+        if _generate_shot_video(image_path, duration_ms, video_path):
+            return {
+                "shot_id": shot_id,
+                "shot_number": shot_number,
+                "scene_id": scene_id,
+                "success": True,
+                "video_path": video_path,
+            }
+        else:
+            return {
+                "shot_id": shot_id,
+                "shot_number": shot_number,
+                "scene_id": scene_id,
+                "success": False,
+                "error": "视频生成失败"
+            }
+    except Exception as e:
+        logger.error(f"分镜 {shot_id} 视频生成失败: {e}")
+        return {
+            "shot_id": shot_id,
+            "shot_number": shot_number,
+            "scene_id": scene_id,
+            "success": False,
+            "error": str(e)
+        }
+    finally:
+        # 清理图片文件（视频文件需要保留用于后续拼接）
+        if image_path and os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+            except:
+                pass
 
 
 def _concat_videos(video_paths: List[str], output_path: str) -> bool:
@@ -361,7 +439,7 @@ def _merge_video_audio_subtitle(video_path: str, audio_path: str, subtitle_path:
 # ============== 主任务 ==============
 
 @celery_app.task(bind=True, name="generate_full_video_task")
-def generate_full_video_task(self, creation_id: int, voice_id: str, force_regenerate: bool = False):
+def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed: float = 1.0, force_regenerate: bool = False):
     """
     完整视频生成任务
     
@@ -375,6 +453,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, force_regene
     Args:
         creation_id: 创作ID
         voice_id: Fish Audio 语音模型ID
+        voice_speed: 语速设置，范围 0-10，默认 1.0
         force_regenerate: 是否强制重新生成
     """
     db: Session = SessionLocal()
@@ -393,6 +472,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, force_regene
             raise NotFoundError(detail=f"创作不存在: creation_id={creation_id}")
         
         creation.voice_id = voice_id
+        creation.voice_speed = voice_speed
         db.commit()
         
         # 检查是否已生成音频和字幕，如果已存在且不强制重新生成，则跳过音频生成阶段
@@ -425,6 +505,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, force_regene
                     all_shots.append({
                         "shot_id": shot.shot_id,
                         "shot_number": shot.shot_number,
+                        "scene_id": shot.scene_id,
                         "image_url": shot.image_url,
                     })
         
@@ -457,7 +538,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, force_regene
             max_workers = min(3, total_shots)
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_shot = {
-                    executor.submit(_generate_single_shot_audio, shot["shot_id"], creation_id, voice_id): shot
+                    executor.submit(_generate_single_shot_audio, shot["shot_id"], creation_id, voice_id, voice_speed): shot
                     for shot in all_shots
                 }
                 
@@ -517,7 +598,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, force_regene
             "status": f"开始生成 {total_shots} 个视频片段"
         })
         
-        # 按 shot_number 排序音频结果
+        # 按 (scene_id, shot_number) 排序音频结果
         # 如果跳过了音频生成，从数据库查询分镜的音频时长
         if not audio_results:
             sorted_audio = []
@@ -527,55 +608,92 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, force_regene
                     sorted_audio.append({
                         "shot_id": shot.shot_id,
                         "shot_number": shot.shot_number,
+                        "scene_id": shot.scene_id,
                         "duration_ms": shot.audio_duration,
                     })
-            sorted_audio.sort(key=lambda x: x.get("shot_number", 0))
+            sorted_audio.sort(key=lambda x: (x.get("scene_id", 0), x.get("shot_number", 0)))
         else:
             sorted_audio = sorted(
                 [r for r in audio_results if r.get("success") and r.get("duration_ms")],
-                key=lambda x: x.get("shot_number", 0)
+                key=lambda x: (x.get("scene_id", 0), x.get("shot_number", 0))
             )
         
-        video_clips = []
-        for idx, audio_result in enumerate(sorted_audio):
+        # 准备视频生成任务数据
+        video_tasks = []
+        for audio_result in sorted_audio:
             shot_id = audio_result["shot_id"]
             duration_ms = audio_result["duration_ms"]
+            shot_number = audio_result["shot_number"]
             
             # 找到对应的图片URL
             shot_info = next((s for s in all_shots if s["shot_id"] == shot_id), None)
             if not shot_info:
                 continue
             
-            self.update_state(state="PROGRESS", meta={
-                "task_type": TaskType.VIDEO_MERGE,
-                "creation_id": creation_id,
-                "stage": "generating_video",
-                "stage_name": "生成视频片段",
-                "total_stages": 4,
-                "current_stage": 3,
-                "total": len(sorted_audio),
-                "completed": idx,
-                "status": f"视频片段: {idx + 1}/{len(sorted_audio)}"
+            video_tasks.append({
+                "shot_id": shot_id,
+                "image_url": shot_info["image_url"],
+                "duration_ms": duration_ms,
+                "shot_number": shot_number,
+                "scene_id": audio_result.get("scene_id") or shot_info.get("scene_id"),
             })
+        
+        if not video_tasks:
+            raise Exception("没有可生成视频的分镜")
+        
+        # 并发生成视频片段
+        video_results = []
+        max_workers = min(3, len(video_tasks))  # 限制并发数，避免过多FFmpeg进程
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_task = {
+                executor.submit(
+                    _generate_single_shot_video,
+                    task["shot_id"],
+                    task["image_url"],
+                    task["duration_ms"],
+                    task["shot_number"],
+                    task["scene_id"]
+                ): task
+                for task in video_tasks
+            }
             
-            try:
-                image_path = _download_file(shot_info["image_url"], suffix=".png")
-                temp_files.append(image_path)
+            for future in as_completed(future_to_task):
+                result = future.result()
+                video_results.append(result)
                 
-                fd, video_path = tempfile.mkstemp(suffix=".mp4")
-                os.close(fd)
-                temp_files.append(video_path)
+                # 将成功的视频路径添加到临时文件列表，以便后续清理
+                if result.get("success") and result.get("video_path"):
+                    temp_files.append(result["video_path"])
                 
-                if _generate_shot_video(image_path, duration_ms, video_path):
-                    video_clips.append({"path": video_path, "shot_number": audio_result["shot_number"]})
-            except Exception as e:
-                logger.error(f"分镜 {shot_id} 视频生成失败: {e}")
+                self.update_state(state="PROGRESS", meta={
+                    "task_type": TaskType.VIDEO_MERGE,
+                    "creation_id": creation_id,
+                    "stage": "generating_video",
+                    "stage_name": "生成视频片段",
+                    "total_stages": 4,
+                    "current_stage": 3,
+                    "total": len(video_tasks),
+                    "completed": len(video_results),
+                    "status": f"视频片段: {len(video_results)}/{len(video_tasks)}"
+                })
+        
+        # 收集成功的视频片段
+        video_clips = [
+            {
+                "path": r["video_path"],
+                "shot_number": r["shot_number"],
+                "scene_id": r.get("scene_id", 0)
+            }
+            for r in video_results
+            if r.get("success") and r.get("video_path")
+        ]
         
         if not video_clips:
             raise Exception("没有成功生成的视频片段")
         
-        # 按顺序排序
-        video_clips.sort(key=lambda x: x["shot_number"])
+        # 按 (scene_id, shot_number) 顺序排序
+        video_clips.sort(key=lambda x: (x.get("scene_id", 0), x.get("shot_number", 0)))
         
         # ========== 阶段4: 合并最终视频 ==========
         self.update_state(state="PROGRESS", meta={
@@ -688,7 +806,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, force_regene
             "creation_id": creation_id,
             "error": error_msg,
         })
-        raise BaseServiceException(detail=error_msg)
+        raise BaseServiceException(message=error_msg)
         
     finally:
         for path in temp_files:

@@ -46,4 +46,4 @@ class CharacterService:
 
             return {"message": "角色图片生成任务已创建", "task_id": task.id}
         except Exception as e:
-            raise BaseServiceException(detail=f"角色图片生成任务创建失败: {e}")
+            raise BaseServiceException(message=f"角色图片生成任务创建失败: {e}")

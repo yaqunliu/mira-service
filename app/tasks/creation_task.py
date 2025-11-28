@@ -221,13 +221,28 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
     except Exception as e:
         logger.error(f"创作初始化任务失败: {str(e)}", exc_info=True)
         db.rollback()  # 确保回滚事务
-        raise self.retry(exc=e, countdown=60, max_retries=3)
+        
+        # 检查是否还有重试机会
+        retry_count = self.request.retries if hasattr(self.request, 'retries') else 0
+        max_retries = 3
+        
+        if retry_count >= max_retries:
+            # 已达到最大重试次数，不再重试
+            raise
+        else:
+            # 还有重试机会，触发重试（临时文件会在 finally 中清理，重试时会重新下载）
+            raise self.retry(exc=e, countdown=60, max_retries=max_retries)
     finally:
-        # 清理临时文件（finally 块确保无论成功还是异常都会执行清理）
+        # 确保数据库连接已关闭
+        try:
+            if db:
+                db.close()
+        except Exception:
+            pass
+        # 清理临时文件（重试时会重新下载，所以可以安全清理）
         if temp_file_path and os.path.exists(temp_file_path):
             try:
                 os.remove(temp_file_path)
                 logger.info(f"已清理临时文件: {temp_file_path}")
             except Exception as e:
                 logger.warning(f"删除临时文件失败: {str(e)}")
-        db.close()

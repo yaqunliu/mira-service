@@ -96,22 +96,27 @@ class FishAudioClient:
         text: str,
         voice_id: str,
         format: str,
-        latency: str
+        latency: str,
+        speed: Optional[float] = None
     ) -> bytes:
         """实际执行 TTS 转换（内部方法）"""
-        return self.client.tts.convert(
-            text=text,
-            reference_id=voice_id,
-            format=format,
-            latency=latency
-        )
+        kwargs = {
+            "text": text,
+            "reference_id": voice_id,
+            "format": format,
+            "latency": latency
+        }
+        if speed is not None:
+            kwargs["speed"] = speed
+        return self.client.tts.convert(**kwargs)
     
     def text_to_speech(
         self,
         text: str,
         reference_id: str = None,
         format: Literal["mp3", "wav", "pcm", "opus"] = "mp3",
-        latency: Literal["normal", "balanced"] = "normal"
+        latency: Literal["normal", "balanced"] = "normal",
+        speed: Optional[float] = None
     ) -> bytes:
         """
         文本转语音（带超时和重试机制）
@@ -121,6 +126,7 @@ class FishAudioClient:
             reference_id: 语音模型 ID，不传则使用默认语音
             format: 音频格式，可选 "mp3", "wav", "pcm", "opus"
             latency: 延迟模式，"normal" 或 "balanced"
+            speed: 语速参数，浮点数，通常范围 0.5-2.0
             
         Returns:
             音频字节数据
@@ -150,7 +156,8 @@ class FishAudioClient:
                         text=text,
                         voice_id=voice_id,
                         format=format,
-                        latency=latency
+                        latency=latency,
+                        speed=speed
                     )
                     
                     try:
@@ -201,7 +208,8 @@ class FishAudioClient:
         output_path: str = None,
         reference_id: str = None,
         format: Literal["mp3", "wav", "pcm", "opus"] = "mp3",
-        latency: Literal["normal", "balanced"] = "normal"
+        latency: Literal["normal", "balanced"] = "normal",
+        speed: Optional[float] = None
     ) -> str:
         """
         文本转语音并保存到文件
@@ -212,6 +220,7 @@ class FishAudioClient:
             reference_id: 语音模型 ID
             format: 音频格式
             latency: 延迟模式
+            speed: 语速参数，浮点数，通常范围 0.5-2.0
             
         Returns:
             保存的文件路径
@@ -222,7 +231,8 @@ class FishAudioClient:
                 text=text,
                 reference_id=reference_id,
                 format=format,
-                latency=latency
+                latency=latency,
+                speed=speed
             )
             
             # 如果没有指定输出路径，自动生成
@@ -252,7 +262,8 @@ class FishAudioClient:
         text: str,
         reference_id: str = None,
         format: Literal["mp3", "wav", "pcm", "opus"] = "mp3",
-        latency: Literal["normal", "balanced"] = "normal"
+        latency: Literal["normal", "balanced"] = "normal",
+        speed: Optional[float] = None
     ) -> bytes:
         """
         文本转语音并返回字节数据（带超时和重试机制）
@@ -262,6 +273,7 @@ class FishAudioClient:
             reference_id: 语音模型 ID
             format: 音频格式
             latency: 延迟模式
+            speed: 语速参数，浮点数，通常范围 0.5-2.0
             
         Returns:
             音频字节数据
@@ -274,7 +286,8 @@ class FishAudioClient:
                 text=text,
                 reference_id=reference_id,
                 format=format,
-                latency=latency
+                latency=latency,
+                speed=speed
             )
             
             # 再次检查音频大小（双重保险）

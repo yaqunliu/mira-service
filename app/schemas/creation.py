@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, List
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 
 
@@ -28,6 +28,7 @@ class CreationCreate(CreationBase):
     novel_id: int
     chapter_id: int
     voice_id: Optional[str] = None  # Fish Audio 语音模型ID
+    voice_speed: Optional[float] = Field(default=1.0, ge=0.0, le=10.0, description="语速设置，范围 0-10，默认 1.0")
 
 
 class CreationUpdate(BaseModel):
@@ -37,6 +38,7 @@ class CreationUpdate(BaseModel):
     audio_url: Optional[str] = None
     subtitle_url: Optional[str] = None
     voice_id: Optional[str] = None  # Fish Audio 语音模型ID
+    voice_speed: Optional[float] = Field(default=None, ge=0.0, le=10.0, description="语速设置，范围 0-10")
 
 
 class Creation(CreationBase):
@@ -48,6 +50,7 @@ class Creation(CreationBase):
     audio_url: Optional[str] = None
     subtitle_url: Optional[str] = None  # 字幕文件URL
     voice_id: Optional[str] = None  # Fish Audio 语音模型ID
+    voice_speed: float = Field(default=1.0, ge=0.0, le=10.0, description="语速设置，范围 0-10，默认 1.0")
     current_task_id: Optional[str] = None  # Celery任务ID
     created_at: datetime
     updated_at: Optional[datetime] = None

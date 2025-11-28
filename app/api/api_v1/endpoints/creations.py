@@ -143,10 +143,56 @@ async def get_creation(
 
 
 @router.delete("/{creation_id}")
-async def delete_creation(creation_id: int):
-    """删除创作项目"""
-    # TODO: 实现删除创作逻辑
-    pass
+async def delete_creation(
+    creation_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    删除创作项目
+    
+    Args:
+        creation_id: 创作项目ID
+        
+    Returns:
+        删除结果
+        
+    注意：
+        - 只有创建者可以删除
+        - 删除时会级联删除相关的场景、分镜等数据
+        - 即使有正在执行的任务也会直接删除
+    """
+    try:
+        # 查询创作项目
+        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        
+        if not creation:
+            raise HTTPException(status_code=404, detail="创作项目不存在")
+        
+        # 验证权限
+        if creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限删除该创作项目")
+        
+        # 删除创作项目（级联删除相关的 scenes 和 shots）
+        # scenes 关系已设置 cascade="all, delete-orphan"，会自动删除
+        db.delete(creation)
+        db.commit()
+        
+        logger.info(f"创作项目已删除: creation_id={creation_id}, user_id={user.user_id}")
+        
+        return success_response(
+            data={"creation_id": creation_id},
+            message="创作项目删除成功"
+        )
+        
+    except HTTPException:
+        raise
+    except BaseServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except Exception as e:
+        logger.error(f"删除创作项目失败: {str(e)}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
 
 
 class GenerateShotsRequest(BaseModel):
@@ -158,6 +204,7 @@ class GenerateShotsRequest(BaseModel):
 class SelectVoiceRequest(BaseModel):
     """选择语音并生成音频请求体"""
     voice_id: str  # Fish Audio 语音模型ID
+    voice_speed: float = 1.0  # 语速设置，范围 0-10，默认 1.0
     force_regenerate: bool = False  # 是否强制重新生成已有音频的分镜
 
 
@@ -308,8 +355,9 @@ async def select_voice_and_generate_video(
                 detail=f"创作项目正在执行其他任务，任务ID: {creation.current_task_id}"
             )
         
-        # 更新音色ID和状态为"音色已选择"
+        # 更新音色ID、语速和状态为"音色已选择"
         creation.voice_id = request.voice_id
+        creation.voice_speed = request.voice_speed
         creation.status = CreationStatus.VOICE_SELECTED
         db.commit()
         
@@ -317,6 +365,7 @@ async def select_voice_and_generate_video(
         task = generate_full_video_task.delay(
             creation_id=creation_id,
             voice_id=request.voice_id,
+            voice_speed=request.voice_speed,
             force_regenerate=request.force_regenerate
         )
         
@@ -330,7 +379,8 @@ async def select_voice_and_generate_video(
             data={
                 "task_id": task.id,
                 "creation_id": creation_id,
-                "voice_id": request.voice_id
+                "voice_id": request.voice_id,
+                "voice_speed": request.voice_speed
             },
             message="视频生成任务已启动"
         )
