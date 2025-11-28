@@ -10,7 +10,14 @@ app = Celery(
     "video_generator",
     broker=settings.REDIS_BROKER_URL,  # 使用数据库0存储任务队列
     backend=settings.REDIS_BACKEND_URL,  # 使用数据库1存储任务结果
-    include=["app.tasks.novel_tasks", "app.tasks.creation_task", "app.tasks.character_task"]
+    include=[
+        "app.tasks.novel_tasks",
+        "app.tasks.creation_task",
+        "app.tasks.character_task",
+        "app.tasks.shot_task",
+        "app.tasks.audio_task",
+        "app.tasks.full_generation_task",
+    ]
 )
 
 # Celery 配置

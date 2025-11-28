@@ -28,6 +28,7 @@ dependencies = [
     "email-validator>=2.0.0",
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
+    "bcrypt>=4.0.0",
     "python-multipart>=0.0.6",
     "python-dotenv>=1.0.0",
     "celery>=5.3.0",
@@ -37,6 +38,9 @@ dependencies = [
     "aiofiles>=23.0.0",
     "loguru>=0.7.0",
     "ufile>=2.0.0",
+    "openai>=2.8.1",
+    "fish-audio-sdk>=1.1.0",
+    "pydub>=0.25.1",
 ]
 
 [project.optional-dependencies]

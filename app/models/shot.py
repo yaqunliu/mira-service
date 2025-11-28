@@ -27,6 +27,8 @@ class Shot(Base):
     
     # 生成的资源
     image_url = Column(String(500))  # 分镜图片URL
+    audio_url = Column(String(500))  # 分镜音频URL（TTS生成）
+    audio_duration = Column(Integer, nullable=True)  # 音频时长（毫秒）
     
     # 外键
     scene_id = Column(Integer, ForeignKey("scenes.scene_id"), nullable=False)

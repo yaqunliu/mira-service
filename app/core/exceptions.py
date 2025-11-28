@@ -61,3 +61,24 @@ class AlreadyExistsError(BaseServiceException):
     
     def __init__(self, message: str = "资源已存在", detail: Optional[str] = None):
         super().__init__(message, status_code=400, detail=detail)
+
+
+class AIContentModerationError(BaseServiceException):
+    """AI 内容审核失败异常（如涉及暴恐、色情等敏感内容）"""
+    
+    def __init__(self, message: str = "内容审核未通过，可能涉及敏感内容", detail: Optional[str] = None):
+        super().__init__(message, status_code=400, detail=detail)
+
+
+class AITimeoutError(BaseServiceException):
+    """AI 调用超时异常"""
+    
+    def __init__(self, message: str = "AI 服务调用超时", detail: Optional[str] = None):
+        super().__init__(message, status_code=504, detail=detail)
+
+
+class AIRetryExhaustedError(BaseServiceException):
+    """AI 调用重试次数耗尽异常"""
+    
+    def __init__(self, message: str = "AI 服务调用失败，已重试多次", detail: Optional[str] = None):
+        super().__init__(message, status_code=500, detail=detail)

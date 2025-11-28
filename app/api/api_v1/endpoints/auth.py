@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.security import verify_password, get_password_hash, create_access_token
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.user import UserCreate, User, Token
+from app.schemas.user import UserCreate, User as UserSchema, Token
 from app.api.deps import get_current_user
 from app.utils.response import success_response
 
@@ -47,7 +47,7 @@ async def register(
     db.refresh(new_user)
     
     return success_response(
-        data=User.model_validate(new_user).model_dump(),
+        data=UserSchema.model_validate(new_user).model_dump(),
         message="用户注册成功"
     )
 

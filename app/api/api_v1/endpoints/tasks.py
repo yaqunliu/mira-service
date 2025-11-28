@@ -13,11 +13,13 @@ from app.api.deps import get_db
 from app.models.novel import Novel
 from app.models.character import Character
 from app.models.shot import Shot
+from app.models.scene import Scene
 from app.models.creation import Creation
 from app.core.celery_app import celery_app
 from app.core.logger import logger
 from app.utils.task_types import TaskType, get_task_type_from_name
 from app.utils.response import success_response
+from sqlalchemy.orm import selectinload
 
 router = APIRouter()
 
@@ -423,4 +425,328 @@ async def get_task_novel(task_id: str, db: Session = Depends(get_db)):
         status_code=status.HTTP_404_NOT_FOUND,
         detail="未找到关联的小说记录"
     )
+
+
+@router.get("/{task_id}/sub-tasks")
+async def get_task_sub_tasks(task_id: str, db: Session = Depends(get_db)):
+    """
+    查询批量任务的子任务状态
+    
+    适用于批量分镜图片生成等任务，返回主任务状态和所有子任务的状态。
+    
+    Args:
+        task_id: 主任务ID
+        
+    Returns:
+        {
+            "task_id": "xxx",
+            "status": "PROGRESS",
+            "task_type": "batch_shot_image_generation",
+            "progress": {
+                "total": 10,
+                "completed": 5,
+                "success_count": 4,
+                "failed_count": 1
+            },
+            "sub_tasks": [
+                {
+                    "task_id": "sub-task-1",
+                    "status": "SUCCESS",
+                    "shot_id": 1,
+                    "image_url": "https://..."
+                },
+                ...
+            ]
+        }
+    """
+    try:
+        # 查询主任务状态
+        task = celery_app.AsyncResult(task_id)
+        task_state = task.state
+        
+        # 获取任务类型和进度信息
+        task_type = None
+        progress_info = {}
+        sub_task_ids = []
+        
+        if task_state == "PROGRESS" and task.info:
+            progress_info = task.info if isinstance(task.info, dict) else {}
+            task_type_str = progress_info.get("task_type")
+            if task_type_str:
+                try:
+                    task_type = TaskType(task_type_str)
+                except ValueError:
+                    pass
+            sub_task_ids = progress_info.get("sub_tasks", [])
+        elif task_state == "SUCCESS" and task.result:
+            result = task.result if isinstance(task.result, dict) else {}
+            task_type_str = result.get("task_type")
+            if task_type_str:
+                try:
+                    task_type = TaskType(task_type_str)
+                except ValueError:
+                    pass
+            sub_task_ids = result.get("sub_tasks", [])
+            progress_info = {
+                "total": result.get("total", 0),
+                "completed": result.get("total", 0),
+                "success_count": result.get("success_count", 0),
+                "failed_count": result.get("failed_count", 0),
+            }
+        
+        # 查询所有子任务状态
+        sub_tasks_status = []
+        for sub_task_id in sub_task_ids:
+            sub_task = celery_app.AsyncResult(sub_task_id)
+            sub_task_info = {
+                "task_id": sub_task_id,
+                "status": sub_task.state,
+            }
+            
+            # 获取子任务的详细信息
+            if sub_task.state == "SUCCESS" and sub_task.result:
+                sub_result = sub_task.result if isinstance(sub_task.result, dict) else {}
+                sub_task_info.update({
+                    "shot_id": sub_result.get("shot_id"),
+                    "shot_title": sub_result.get("shot_title"),
+                    "success": sub_result.get("success", False),
+                    "image_url": sub_result.get("image_url"),
+                    "error": sub_result.get("error"),
+                    "skipped": sub_result.get("skipped", False),
+                })
+            elif sub_task.state == "PROGRESS" and sub_task.info:
+                sub_info = sub_task.info if isinstance(sub_task.info, dict) else {}
+                sub_task_info.update({
+                    "shot_id": sub_info.get("shot_id"),
+                    "status_message": sub_info.get("status"),
+                })
+            elif sub_task.state == "FAILURE":
+                sub_task_info["error"] = str(sub_task.info) if sub_task.info else "未知错误"
+            
+            sub_tasks_status.append(sub_task_info)
+        
+        response = {
+            "task_id": task_id,
+            "status": task_state,
+            "task_type": task_type.value if task_type else None,
+            "progress": {
+                "total": progress_info.get("total", 0),
+                "completed": progress_info.get("completed", 0),
+                "success_count": progress_info.get("success_count", 0),
+                "failed_count": progress_info.get("failed_count", 0),
+                "status": progress_info.get("status", ""),
+                "stage": progress_info.get("stage", ""),
+            },
+            "sub_tasks": sub_tasks_status,
+        }
+        
+        return success_response(data=response, message="子任务状态查询成功")
+        
+    except Exception as e:
+        logger.error(f"查询子任务状态失败: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"查询子任务状态失败: {str(e)}"
+        )
+
+
+@router.get("/{task_id}/shots")
+async def get_task_shots_progress(task_id: str, db: Session = Depends(get_db)):
+    """
+    查询分镜图片生成任务的进度和分镜详情
+    
+    该接口不仅返回任务状态，还会从数据库获取最新的分镜信息（包含 image_url）。
+    前端可以通过此接口获取实时的分镜图片生成进度。
+    
+    Args:
+        task_id: 任务ID
+        
+    Returns:
+        {
+            "task_id": "xxx",
+            "status": "PROGRESS",
+            "progress": {...},
+            "creation_id": 123,
+            "scenes": [
+                {
+                    "scene_id": 1,
+                    "title": "场景1",
+                    "shots": [
+                        {
+                            "shot_id": 1,
+                            "title": "分镜1",
+                            "image_url": "https://...",
+                            "image_prompt": "...",
+                            "status": "completed"  # pending/generating/completed/failed
+                        },
+                        ...
+                    ]
+                },
+                ...
+            ]
+        }
+    """
+    try:
+        # 查询主任务状态
+        task = celery_app.AsyncResult(task_id)
+        
+        # 安全获取任务状态（task.state 访问可能抛出异常，比如 Redis 数据损坏时）
+        try:
+            task_state = task.state
+        except Exception as state_error:
+            logger.warning(f"获取任务 {task_id} 状态失败: {str(state_error)}")
+            return success_response(
+                data={
+                    "task_id": task_id,
+                    "status": "UNKNOWN",
+                    "progress": None,
+                    "creation_id": None,
+                    "scenes": [],
+                    "message": "任务状态获取失败，可能任务数据已损坏或任务不存在",
+                    "error": str(state_error)
+                },
+                message="任务状态获取失败"
+            )
+        
+        # 处理 PENDING 状态（任务还未开始）
+        if task_state == "PENDING":
+            return success_response(
+                data={
+                    "task_id": task_id,
+                    "status": task_state,
+                    "progress": None,
+                    "creation_id": None,
+                    "scenes": [],
+                    "message": "任务等待执行中"
+                },
+                message="任务等待执行中"
+            )
+        
+        # 处理 FAILURE 状态
+        if task_state == "FAILURE":
+            error_msg = "未知错误"
+            try:
+                if task.info:
+                    error_msg = str(task.info)
+            except Exception:
+                pass
+            return success_response(
+                data={
+                    "task_id": task_id,
+                    "status": task_state,
+                    "progress": None,
+                    "creation_id": None,
+                    "scenes": [],
+                    "message": "任务执行失败",
+                    "error": error_msg
+                },
+                message="任务执行失败"
+            )
+        
+        # 获取 creation_id
+        creation_id = None
+        progress_info = {}
+        sub_task_results = {}  # shot_id -> result
+        
+        if task_state == "PROGRESS" and task.info:
+            info = task.info if isinstance(task.info, dict) else {}
+            creation_id = info.get("creation_id")
+            progress_info = {
+                "total": info.get("total", 0),
+                "completed": info.get("completed", 0),
+                "success_count": info.get("success_count", 0),
+                "failed_count": info.get("failed_count", 0),
+                "status": info.get("status", "处理中"),
+                "stage": info.get("stage", ""),
+            }
+            # 获取已完成的结果
+            results = info.get("results", [])
+            for res in results:
+                if isinstance(res, dict) and res.get("shot_id"):
+                    sub_task_results[res["shot_id"]] = res
+        elif task_state == "SUCCESS" and task.result:
+            result = task.result if isinstance(task.result, dict) else {}
+            creation_id = result.get("creation_id")
+            progress_info = {
+                "total": result.get("total", 0),
+                "completed": result.get("total", 0),
+                "success_count": result.get("success_count", 0),
+                "failed_count": result.get("failed_count", 0),
+                "status": "完成",
+                "stage": "completed",
+            }
+            results = result.get("results", [])
+            for res in results:
+                if isinstance(res, dict) and res.get("shot_id"):
+                    sub_task_results[res["shot_id"]] = res
+        
+        if not creation_id:
+            return success_response(
+                data={
+                    "task_id": task_id,
+                    "status": task_state,
+                    "message": "无法获取创作ID，任务可能还未开始或不是分镜图片生成任务"
+                },
+                message="任务信息获取中"
+            )
+        
+        # 从数据库获取场景和分镜信息
+        scenes = (
+            db.query(Scene)
+            .options(selectinload(Scene.shots))
+            .filter(Scene.creation_id == creation_id)
+            .order_by(Scene.scene_id)
+            .all()
+        )
+        
+        scenes_data = []
+        for scene in scenes:
+            shots_data = []
+            for shot in sorted(scene.shots, key=lambda s: s.shot_number):
+                # 确定分镜状态
+                shot_status = "pending"
+                if shot.image_url:
+                    shot_status = "completed"
+                elif shot.shot_id in sub_task_results:
+                    res = sub_task_results[shot.shot_id]
+                    if res.get("success"):
+                        shot_status = "completed"
+                    elif res.get("error"):
+                        shot_status = "failed"
+                    else:
+                        shot_status = "generating"
+                
+                shots_data.append({
+                    "shot_id": shot.shot_id,
+                    "title": shot.title,
+                    "shot_number": shot.shot_number,
+                    "image_url": shot.image_url,
+                    "image_prompt": shot.image_prompt,
+                    "narration": shot.narration,
+                    "status": shot_status,
+                })
+            
+            scenes_data.append({
+                "scene_id": scene.scene_id,
+                "title": scene.title,
+                "duration": scene.duration,
+                "shots": shots_data,
+            })
+        
+        response = {
+            "task_id": task_id,
+            "status": task_state,
+            "progress": progress_info,
+            "creation_id": creation_id,
+            "scenes": scenes_data,
+        }
+        
+        return success_response(data=response, message="任务进度查询成功")
+        
+    except Exception as e:
+        logger.error(f"查询任务分镜进度失败: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"查询任务分镜进度失败: {str(e)}"
+        )
 

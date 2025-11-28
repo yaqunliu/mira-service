@@ -8,6 +8,7 @@ from app.api.api_v1.endpoints import (
     scenes,
     shots,
     tasks,
+    voices,
 )
 
 api_router = APIRouter()
@@ -35,4 +36,7 @@ api_router.include_router(shots.router, prefix="/shots", tags=["分镜管理"])
 
 # 任务状态查询路由
 api_router.include_router(tasks.router, prefix="/tasks", tags=["任务管理"])
+
+# 语音管理路由
+api_router.include_router(voices.router, prefix="/voices", tags=["语音管理"])
 

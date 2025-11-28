@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, List
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 
 
@@ -11,7 +11,8 @@ class CreationStatus(str, Enum):
     CREATED = "created"  # 已创建
     PLAYBOOK_GENERATED = "playbook_generated"  # 剧本已生成
     CHARACTER_GENERATED = "character_generated"  # 角色已生成
-    SCENE_GENERATED = "scene_generated"  # 场景已生成
+    SCENE_GENERATED = "scene_generated"  # 分镜已生成
+    VOICE_SELECTED = "voice_selected"  # 音色已选择
     AUDIO_GENERATED = "audio_generated"  # 音频已生成
     VIDEO_GENERATED = "video_generated"  # 视频已生成
     COMPLETED = "completed"  # 已完成
@@ -26,6 +27,8 @@ class CreationBase(BaseModel):
 class CreationCreate(CreationBase):
     novel_id: int
     chapter_id: int
+    voice_id: Optional[str] = None  # Fish Audio 语音模型ID
+    voice_speed: Optional[float] = Field(default=1.0, ge=0.0, le=10.0, description="语速设置，范围 0-10，默认 1.0")
 
 
 class CreationUpdate(BaseModel):
@@ -33,6 +36,9 @@ class CreationUpdate(BaseModel):
     status: Optional[str] = None
     video_url: Optional[str] = None
     audio_url: Optional[str] = None
+    subtitle_url: Optional[str] = None
+    voice_id: Optional[str] = None  # Fish Audio 语音模型ID
+    voice_speed: Optional[float] = Field(default=None, ge=0.0, le=10.0, description="语速设置，范围 0-10")
 
 
 class Creation(CreationBase):
@@ -42,6 +48,9 @@ class Creation(CreationBase):
     chapter_id: int
     video_url: Optional[str] = None
     audio_url: Optional[str] = None
+    subtitle_url: Optional[str] = None  # 字幕文件URL
+    voice_id: Optional[str] = None  # Fish Audio 语音模型ID
+    voice_speed: float = Field(default=1.0, ge=0.0, le=10.0, description="语速设置，范围 0-10，默认 1.0")
     current_task_id: Optional[str] = None  # Celery任务ID
     created_at: datetime
     updated_at: Optional[datetime] = None

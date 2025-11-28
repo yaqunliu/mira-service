@@ -11,9 +11,9 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     
     # 安全配置
-    SECRET_KEY: str
+    SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8  # 8天
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24小时
     
     # CORS配置
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     LLM_MODEL_NAME: str = ""
     IMAGE_MODEL_NAME: str = ""
     
+    # AI 重试配置
+    AI_MAX_RETRIES: int = 3  # 最大重试次数
+    AI_TIMEOUT: int = 120  # 超时时间（秒）
+    AI_RETRY_DELAY: int = 2  # 重试间隔（秒）
+    
     # 云存储配置 (US3)
     US3_PUBLIC_KEY: str = ""
     US3_PRIVATE_KEY: str = ""
@@ -77,6 +82,15 @@ class Settings(BaseSettings):
     DOWNLOAD_SUFFIX: str = ""
     UPLOAD_SUFFIX: str = ""
     DEFAULT_BUCKET: str = ""
+    
+    # Fish Audio 配置
+    FISH_AUDIO_API_KEY: str = ""
+    FISH_AUDIO_DEFAULT_VOICE_ID: str = ""  # 默认语音模型 ID，如 "54a5170264694bfc8e9ad98df7bd89c3" (丁真)
+    
+    # 字体配置
+    FONT_DIR: str = "static/fonts"  # 字体文件本地存储目录
+    SUBTITLE_FONT_URL: str = "https://novel-agent.cn-sh2.ufileos.com/font/black.ttf"  # 字幕字体下载地址
+    SUBTITLE_FONT_NAME: str = "black.ttf"  # 字幕字体文件名
     
     # 日志配置
     LOG_LEVEL: str = "INFO"

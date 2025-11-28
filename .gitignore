@@ -157,6 +157,13 @@ temp/
 tmp/
 ai_res/
 
+# 字体文件（运行时自动下载）
+static/fonts/*.ttf
+static/fonts/*.otf
+static/fonts/*.woff
+static/fonts/*.woff2
+!static/fonts/.gitkeep
+
 # 数据库文件
 *.db
 *.sqlite
