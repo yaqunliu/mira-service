@@ -21,6 +21,9 @@ class TaskType(str, Enum):
     # 批量任务
     BATCH_CHARACTER_IMAGE_GENERATION = "batch_character_image_generation"  # 批量角色图片生成
     BATCH_SHOT_IMAGE_GENERATION = "batch_shot_image_generation"  # 批量分镜图片生成
+    BATCH_AUDIO_GENERATION = "batch_audio_generation"  # 批量音频生成（含字幕）
+    BATCH_VIDEO_GENERATION = "batch_video_generation"  # 批量视频生成
+    VIDEO_MERGE = "video_merge"  # 视频合并（视频+音频+字幕）
 
 
 class TaskStage(str, Enum):
@@ -63,7 +66,9 @@ def get_task_type_from_name(task_name: str) -> TaskType:
         return TaskType.CHARACTER_IMAGE_GENERATION
     elif "scene_description" in task_name_lower:
         return TaskType.SCENE_DESCRIPTION_GENERATION
-    elif "shot_image" in task_name_lower:
+    elif "creation_shots" in task_name_lower or "batch_shot" in task_name_lower:
+        return TaskType.BATCH_SHOT_IMAGE_GENERATION
+    elif "shot_image" in task_name_lower or "single_shot" in task_name_lower:
         return TaskType.SHOT_IMAGE_GENERATION
     elif "audio" in task_name_lower:
         return TaskType.AUDIO_GENERATION

@@ -12,9 +12,12 @@ from app.schemas.shot import (
     ShotCreate,
     ShotUpdate,
     ShotResponse,
-    ShotListResponse
+    ShotListResponse,
+    ShotRegenerateRequest
 )
 from app.utils.response import success_response
+from app.tasks.shot_task import generate_single_shot_image_task
+from app.core.logger import logger
 
 router = APIRouter()
 
@@ -241,11 +244,21 @@ async def generate_shot_image(
     """
     生成分镜图片
     
+    启动一个 Celery 任务异步生成分镜图片。
+    前端可以通过返回的 task_id 轮询查询任务状态。
+    
     Args:
         shot_id: 分镜ID
         
     Returns:
-        任务启动信息
+        {
+            "task_id": "xxx",
+            "shot_id": 123,
+            "creation_id": 456
+        }
+        
+    任务状态查询：
+        GET /api/v1/tasks/{task_id}
     """
     # 获取分镜
     shot = db.query(Shot).options(
@@ -259,12 +272,107 @@ async def generate_shot_image(
     if shot.scene.creation.owner_id != user.user_id:
         raise HTTPException(status_code=403, detail="无权限操作该分镜")
     
-    # TODO: 实现图片生成逻辑（调用AI服务）
-    # 这里可以启动一个Celery任务来异步生成图片
+    # 检查是否有图片提示词
+    if not shot.image_prompt:
+        raise HTTPException(status_code=400, detail="分镜没有图片提示词，无法生成图片")
+    
+    creation_id = shot.scene.creation.creation_id
+    
+    # 启动 Celery 任务
+    task = generate_single_shot_image_task.delay(
+        shot_id=shot_id,
+        creation_id=creation_id
+    )
+    
+    logger.info(f"分镜 {shot_id} 图片生成任务已启动: task_id={task.id}")
     
     return success_response(
-        data={"shot_id": shot_id, "status": "pending"},
+        data={
+            "task_id": task.id,
+            "shot_id": shot_id,
+            "creation_id": creation_id
+        },
         message="分镜图片生成任务已启动"
+    )
+
+
+@router.post("/{shot_id}/regenerate")
+async def regenerate_shot_image(
+    shot_id: int,
+    request: ShotRegenerateRequest = ShotRegenerateRequest(),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    重新生成分镜图片
+    
+    该接口会：
+    1. 更新提示词（如果提供了新的 image_prompt）
+    2. 清空现有的 image_url
+    3. 启动 Celery 任务生成新图片
+    4. 返回 task_id 供前端轮询查询状态
+    
+    Args:
+        shot_id: 分镜ID
+        request: 重新生成请求
+            - image_prompt: 新的图片提示词（可选，不传则使用现有提示词）
+        
+    Returns:
+        {
+            "task_id": "xxx",
+            "shot_id": 123,
+            "creation_id": 456,
+            "image_prompt": "更新后的提示词"
+        }
+        
+    任务状态查询：
+        GET /api/v1/tasks/{task_id}
+    """
+    # 获取分镜
+    shot = db.query(Shot).options(
+        selectinload(Shot.scene).selectinload(Scene.creation)
+    ).filter(Shot.shot_id == shot_id).first()
+    
+    if not shot:
+        raise HTTPException(status_code=404, detail="分镜不存在")
+    
+    # 验证权限
+    if shot.scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限操作该分镜")
+    
+    # 更新提示词（如果提供了新的）
+    if request.image_prompt is not None:
+        shot.image_prompt = request.image_prompt
+    
+    # 检查是否有图片提示词
+    if not shot.image_prompt:
+        raise HTTPException(status_code=400, detail="分镜没有图片提示词，无法生成图片")
+    
+    # 清空现有的 image_url
+    shot.image_url = None
+    
+    # 保存更新
+    db.commit()
+    db.refresh(shot)
+    
+    creation_id = shot.scene.creation.creation_id
+    
+    # 启动 Celery 任务
+    task = generate_single_shot_image_task.delay(
+        shot_id=shot_id,
+        creation_id=creation_id
+    )
+    
+    logger.info(f"分镜 {shot_id} 重新生成任务已启动: task_id={task.id}, image_prompt已更新={request.image_prompt is not None}")
+    
+    return success_response(
+        data={
+            "task_id": task.id,
+            "shot_id": shot_id,
+            "creation_id": creation_id,
+            "image_prompt": shot.image_prompt
+        },
+        message="分镜图片重新生成任务已启动"
     )
 
 

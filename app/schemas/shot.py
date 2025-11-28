@@ -41,6 +41,7 @@ class ShotUpdate(BaseModel):
     narration: Optional[str] = None
     image_prompt: Optional[str] = None
     image_url: Optional[str] = None
+    audio_url: Optional[str] = None
     character_ids: Optional[List[int]] = None  # 更新关联的角色
 
 
@@ -49,6 +50,8 @@ class Shot(ShotBase):
     shot_id: int
     scene_id: int
     image_url: Optional[str] = None
+    audio_url: Optional[str] = None
+    audio_duration: Optional[int] = None  # 音频时长（毫秒）
     created_at: datetime
     updated_at: Optional[datetime] = None
     characters: Optional[List[CharacterBrief]] = None
@@ -91,3 +94,8 @@ class ShotListResponse(BaseModel):
     """镜头列表响应"""
     items: List[ShotResponse]
     total: int
+
+
+class ShotRegenerateRequest(BaseModel):
+    """重新生成分镜图片的请求体"""
+    image_prompt: Optional[str] = None  # 新的图片提示词（可选，不传则使用现有提示词）

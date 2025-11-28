@@ -33,6 +33,10 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+      - PYTHONIOENCODING=utf-8
     depends_on:
       - postgres
       - redis
@@ -40,6 +44,7 @@ services:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
       - /tmp:/tmp
+      # - ./:/app
     networks:
       - video_generator_network
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000

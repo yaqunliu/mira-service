@@ -39,6 +39,8 @@ dependencies = [
     "loguru>=0.7.0",
     "ufile>=2.0.0",
     "openai>=2.8.1",
+    "fish-audio-sdk>=1.1.0",
+    "pydub>=0.25.1",
 ]
 
 [project.optional-dependencies]

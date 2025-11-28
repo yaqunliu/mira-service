@@ -216,7 +216,7 @@ class AIClient:
             logger.error(f"生成剧本失败: {e}")
             raise
     
-    def generate_image_by_prompt(self, prompt: str, model: str = None, aspectRatio: str = "576x1024") -> str:
+    def generate_image_by_prompt(self, prompt: str, model: str = None, aspectRatio: str = "1024x576") -> str:
         """
         根据提示词生成图片
         """

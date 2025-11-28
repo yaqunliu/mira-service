@@ -10,7 +10,8 @@ from app.schemas.scene import (
     SceneCreate, 
     SceneUpdate, 
     SceneResponse,
-    SceneListResponse
+    SceneListResponse,
+    SceneWithShotsResponse
 )
 from app.utils.response import success_response
 
@@ -52,6 +53,73 @@ async def get_creation_scenes(
     return success_response(
         data={
             "items": [scene.model_dump(by_alias=True) for scene in scene_responses],
+            "total": len(scene_responses)
+        },
+        message="获取场景列表成功"
+    )
+
+
+@router.get("/creation/{creation_id}/with-shots")
+async def get_creation_scenes_with_shots(
+    creation_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    获取创作项目的场景列表（包含完整分镜详情）
+    
+    该接口返回的分镜信息包含 image_url、image_prompt 等详细信息，
+    适用于前端需要显示分镜图片和生成状态的场景。
+    
+    Args:
+        creation_id: 创作项目ID
+        
+    Returns:
+        场景列表，每个场景包含完整的分镜详情
+        {
+            "items": [
+                {
+                    "sceneId": 1,
+                    "title": "场景1",
+                    "duration": "00:00:30",
+                    "sceneSetting": {...},
+                    "shots": [
+                        {
+                            "shotId": 1,
+                            "title": "分镜1",
+                            "shotNumber": 1,
+                            "imageUrl": "https://...",
+                            "imagePrompt": "...",
+                            "narration": "..."
+                        },
+                        ...
+                    ]
+                },
+                ...
+            ],
+            "total": 5
+        }
+    """
+    # 验证创作项目是否存在
+    creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+    if not creation:
+        raise HTTPException(status_code=404, detail="创作项目不存在")
+    
+    # 验证权限
+    if creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限访问该创作项目")
+    
+    # 获取场景列表，预加载shots关系
+    scenes = db.query(Scene).options(
+        selectinload(Scene.shots)
+    ).filter(Scene.creation_id == creation_id).order_by(Scene.scene_id).all()
+    
+    # 转换为包含完整分镜详情的响应格式
+    scene_responses = [SceneWithShotsResponse.from_db_model(scene) for scene in scenes]
+    
+    return success_response(
+        data={
+            "items": [scene.model_dump() for scene in scene_responses],
             "total": len(scene_responses)
         },
         message="获取场景列表成功"

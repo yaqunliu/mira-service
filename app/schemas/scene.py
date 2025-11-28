@@ -42,9 +42,40 @@ class ShotBrief(BaseModel):
     shot_id: int
     title: str
     shot_number: int
+    image_prompt: str | None
+    image_url: str | None
+    narration: str | None
+    description: str | None
     
     class Config:
         from_attributes = True
+
+
+class ShotDetail(BaseModel):
+    """镜头详细信息（用于场景响应中，包含图片URL）"""
+    shot_id: int
+    title: str
+    shot_number: int
+    image_url: Optional[str] = None
+    image_prompt: Optional[str] = None
+    narration: Optional[str] = None
+    description: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+    
+    @classmethod
+    def from_db_model(cls, shot) -> "ShotDetail":
+        """从数据库模型转换"""
+        return cls(
+            shot_id=shot.shot_id,
+            title=shot.title,
+            shot_number=shot.shot_number,
+            image_url=shot.image_url,
+            image_prompt=shot.image_prompt,
+            narration=shot.narration,
+            description=shot.description
+        )
 
 
 class Scene(SceneBase):
@@ -92,3 +123,31 @@ class SceneListResponse(BaseModel):
     """场景列表响应"""
     items: List[SceneResponse]
     total: int
+
+
+class SceneWithShotsResponse(BaseModel):
+    """场景响应（包含完整分镜详情）"""
+    scene_id: int
+    title: str
+    duration: Optional[str] = None
+    scene_setting: SceneSetting
+    shots: List[ShotDetail] = Field(default_factory=list)
+    
+    class Config:
+        from_attributes = True
+    
+    @classmethod
+    def from_db_model(cls, scene) -> "SceneWithShotsResponse":
+        """从数据库模型转换"""
+        return cls(
+            scene_id=scene.scene_id,
+            title=scene.title,
+            duration=scene.duration,
+            scene_setting=SceneSetting(
+                time=scene.time_setting,
+                location=scene.location,
+                space=scene.space_type,
+                atmosphere=scene.atmosphere
+            ),
+            shots=[ShotDetail.from_db_model(shot) for shot in sorted(scene.shots, key=lambda s: s.shot_number)] if scene.shots else []
+        )

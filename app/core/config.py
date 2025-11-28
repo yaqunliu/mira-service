@@ -78,6 +78,15 @@ class Settings(BaseSettings):
     UPLOAD_SUFFIX: str = ""
     DEFAULT_BUCKET: str = ""
     
+    # Fish Audio 配置
+    FISH_AUDIO_API_KEY: str = ""
+    FISH_AUDIO_DEFAULT_VOICE_ID: str = ""  # 默认语音模型 ID，如 "54a5170264694bfc8e9ad98df7bd89c3" (丁真)
+    
+    # 字体配置
+    FONT_DIR: str = "static/fonts"  # 字体文件本地存储目录
+    SUBTITLE_FONT_URL: str = "https://novel-agent.cn-sh2.ufileos.com/font/black.ttf"  # 字幕字体下载地址
+    SUBTITLE_FONT_NAME: str = "black.ttf"  # 字幕字体文件名
+    
     # 日志配置
     LOG_LEVEL: str = "INFO"
     
