@@ -41,10 +41,10 @@ services:
       - postgres
       - redis
     volumes:
-      # - ./uploads:/app/uploads
-      # - ./logs:/app/logs
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
       - /tmp:/tmp
-      - ./:/app
+      # - ./:/app
     networks:
       - video_generator_network
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
