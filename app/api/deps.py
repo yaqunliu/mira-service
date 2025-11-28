@@ -42,12 +42,16 @@ def get_current_user(
 ) -> User:
     """
     获取当前用户
-    如果无法获取当前用户（token无效或未提供），则返回默认用户（admin）
+    如果无法获取当前用户（token无效或未提供），则抛出401未授权异常
     """
-    # 如果没有提供token，使用默认用户
+    # 如果没有提供token，抛出未授权异常
     if not token:
-        logger.info("未提供token，使用默认admin用户")
-        return get_default_user(db)
+        logger.warning("未提供token，拒绝访问")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未提供认证令牌",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
     try:
         payload = jwt.decode(
@@ -55,16 +59,28 @@ def get_current_user(
         )
         username: str = payload.get("sub")
         if username is None:
-            logger.warning("token中未找到用户名，使用默认admin用户")
-            return get_default_user(db)
+            logger.warning("token中未找到用户名")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="无效的认证令牌",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
     except JWTError as e:
-        logger.warning(f"token验证失败: {str(e)}，使用默认admin用户")
-        return get_default_user(db)
+        logger.warning(f"token验证失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的认证令牌",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
     user = db.query(User).filter(User.username == username).first()
     if user is None:
-        logger.warning(f"用户 {username} 不存在，使用默认admin用户")
-        return get_default_user(db)
+        logger.warning(f"用户 {username} 不存在")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户不存在",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
     return user
 
