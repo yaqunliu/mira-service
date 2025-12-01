@@ -9,10 +9,13 @@ services:
       POSTGRES_DB: video_generator
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
+      TZ: Asia/Shanghai
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     networks:
       - video_generator_network
 
@@ -20,8 +23,13 @@ services:
   redis:
     image: redis:7-alpine
     container_name: video_generator_redis
+    environment:
+      TZ: Asia/Shanghai
     ports:
       - "6379:6379"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     networks:
       - video_generator_network
 
@@ -37,6 +45,7 @@ services:
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
       - PYTHONIOENCODING=utf-8
+      - TZ=Asia/Shanghai
     depends_on:
       - postgres
       - redis
@@ -44,6 +53,8 @@ services:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
       - /tmp:/tmp
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
       # - ./:/app
     networks:
       - video_generator_network
@@ -60,6 +71,7 @@ services:
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
       - PYTHONIOENCODING=utf-8
+      - TZ=Asia/Shanghai
     # Celery 依赖于 Redis (作为 Broker) 和 PostgreSQL (如果任务需要访问数据库)
     depends_on:
       - postgres
@@ -69,6 +81,8 @@ services:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
       - /tmp:/tmp
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     networks:
       - video_generator_network
     # 启动 Celery Worker 的命令
