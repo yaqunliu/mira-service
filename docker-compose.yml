@@ -16,7 +16,7 @@ services:
     networks:
       - video_generator_network
 
-  # Redis缓存
+  # Redis缓存 (Celery Broker/Backend)
   redis:
     image: redis:7-alpine
     container_name: video_generator_redis
@@ -48,6 +48,31 @@ services:
     networks:
       - video_generator_network
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+      
+  # Celery任务处理 Worker 服务
+  celery_worker:
+    build: .
+    container_name: video_generator_celery_worker
+    env_file:
+      - .env
+    environment:
+      # 保持与 API 相同的语言环境配置
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+      - PYTHONIOENCODING=utf-8
+    # Celery 依赖于 Redis (作为 Broker) 和 PostgreSQL (如果任务需要访问数据库)
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      # 挂载卷以访问上传文件和日志
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - /tmp:/tmp
+    networks:
+      - video_generator_network
+    # 启动 Celery Worker 的命令
+    command: bash start_celery.sh
 
 volumes:
   postgres_data:
