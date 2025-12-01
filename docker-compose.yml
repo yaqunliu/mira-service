@@ -50,12 +50,12 @@ services:
       - postgres
       - redis
     volumes:
-      - ./uploads:/app/uploads
-      - ./logs:/app/logs
+      # - ./uploads:/app/uploads
+      # - ./logs:/app/logs
+      - ./:/app
       - /tmp:/tmp
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-      # - ./:/app
     networks:
       - video_generator_network
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -78,8 +78,9 @@ services:
       - redis
     volumes:
       # 挂载卷以访问上传文件和日志
-      - ./uploads:/app/uploads
-      - ./logs:/app/logs
+      # - ./uploads:/app/uploads
+      # - ./logs:/app/logs
+      - ./:/app
       - /tmp:/tmp
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro

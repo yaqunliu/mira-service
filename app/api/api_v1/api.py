@@ -9,6 +9,7 @@ from app.api.api_v1.endpoints import (
     shots,
     tasks,
     voices,
+    points,
 )
 
 api_router = APIRouter()
@@ -39,4 +40,7 @@ api_router.include_router(tasks.router, prefix="/tasks", tags=["任务管理"])
 
 # 语音管理路由
 api_router.include_router(voices.router, prefix="/voices", tags=["语音管理"])
+
+# 积分管理路由
+api_router.include_router(points.router, prefix="/points", tags=["积分管理"])
 

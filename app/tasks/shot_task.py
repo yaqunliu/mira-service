@@ -21,9 +21,12 @@ from app.utils.task_types import TaskType
 from app.utils.ai_client import AIClient
 from app.core.logger import logger
 from app.utils.us3 import US3Client
+from app.utils.points_deduction import deduct_points_for_image
+from app.core.config import settings
+from app.services.points_service import PointsService
 
 
-def _generate_single_shot_image(shot_id: int, creation_id: int) -> dict:
+def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id: int = None) -> dict:
     """
     生成单个分镜的图片（线程安全函数，使用图生图）
     
@@ -229,6 +232,18 @@ def _generate_single_shot_image(shot_id: int, creation_id: int) -> dict:
         db.commit()
         db.refresh(shot)
         
+        # 确认扣除冻结的积分（任务成功）
+        if freeze_record_id:
+            try:
+                PointsService.confirm_frozen_points(
+                    db=db,
+                    freeze_record_id=freeze_record_id
+                )
+                logger.info(f"分镜 {shot_id} 图片生成成功，已确认扣除冻结积分: freeze_record_id={freeze_record_id}")
+            except Exception as e:
+                logger.error(f"确认扣除冻结积分失败: {str(e)}", exc_info=True)
+                # 确认失败不影响任务完成，但需要记录错误
+        
         logger.info(f"分镜 {shot.title}(ID: {shot_id}) 图片生成成功")
         return {
             "shot_id": shot_id,
@@ -238,6 +253,19 @@ def _generate_single_shot_image(shot_id: int, creation_id: int) -> dict:
         }
     except Exception as e:
         logger.error(f"分镜 {shot_id} 图片生成失败: {str(e)}", exc_info=True)
+        
+        # 任务失败，释放冻结的积分
+        if freeze_record_id:
+            try:
+                PointsService.release_frozen_points(
+                    db=db,
+                    freeze_record_id=freeze_record_id,
+                    reason=f"图片生成失败：{str(e)}"
+                )
+                logger.info(f"分镜 {shot_id} 图片生成失败，已释放冻结积分: freeze_record_id={freeze_record_id}")
+            except Exception as release_error:
+                logger.error(f"释放冻结积分失败: {str(release_error)}", exc_info=True)
+        
         db.rollback()
         return {
             "shot_id": shot_id,
@@ -249,18 +277,19 @@ def _generate_single_shot_image(shot_id: int, creation_id: int) -> dict:
 
 
 @celery_app.task(bind=True, name="generate_single_shot_image_task")
-def generate_single_shot_image_task(self, shot_id: int, creation_id: int) -> dict:
+def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None) -> dict:
     """
     Celery任务：生成单个分镜的图片
     
     Args:
         shot_id: 分镜ID
         creation_id: 创作ID
+        freeze_record_id: 冻结记录ID（可选，如果提供则使用冻结机制）
         
     Returns:
         包含分镜ID和处理结果的字典
     """
-    logger.info(f"开始执行分镜图片生成任务: shot_id={shot_id}, creation_id={creation_id}")
+    logger.info(f"开始执行分镜图片生成任务: shot_id={shot_id}, creation_id={creation_id}, freeze_record_id={freeze_record_id}")
     
     self.update_state(
         state="PROGRESS",
@@ -272,7 +301,7 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int) -> dic
         }
     )
     
-    result = _generate_single_shot_image(shot_id, creation_id)
+    result = _generate_single_shot_image(shot_id, creation_id, freeze_record_id)
     result["task_type"] = TaskType.SHOT_IMAGE_GENERATION
     return result
 

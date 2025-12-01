@@ -82,3 +82,20 @@ class AIRetryExhaustedError(BaseServiceException):
     
     def __init__(self, message: str = "AI 服务调用失败，已重试多次", detail: Optional[str] = None):
         super().__init__(message, status_code=500, detail=detail)
+
+
+class InsufficientPointsError(BaseServiceException):
+    """积分不足异常"""
+    
+    def __init__(self, required: int, available: int, message: str = "积分不足", detail: Optional[str] = None):
+        self.required = required
+        self.available = available
+        detail = detail or f"积分不足，需要 {required} 积分，当前可用 {available} 积分"
+        super().__init__(message, status_code=402, detail=detail)
+
+
+class AlreadyCheckedInError(BaseServiceException):
+    """今日已签到异常"""
+    
+    def __init__(self, message: str = "今日已签到，请明天再来", detail: Optional[str] = None):
+        super().__init__(message, status_code=400, detail=detail)

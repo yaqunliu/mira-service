@@ -61,13 +61,24 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
             chapter_content = f.read()
         logger.info(f"成功读取章节内容，长度: {len(chapter_content)} 字符")
 
+        # 查询对应的 Creation 记录以获取用户信息
+        creation = db.query(Creation).filter(
+            Creation.creation_id == creation_id
+        ).first()
+        
+        if not creation:
+            raise Exception(f"创作不存在: creation_id={creation_id}")
+        
         # TODO: 生成剧本 - 临时简化开发，直接返回 demo.json 数据
         # 正式环境应使用以下代码：
         ai_client = AIClient()
         prompt_playbook = read_prompt_file("playbook.md")
         playbook = ai_client.gen_playbook_by_chapter(
             prompt=prompt_playbook, 
-            chapter_content=chapter_content
+            chapter_content=chapter_content,
+            user_id=creation.owner_id,
+            creation_id=creation_id,
+            novel_id=creation.novel_id
         )
         
         # 临时方案：直接读取 demo.json 文件
@@ -82,16 +93,6 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
         #     playbook = json.load(f)
         
         logger.info(f"成功加载演示数据，包含 {len(playbook.get('场景拆解', []))} 个场景")
-        
-        # 查询对应的 Creation 记录
-        creation = db.query(Creation).filter(
-            Creation.creation_id == creation_id
-        ).first()
-        
-        if not creation:
-            raise Exception(f"未找到对应的创作记录: creation_id={creation_id}")
-        
-        creation_id = creation.creation_id
         logger.info(f"找到创作记录: creation_id={creation_id}")
         
         # 解析并保存角色信息

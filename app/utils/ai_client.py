@@ -18,6 +18,8 @@ from app.core.exceptions import (
     AITimeoutError,
     AIRetryExhaustedError
 )
+from app.utils.points_deduction import deduct_points_for_llm
+from app.db.session import SessionLocal
 import openai
 
 
@@ -28,7 +30,8 @@ class AIClient:
     """
 
     def __init__(
-        self, api_key: str = None, base_url: str = None, llm_model_name: str = None, image_model_name: str = None
+        self, api_key: str = None, base_url: str = None, llm_model_name: str = None, 
+        image_model_name: str = None, text_to_image_model: str = None, image_to_image_model: str = None
     ):
         """
         初始化 AIGC 客户端
@@ -37,12 +40,22 @@ class AIClient:
             api_key: OpenAI API 密钥，默认从配置读取
             base_url: API 基础 URL，默认从配置读取
             llm_model_name: 模型名称，默认从配置读取
+            image_model_name: 图片模型名称（向后兼容，已废弃）
+            text_to_image_model: 文生图模型名称（用于生成角色图片）
+            image_to_image_model: 图生图模型名称（用于生成分镜图片）
         """
         self.api_key = api_key or settings.OPENAI_API_KEY
         self.base_url = base_url or settings.OPENAI_BASE_URL
         self.llm_model_name = llm_model_name or settings.LLM_MODEL_NAME
-        self.image_model_name = image_model_name or settings.IMAGE_MODEL_NAME
-        logger.info(f"生图模型: {self.image_model_name}")
+        
+        # 图片模型配置：优先使用新配置，否则使用旧配置（向后兼容）
+        self.text_to_image_model = text_to_image_model or settings.IMAGE_MODEL_TEXT_TO_IMAGE or settings.IMAGE_MODEL_NAME
+        self.image_to_image_model = image_to_image_model or settings.IMAGE_MODEL_IMAGE_TO_IMAGE or settings.IMAGE_MODEL_NAME
+        # 向后兼容：保留旧属性
+        self.image_model_name = image_model_name or self.text_to_image_model
+        
+        logger.info(f"文生图模型（角色）: {self.text_to_image_model}")
+        logger.info(f"图生图模型（分镜）: {self.image_to_image_model}")
 
         if not self.api_key:
             raise ValueError("OpenAI API Key 未配置")
@@ -162,7 +175,13 @@ class AIClient:
         }
 
     def chat_completion(
-        self, messages: List[Dict[str, str]], model: str = None, **kwargs
+        self, 
+        messages: List[Dict[str, str]], 
+        model: str = None,
+        user_id: int = None,
+        creation_id: int = None,
+        novel_id: int = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """
         调用 LLM 进行文本生成（带重试机制）
@@ -170,6 +189,9 @@ class AIClient:
         Args:
             messages: 消息列表
             model: 模型名称，默认使用初始化时的模型
+            user_id: 用户ID（用于积分扣除，可选）
+            creation_id: 创作ID（用于积分扣除，可选）
+            novel_id: 小说ID（用于积分扣除，可选）
             **kwargs: 其他参数（如 temperature, max_tokens 等）
 
         Returns:
@@ -204,6 +226,29 @@ class AIClient:
                         raise TimeoutError(f"LLM 调用超时（{self.timeout}秒）")
                 
                 logger.debug(f"LLM 调用成功，模型: {model}")
+                
+                # 扣除积分（后扣机制，如果提供了用户信息）
+                if user_id and response.get('usage'):
+                    usage = response['usage']
+                    try:
+                        db = SessionLocal()
+                        try:
+                            deduct_points_for_llm(
+                                db=db,
+                                user_id=user_id,
+                                model_name=model,
+                                prompt_tokens=usage.get('prompt_tokens', 0),
+                                completion_tokens=usage.get('completion_tokens', 0),
+                                total_tokens=usage.get('total_tokens', 0),
+                                creation_id=creation_id,
+                                novel_id=novel_id
+                            )
+                        finally:
+                            db.close()
+                    except Exception as e:
+                        logger.error(f"LLM调用积分扣除失败: {str(e)}", exc_info=True)
+                        # 积分扣除失败不影响LLM调用流程，只记录错误
+                
                 return response
                 
             except TimeoutError as e:
@@ -260,7 +305,13 @@ class AIClient:
             raise AIRetryExhaustedError(error_msg) from last_error
 
     def gen_playbook_by_chapter(
-        self, prompt: str, chapter_content: str, model: str = None
+        self, 
+        prompt: str, 
+        chapter_content: str, 
+        model: str = None,
+        user_id: int = None,
+        creation_id: int = None,
+        novel_id: int = None
     ) -> Dict[str, Any]:
         """
         根据章节内容生成剧本（Playbook）
@@ -269,6 +320,9 @@ class AIClient:
             prompt: 提示词
             chapter_content: 章节内容
             model: 模型名称，默认使用初始化时的模型
+            user_id: 用户ID（用于积分扣除，可选）
+            creation_id: 创作ID（用于积分扣除，可选）
+            novel_id: 小说ID（用于积分扣除，可选）
 
         Returns:
             解析后的 JSON 数据
@@ -281,7 +335,14 @@ class AIClient:
         ]
 
         try:
-            response = self.chat_completion(messages=messages, model=model, response_format={"type": "json_object"})
+            response = self.chat_completion(
+                messages=messages, 
+                model=model, 
+                response_format={"type": "json_object"},
+                user_id=user_id,
+                creation_id=creation_id,
+                novel_id=novel_id
+            )
             ai_content = response.get("content", "")
             logger.info(f"AI 返回内容: {ai_content}")
 
@@ -337,8 +398,10 @@ class AIClient:
             AITimeoutError: 调用超时
             AIRetryExhaustedError: 重试次数耗尽
         """
-        model = model or self.image_model_name
-        logger.info(f"生成图片开始，模型: {model}, 提示词长度: {len(prompt)}")
+        # 文生图使用 text_to_image_model
+        model = model or self.text_to_image_model
+        logger.info(f"生成图片开始（文生图），模型: {model}, 提示词长度: {len(prompt)}")
+        logger.info(f"【文生图提示词】: {prompt}")
         
         last_error = None
         
@@ -440,13 +503,14 @@ class AIClient:
         )
         
         image_url = response.data[0].url
+
         return image_url
     
     def generate_image_by_reference(
         self, 
         prompt: str, 
         reference_images: List[str], 
-        model: str = "black-forest-labs/flux-kontext-pro/multi",
+        model: str = None,
         aspect_ratio: str = "16:9"
     ) -> str:
         """
@@ -455,7 +519,7 @@ class AIClient:
         Args:
             prompt: 图片生成提示词（英文）
             reference_images: 参考图片URL列表（shot关联的角色图片）
-            model: 模型名称，默认使用 flux-kontext-pro/multi
+            model: 模型名称，默认使用 image_to_image_model（图生图模型）
             aspect_ratio: 图片宽高比，格式为 "宽度:高度"，默认 "16:9"
             
         Returns:
@@ -466,7 +530,11 @@ class AIClient:
             AITimeoutError: 调用超时
             AIRetryExhaustedError: 重试次数耗尽
         """
+        # 图生图使用 image_to_image_model
+        model = model or self.image_to_image_model
         logger.info(f"图生图开始，模型: {model}, 提示词长度: {len(prompt)}, 参考图片数量: {len(reference_images)}")
+        logger.info(f"【图生图提示词】: {prompt}")
+        logger.info(f"【图生图参考图片】: {reference_images}")
         
         last_error = None
         
