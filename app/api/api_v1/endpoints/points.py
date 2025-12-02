@@ -53,7 +53,7 @@ async def get_points_balance(
 async def get_points_records(
     page: int = Query(1, ge=1, description="页码，从1开始"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量，最大100"),
-    record_type: Optional[str] = Query(None, description="记录类型：consume, recharge, reward, refund, expire, checkin"),
+    record_type: Optional[str] = Query(None, description="记录类型：consume, recharge, reward, refund, expire, checkin（默认排除 freeze 和 release 类型）"),
     operation_type: Optional[str] = Query(None, description="操作类型"),
     creation_id: Optional[int] = Query(None, description="创作ID"),
     novel_id: Optional[int] = Query(None, description="小说ID"),

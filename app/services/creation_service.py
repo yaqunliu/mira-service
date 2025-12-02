@@ -18,31 +18,67 @@ class CreationService:
     @staticmethod
     def create_creation_service(
         db: Session,
-        novel_id: int,
-        chapter_id: int,
-        user_id: int
-    ) -> str:
+        novel_id: Optional[int],
+        chapter_id: Optional[int],
+        user_id: int,
+        creation_id: Optional[int] = None
+    ) -> int:
         """
-        创建新的创作项目
+        创建新的创作项目或继续已存在的创作
         
         Args:
             db: 数据库会话
-            novel_id: 小说ID
-            chapter_id: 章节ID
+            novel_id: 小说ID（如果提供了 creation_id，则可以为 None）
+            chapter_id: 章节ID（如果提供了 creation_id，则可以为 None）
             user_id: 用户ID（已通过API层验证）
+            creation_id: 可选的创作ID，用于继续已存在但未成功的创作
             
         Returns:
-            任务ID字符串
+            创作ID
             
         Raises:
-            NotFoundError: 当小说或章节不存在时
-            PermissionError: 当用户无权访问该小说时
-            AlreadyExistsError: 当该章节已存在创作时
+            NotFoundError: 当小说或章节不存在时，或创作不存在时
+            PermissionError: 当用户无权访问该小说或创作时
+            AlreadyExistsError: 当该章节已存在创作时（仅在创建新创作时）
             DatabaseError: 当任务创建失败时
         """
+        # 如果提供了 creation_id，则继续已存在的创作
+        if creation_id:
+            logger.info(f"继续已存在的创作: creation_id={creation_id}, user_id={user_id}")
+            creation = CreationService._validate_and_get_existing_creation(
+                db, creation_id, user_id
+            )
+            
+            # 验证输入参数（从已有创作中获取）
+            novel, chapter = CreationService._validate_inputs(
+                db, creation.novel_id, creation.chapter_id, user_id
+            )
+            
+            # 创建并启动 Celery 任务
+            task_id = CreationService._create_and_start_task(
+                creation.creation_id, creation.novel_id, creation.chapter_id, chapter.content_url
+            )
+            
+            # 将 task_id 绑定到 creation 记录
+            try:
+                creation.current_task_id = task_id
+                db.commit()
+                logger.info(f"已更新创作记录的 current_task_id: creation_id={creation.creation_id}, task_id={task_id}")
+            except Exception as e:
+                logger.error(f"更新创作记录失败: {str(e)}", exc_info=True)
+                db.rollback()
+                raise DatabaseError(detail="更新创作记录失败") from e
+            
+            logger.info(f"创作项目继续成功: creation_id={creation.creation_id}, task_id={task_id}")
+            return creation.creation_id
+        
+        # 如果没有提供 creation_id，则创建新的创作
         logger.info(f"创建新的视频创作项目: novel_id={novel_id}, chapter_id={chapter_id}, user_id={user_id}")
         
         # 验证输入参数
+        if not novel_id or not chapter_id:
+            raise ValueError("创建新创作时必须提供 novel_id 和 chapter_id")
+        
         novel, chapter = CreationService._validate_inputs(
             db, novel_id, chapter_id, user_id
         )
@@ -142,84 +178,94 @@ class CreationService:
         Returns:
             创作记录对象（包含预加载的关联数据）
         """
-        # 先加载 Creation 及其直接关联的数据
+        # 使用 selectinload 一次性加载所有关联数据，包括嵌套的关联
+        # 注意：scenes 和 shots 的排序已在模型 relationship 中通过 order_by 设置
         creation = db.query(Creation).options(
             selectinload(Creation.characters),
-            selectinload(Creation.scenes).selectinload(Scene.shots),
+            selectinload(Creation.scenes).selectinload(Scene.shots).selectinload(Shot.characters),
             selectinload(Creation.novel),
             selectinload(Creation.chapter)
-            # selectinload(Creation.owner)
         ).filter(Creation.creation_id == creation_id).first()
         
+        return creation
+
+    @staticmethod
+    def get_creation_simple_service(
+        db: Session,
+        creation_id: int
+    ) -> Optional[Creation]:
+        """
+        获取创作记录（仅基本字段，不加载关联数据）
+        
+        这是一个轻量级方法，只返回创作的基本信息，不加载关联的characters、scenes等数据，
+        用于需要快速获取创作基本信息的场景。
+        
+        Args:
+            db: 数据库会话
+            creation_id: 创作ID
+            
+        Returns:
+            创作记录对象（仅包含基本字段，不包含关联数据）
+        """
+        # 只查询创作的基本字段，不加载任何关联数据
+        creation = db.query(Creation).filter(
+            Creation.creation_id == creation_id
+        ).first()
+        
+        return creation
+
+    @staticmethod
+    def get_creation_by_chapter_service(
+        db: Session,
+        chapter_id: int,
+        user_id: int
+    ) -> Optional[Creation]:
+        """
+        根据章节ID获取创作记录
+        
+        Args:
+            db: 数据库会话
+            chapter_id: 章节ID
+            user_id: 用户ID（已通过API层验证）
+            
+        Returns:
+            创作记录对象（如果存在），否则返回None
+            
+        Raises:
+            NotFoundError: 当章节不存在时
+            PermissionError: 当用户无权访问该章节所属的小说时
+        """
+        logger.info(f"根据章节ID查询创作: chapter_id={chapter_id}, user_id={user_id}")
+        
+        # 先查询章节，验证章节是否存在和权限
+        chapter = db.query(Chapter).filter(Chapter.chapter_id == chapter_id).first()
+        if not chapter:
+            raise NotFoundError(detail="章节不存在")
+        
+        # 查询章节所属的小说，验证权限
+        novel = db.query(Novel).filter(Novel.novel_id == chapter.novel_id).first()
+        if not novel:
+            raise NotFoundError(detail="章节所属的小说不存在")
+        
+        # 验证用户权限
+        if novel.owner_id != user_id:
+            raise PermissionError(detail="无权限访问该章节")
+        
+        # 查询该章节的创作
+        creation = db.query(Creation).options(
+            selectinload(Creation.characters),
+            selectinload(Creation.scenes)
+        ).filter(Creation.chapter_id == chapter_id).first()
+        
         if not creation:
+            logger.info(f"章节 {chapter_id} 没有关联的创作")
             return None
         
-        # 单独加载所有 shots 的 characters（多对多关系）
-        # 收集所有 shot_id
-        shot_ids = [shot.shot_id for scene in creation.scenes for shot in scene.shots]
-        
-        # 如果有 shots，则单独查询并加载它们的 characters
-        if shot_ids:
-            # 查询所有相关的 shots 并加载它们的 characters
-            shots_with_chars = db.query(Shot).filter(Shot.shot_id.in_(shot_ids)).options(
-                selectinload(Shot.characters)
-            ).all()
-            
-            # 打印每个 shot 及其关联的 characters 信息
-            logger.info(f"加载了 {len(shots_with_chars)} 个 shots 的 characters")
-            for shot in shots_with_chars:
-                char_info = [
-                    f"character_id={char.character_id}, name={char.name}"
-                    for char in shot.characters
-                ]
-                logger.info(
-                    f"Shot ID={shot.shot_id}, title={shot.title}, "
-                    f"characters_count={len(shot.characters)}, "
-                    f"characters=[{', '.join(char_info)}]"
-                )
-            
-            # 创建一个 shot_id 到 characters 列表的映射
-            shot_characters_map = {
-                shot.shot_id: list(shot.characters)  # 复制列表，避免引用问题
-                for shot in shots_with_chars
-            }
-            logger.info(f"创建了 shot_characters_map，包含 {len(shot_characters_map)} 个 shots: {list(shot_characters_map.keys())}")
-            
-            # 将已加载的 characters 关联到 creation 中的 shot 对象
-            logger.info(f"开始关联 characters 到 creation 中的 shots，scenes 数量: {len(creation.scenes)}")
-            for scene_idx, scene in enumerate(creation.scenes):
-                logger.info(f"处理 Scene {scene_idx + 1} (scene_id={scene.scene_id})，包含 {len(scene.shots)} 个 shots")
-                for shot_idx, shot in enumerate(scene.shots):
-                    logger.info(f"  处理 Shot {shot_idx + 1} (shot_id={shot.shot_id}, title={shot.title})")
-                    if shot.shot_id in shot_characters_map:
-                        # 获取该 shot 的 characters 列表
-                        characters_list = shot_characters_map[shot.shot_id]
-                        # 清空现有的 characters（如果有）
-                        shot.characters.clear()
-                        # 添加新的 characters（确保在同一个 session 中）
-                        for char in characters_list:
-                            # 确保 character 对象在当前 session 中
-                            char_in_session = db.merge(char)
-                            shot.characters.append(char_in_session)
-                        
-                        logger.info(
-                            f"  ✓ 已关联 Shot ID={shot.shot_id}，characters 数量: {len(shot.characters)}"
-                        )
-                        # 验证：打印每个 character 的信息
-                        for char in shot.characters:
-                            logger.info(f"    - Character ID={char.character_id}, name={char.name}")
-                    else:
-                        logger.warning(
-                            f"  ✗ Shot ID={shot.shot_id} 不在 shot_characters_map 中，无法关联 characters"
-                        )
-                
-                # 在 scene 级别验证
-                logger.info(f"  Scene {scene_idx + 1} 处理完成，验证所有 shots 的 characters:")
-                for shot in scene.shots:
-                    logger.info(
-                        f"    Shot ID={shot.shot_id}: {len(shot.characters)} 个 characters"
-                    )
-        
+        logger.info(
+            f"找到创作: creation_id={creation.creation_id}, "
+            f"characters_count={len(creation.characters)}, "
+            f"scenes_count={len(creation.scenes)}"
+        )
         return creation
 
     @staticmethod
@@ -274,6 +320,61 @@ class CreationService:
         
         if existing_creation:
             raise AlreadyExistsError(detail="该章节已存在创作")
+    
+    @staticmethod
+    def _validate_and_get_existing_creation(
+        db: Session,
+        creation_id: int,
+        user_id: int
+    ) -> Creation:
+        """
+        验证并获取已存在的创作
+        
+        Args:
+            db: 数据库会话
+            creation_id: 创作ID
+            user_id: 用户ID
+            
+        Returns:
+            Creation 对象
+            
+        Raises:
+            NotFoundError: 当创作不存在时
+            PermissionError: 当用户无权访问该创作时
+            DatabaseError: 当创作状态不允许继续时，或已有正在执行的任务时
+        """
+        creation = db.query(Creation).filter(
+            Creation.creation_id == creation_id
+        ).first()
+        
+        if not creation:
+            raise NotFoundError(detail="创作不存在")
+        
+        # 验证用户权限
+        if creation.owner_id != user_id:
+            raise PermissionError(detail="无权限访问该创作")
+        
+        # 检查是否有正在执行的任务
+        if creation.current_task_id:
+            raise DatabaseError(
+                detail=f"创作正在执行其他任务，任务ID: {creation.current_task_id}"
+            )
+        
+        # 检查创作状态是否允许继续
+        # 允许继续的状态：CREATED（已创建但未成功）、FAILED（失败）
+        allowed_statuses = [CreationStatus.CREATED, CreationStatus.FAILED]
+        if creation.status not in allowed_statuses:
+            raise DatabaseError(
+                detail=f"创作状态为 {creation.status}，不允许继续。只有状态为 CREATED 或 FAILED 的创作可以继续。"
+            )
+        
+        logger.info(
+            f"验证通过，可以继续创作: creation_id={creation_id}, "
+            f"status={creation.status}, novel_id={creation.novel_id}, "
+            f"chapter_id={creation.chapter_id}"
+        )
+        
+        return creation
     
     @staticmethod
     def _create_creation_record(

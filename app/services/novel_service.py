@@ -11,8 +11,12 @@ from app.core.logger import logger
 from app.core.exceptions import (
     FileSizeExceededError,
     FileEmptyError,
-    DatabaseError
+    DatabaseError,
+    NotFoundError,
+    PermissionError
 )
+from app.schemas.novel import NovelUpdate
+from app.schemas.chapter import ChapterUpdate
 
 # 文件大小限制：50MB
 MAX_NOVEL_FILE_SIZE = 50 * 1024 * 1024
@@ -222,14 +226,35 @@ class NovelService:
             user_id: 当前用户ID（已通过API层验证）
             
         Returns:
-            小说对象
+            小说对象（包含章节信息）
             
         Raises:
-            HTTPException: 当小说不存在或用户无权限时
+            NotFoundError: 当小说不存在时
+            PermissionError: 当用户无权限时
         """
-        # TODO: 实现获取小说详情逻辑
-        from app.core.exceptions import BaseServiceException
-        raise BaseServiceException("功能尚未实现", status_code=501)
+        logger.info(f"获取小说详情: novel_id={novel_id}, user_id={user_id}")
+        
+        # 查询小说（使用 selectinload 预加载关联数据，避免 N+1 查询问题）
+        novel = db.query(Novel).options(
+            selectinload(Novel.chapters),
+            selectinload(Novel.creations),
+            selectinload(Novel.characters)
+        ).filter(Novel.novel_id == novel_id).first()
+        
+        if not novel:
+            raise NotFoundError(detail="小说不存在")
+        
+        # 验证权限
+        if novel.owner_id != user_id:
+            raise PermissionError(detail="无权限访问该小说")
+        
+        logger.info(
+            f"成功获取小说详情: novel_id={novel_id}, title={novel.title}, "
+            f"chapters_count={len(novel.chapters)}, "
+            f"creations_count={len(novel.creations)}, "
+            f"characters_count={len(novel.characters)}"
+        )
+        return novel
     
     @staticmethod
     def get_novel_chapters_service(
@@ -302,4 +327,113 @@ class NovelService:
             logger.error(f"删除小说失败: {str(e)}", exc_info=True)
             db.rollback()
             raise DatabaseError(detail=f"删除小说失败: {str(e)}") from e
+    
+    @staticmethod
+    def update_novel_service(
+        db: Session,
+        novel_id: int,
+        novel_update: NovelUpdate,
+        user_id: int
+    ) -> Novel:
+        """
+        更新小说信息
+        
+        Args:
+            db: 数据库会话
+            novel_id: 小说ID
+            novel_update: 更新数据
+            user_id: 当前用户ID（已通过API层验证）
+            
+        Returns:
+            更新后的小说对象
+            
+        Raises:
+            NotFoundError: 当小说不存在时
+            PermissionError: 当用户无权限时
+            DatabaseError: 当更新失败时
+        """
+        logger.info(f"更新小说: novel_id={novel_id}, user_id={user_id}, update_data={novel_update.model_dump(exclude_unset=True)}")
+        
+        # 查询小说
+        novel = db.query(Novel).filter(Novel.novel_id == novel_id).first()
+        
+        if not novel:
+            raise NotFoundError(detail="小说不存在")
+        
+        # 验证权限
+        if novel.owner_id != user_id:
+            raise PermissionError(detail="无权限修改该小说")
+        
+        try:
+            # 更新小说属性（只更新提供的字段）
+            update_data = novel_update.model_dump(exclude_unset=True)
+            for field, value in update_data.items():
+                setattr(novel, field, value)
+            
+            db.commit()
+            db.refresh(novel)
+            
+            logger.info(f"小说已更新: novel_id={novel_id}, user_id={user_id}")
+            return novel
+        except Exception as e:
+            logger.error(f"更新小说失败: {str(e)}", exc_info=True)
+            db.rollback()
+            raise DatabaseError(detail=f"更新小说失败: {str(e)}") from e
+    
+    @staticmethod
+    def update_chapter_service(
+        db: Session,
+        chapter_id: int,
+        chapter_update: ChapterUpdate,
+        user_id: int
+    ) -> Chapter:
+        """
+        更新章节信息
+        
+        Args:
+            db: 数据库会话
+            chapter_id: 章节ID
+            chapter_update: 更新数据
+            user_id: 当前用户ID（已通过API层验证）
+            
+        Returns:
+            更新后的章节对象
+            
+        Raises:
+            NotFoundError: 当章节不存在时
+            PermissionError: 当用户无权限时
+            DatabaseError: 当更新失败时
+        """
+        logger.info(f"更新章节: chapter_id={chapter_id}, user_id={user_id}, update_data={chapter_update.model_dump(exclude_unset=True)}")
+        
+        # 查询章节（同时加载关联的小说以验证权限）
+        chapter = db.query(Chapter).filter(Chapter.chapter_id == chapter_id).first()
+        
+        if not chapter:
+            raise NotFoundError(detail="章节不存在")
+        
+        # 查询小说以验证权限
+        novel = db.query(Novel).filter(Novel.novel_id == chapter.novel_id).first()
+        if not novel:
+            raise NotFoundError(detail="章节所属的小说不存在")
+        
+        # 验证权限
+        if novel.owner_id != user_id:
+            raise PermissionError(detail="无权限修改该章节")
+        
+        try:
+            # 更新章节属性（只更新提供的字段）
+            update_data = chapter_update.model_dump(exclude_unset=True)
+            for field, value in update_data.items():
+                setattr(chapter, field, value)
+            
+            db.commit()
+            db.refresh(chapter)
+            
+            logger.info(f"章节已更新: chapter_id={chapter_id}, user_id={user_id}")
+            return chapter
+        except Exception as e:
+            logger.error(f"更新章节失败: {str(e)}", exc_info=True)
+            db.rollback()
+            raise DatabaseError(detail=f"更新章节失败: {str(e)}") from e
 

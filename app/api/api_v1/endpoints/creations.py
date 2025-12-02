@@ -24,10 +24,14 @@ async def create_creation_service(
     user: User = Depends(get_current_user),
 ):
     """
-    创建新的视频创作项目
+    创建新的视频创作项目或继续已存在的创作
+
+    参数说明：
+    - 如果提供了 creation_id：继续已存在但未成功的创作（不需要提供 novel_id 和 chapter_id）
+    - 如果没有提供 creation_id：创建新的创作（必须提供 novel_id 和 chapter_id）
 
     参数验证：
-    - 验证 novel_id 和 chapter_id 是否有效
+    - 验证 novel_id 和 chapter_id 是否有效（创建新创作时）
     - 验证用户权限
     """
     # 获取用户ID
@@ -36,6 +40,21 @@ async def create_creation_service(
     except Exception as e:
         raise HTTPException(status_code=500, detail="获取用户信息失败")
 
+    # 验证参数：如果提供了 creation_id，则不需要 novel_id 和 chapter_id；否则必须提供
+    if creation_data.creation_id:
+        if creation_data.novel_id is not None or creation_data.chapter_id is not None:
+            logger.warning(
+                f"提供了 creation_id={creation_data.creation_id}，但同时也提供了 "
+                f"novel_id={creation_data.novel_id} 和 chapter_id={creation_data.chapter_id}，"
+                f"将忽略 novel_id 和 chapter_id"
+            )
+    else:
+        if not creation_data.novel_id or not creation_data.chapter_id:
+            raise HTTPException(
+                status_code=400,
+                detail="创建新创作时必须提供 novel_id 和 chapter_id，或提供 creation_id 继续已存在的创作"
+            )
+
     # 调用服务层处理业务逻辑
     try:
         creation_id = CreationService.create_creation_service(
@@ -43,6 +62,7 @@ async def create_creation_service(
             novel_id=creation_data.novel_id,
             chapter_id=creation_data.chapter_id,
             user_id=user_id,
+            creation_id=creation_data.creation_id,
         )
 
         # 转换为响应格式
@@ -120,13 +140,162 @@ async def get_creations_service(
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
+@router.get("/by-chapter/{chapter_id}")
+async def get_creation_by_chapter(
+    chapter_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    根据章节ID查询该章节是否已有创作
+    
+    无论是否存在创作，都返回200状态码。
+    如果没有创作，响应体中包含错误信息。
+    """
+    try:
+        creation = CreationService.get_creation_by_chapter_service(
+            db=db,
+            chapter_id=chapter_id,
+            user_id=user.user_id
+        )
+        
+        # 如果没有创作，返回错误格式（但HTTP状态码仍然是200）
+        if creation is None:
+            return {
+                "error": True,
+                "message": "该章节没有关联的创作",
+                "status_code": 404
+            }
+        
+        # 构建角色列表
+        characters = [
+            {
+                "character_id": char.character_id,
+                "name": char.name,
+                "status": char.status,
+                "basic_info": char.basic_info,
+                "appearance": char.appearance,
+                "body": char.body,
+                "hair": char.hair,
+                "clothing": char.clothing,
+                "tags": char.tags,
+                "image_prompt": char.image_prompt,
+                "visual_style": char.visual_style,
+                "image_url": char.image_url,
+                "creation_id": char.creation_id,
+                "created_at": char.created_at,
+                "updated_at": char.updated_at,
+            }
+            for char in creation.characters
+        ]
+        
+        # 构建场景列表（简化信息，只包含基本信息）
+        scenes = [
+            {
+                "scene_id": scene.scene_id,
+                "title": scene.title,
+                "duration": scene.duration,
+                "time_setting": scene.time_setting,
+                "location": scene.location,
+                "space_type": scene.space_type,
+                "atmosphere": scene.atmosphere,
+                "created_at": scene.created_at,
+                "updated_at": scene.updated_at,
+            }
+            for scene in creation.scenes
+        ]
+        
+        # 构建响应数据
+        response_data = {
+            "creation_id": creation.creation_id,
+            "title": creation.title,
+            "status": creation.status,
+            "chapter_id": creation.chapter_id,
+            "novel_id": creation.novel_id,
+            "owner_id": creation.owner_id,
+            "voice_id": creation.voice_id,
+            "voice_speed": creation.voice_speed,
+            "video_url": creation.video_url,
+            "audio_url": creation.audio_url,
+            "subtitle_url": creation.subtitle_url,
+            "created_at": creation.created_at,
+            "updated_at": creation.updated_at,
+            "current_task_id": creation.current_task_id,
+            "characters": characters,
+            "scenes": scenes,
+        }
+        
+        return success_response(
+            data=response_data,
+            message="查询成功"
+        )
+    except BaseServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except Exception as e:
+        logger.error(f"查询章节创作失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+
+@router.get("/{creation_id}/simple")
+async def get_creation_simple(
+    creation_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    根据ID获取创作项目基本信息（简化版）
+    
+    只返回创作的基本字段，不返回关联的characters、scenes等数据，
+    用于需要快速获取创作基本信息的场景，性能更优。
+    """
+    try:
+        creation = CreationService.get_creation_simple_service(
+            db=db,
+            creation_id=creation_id
+        )
+        if creation is None:
+            raise HTTPException(status_code=404, detail="创作项目不存在")
+        if creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限访问该创作项目")
+        
+        # 只返回基本字段，不包含关联数据
+        response_data = {
+            "creation_id": creation.creation_id,
+            "title": creation.title,
+            "status": creation.status,
+            "chapter_id": creation.chapter_id,
+            "novel_id": creation.novel_id,
+            "owner_id": creation.owner_id,
+            "voice_id": creation.voice_id,
+            "voice_speed": creation.voice_speed,
+            "video_url": creation.video_url,
+            "audio_url": creation.audio_url,
+            "subtitle_url": creation.subtitle_url,
+            "created_at": creation.created_at,
+            "updated_at": creation.updated_at,
+            "current_task_id": creation.current_task_id,
+        }
+        
+        return success_response(
+            data=response_data,
+            message="创作项目获取成功"
+        )
+    except BaseServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取创作项目基本信息失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+
+
 @router.get("/{creation_id}")
 async def get_creation(
     creation_id: int,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """根据ID获取创作项目详情"""
+    """根据ID获取创作项目详情（完整版，包含所有关联数据）"""
     try:
         creation = CreationService.get_creation_service(db=db, creation_id=creation_id)
         if creation is None:

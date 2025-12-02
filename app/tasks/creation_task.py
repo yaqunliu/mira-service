@@ -27,6 +27,10 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
     temp_file_path = None
     logger.info(f"开始处理创作初始化任务: novel_id={novel_id}, chapter_id={chapter_id}, creation_id={creation_id}")
     try:
+        ##X## Debug 模式下抛出测试异常 - 测试创作初始化错误
+        # if settings.DEBUG:
+        #     raise Exception("测试创作初始化错误")
+        
         self.update_state(
             state='PROGRESS',
             meta={
@@ -228,7 +232,15 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
         max_retries = 3
         
         if retry_count >= max_retries:
-            # 已达到最大重试次数，不再重试
+            # 已达到最大重试次数，不再重试，需要清空 current_task_id
+            try:
+                creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+                if creation:
+                    creation.current_task_id = None
+                    db.commit()
+            except Exception as cleanup_error:
+                logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+                db.rollback()
             raise
         else:
             # 还有重试机会，触发重试（临时文件会在 finally 中清理，重试时会重新下载）

@@ -335,6 +335,10 @@ class AIClient:
         ]
 
         try:
+            ##X## Debug 模式下抛出测试异常 - 测试角色分析LLM调用错误（生成剧本）
+            # if settings.DEBUG:
+            #     raise Exception("测试角色分析LLM调用错误（生成剧本）")
+            
             response = self.chat_completion(
                 messages=messages, 
                 model=model, 
@@ -360,7 +364,7 @@ class AIClient:
             raise
     
     def _do_generate_image_by_prompt(
-        self, prompt: str, model: str, aspectRatio: str
+        self, prompt: str, model: str, aspectRatio: str, guidance_scale: float = None
     ) -> str:
         """
         执行图片生成调用的内部方法（不包含重试逻辑）
@@ -369,15 +373,15 @@ class AIClient:
             prompt: 提示词
             model: 模型名称
             aspectRatio: 图片尺寸
-            
+            guidance_scale: 引导尺度
         Returns:
             生成的图片URL
         """
-        response = self.ai_client.images.generate(
-            model=model,
-            prompt=prompt,
-            size=aspectRatio,
-        )
+        response = None
+        if guidance_scale:
+            response = self.ai_client.images.generate(model=model, prompt=prompt, size=aspectRatio, guidance_scale=guidance_scale)
+        else:
+            response = self.ai_client.images.generate(model=model, prompt=prompt, size=aspectRatio)
         image_url = response.data[0].url
         return image_url
     
@@ -476,7 +480,8 @@ class AIClient:
         prompt: str,
         reference_images: List[str],
         model: str,
-        aspect_ratio: str
+        aspect_ratio: str,
+        guidance_scale: float = None
     ) -> str:
         """
         执行图生图调用的内部方法（不包含重试逻辑）
@@ -486,20 +491,21 @@ class AIClient:
             reference_images: 参考图片URL列表
             model: 模型名称
             aspect_ratio: 图片宽高比
-            
+            guidance_scale: 引导尺度
         Returns:
             生成的图片URL
         """
         # 构建extra_body参数
         extra_body = {
             "images": reference_images,
-            "aspect_ratio": aspect_ratio
+            "aspect_ratio": aspect_ratio,
+            "guidance_scale": guidance_scale if guidance_scale else 3.5
         }
         
         response = self.ai_client.images.generate(
             model=model,
             prompt=prompt,
-            extra_body=extra_body
+            extra_body=extra_body,
         )
         
         image_url = response.data[0].url
@@ -549,7 +555,8 @@ class AIClient:
                         prompt=prompt,
                         reference_images=reference_images,
                         model=model,
-                        aspect_ratio=aspect_ratio
+                        aspect_ratio=aspect_ratio,
+                        guidance_scale=3.5
                     )
                     
                     try:
@@ -764,6 +771,10 @@ class AIClient:
         ]
         
         try:
+            ##X## Debug 模式下抛出测试异常 - 测试角色分析LLM调用错误（生成分镜提示词）
+            # if settings.DEBUG:
+            #     raise Exception("测试角色分析LLM调用错误（生成分镜提示词）")
+            
             response = self.chat_completion(messages=messages, model=model)
             prompt_text = response.get("content", "").strip()
             

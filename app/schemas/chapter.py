@@ -14,6 +14,10 @@ class ChapterCreate(ChapterBase):
     novel_id: int
 
 
+class ChapterUpdate(BaseModel):
+    title: Optional[str] = None
+
+
 class Chapter(ChapterBase):
     chapter_id: int
     novel_id: int

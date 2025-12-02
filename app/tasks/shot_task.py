@@ -24,6 +24,9 @@ from app.utils.us3 import US3Client
 from app.utils.points_deduction import deduct_points_for_image
 from app.core.config import settings
 from app.services.points_service import PointsService
+from app.core.exceptions import InsufficientPointsError
+from app.utils.model_prices import ModelPrices
+import math
 
 
 def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id: int = None) -> dict:
@@ -166,7 +169,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             
             temp_image_url = ai_client.generate_image_by_prompt(
                 prompt=prompt_text,
-                aspectRatio="1920x1080"  # 16:9 比例
+                aspectRatio="16:9"  # 16:9 比例
             )
         
         # 从临时URL下载图像并上传到US3进行持久化
@@ -325,6 +328,10 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
     """
     db: Session = SessionLocal()
     try:
+        ##X## Debug 模式下抛出测试异常 - 测试分镜图片生成错误
+        # if settings.DEBUG:
+        #     raise Exception("测试分镜图片生成错误")
+        
         # 验证创作是否存在
         creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
         if not creation:
@@ -371,33 +378,109 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
         
         logger.info(f"开始为创作 {creation_id} 生成 {total_shots} 个分镜的图片")
         
+        # 计算每个分镜需要的积分并冻结积分
+        # 分镜图片生成：优先使用图生图模型（因为通常有角色图片），如果没有配置则使用文生图模型
+        image_model = settings.IMAGE_MODEL_IMAGE_TO_IMAGE or settings.IMAGE_MODEL_TEXT_TO_IMAGE or settings.IMAGE_MODEL_NAME or "black-forest-labs/flux-kontext-pro/multi"
+        cost_per_image = ModelPrices.calculate_image_cost(image_model, 1)
+        required_points_per_shot = int(math.ceil(cost_per_image * 100))  # 每1元=100积分，向上取整
+        if required_points_per_shot <= 0:
+            required_points_per_shot = 1
+        
+        # 为每个分镜冻结积分
+        shots_with_freeze_records = []
+        user_id = creation.owner_id
+        novel_id = creation.novel_id
+        results = []  # 初始化结果列表，用于记录因积分不足而跳过的分镜
+        
+        for shot_info in all_shots:
+            try:
+                freeze_record = PointsService.freeze_points(
+                    db=db,
+                    user_id=user_id,
+                    points=required_points_per_shot,
+                    operation_type="generate_shot",
+                    creation_id=creation_id,
+                    novel_id=novel_id,
+                    description=f"生成分镜图片（{shot_info['shot_title']}）",
+                    extra_data={
+                        "shot_id": shot_info["shot_id"],
+                        "task_type": "shot_image_generation"
+                    }
+                )
+                shot_info["freeze_record_id"] = freeze_record.record_id
+                shots_with_freeze_records.append(shot_info)
+                logger.info(f"分镜 {shot_info['shot_id']} 积分已冻结: {required_points_per_shot} 积分, freeze_record_id={freeze_record.record_id}")
+            except InsufficientPointsError as e:
+                logger.warning(f"分镜 {shot_info['shot_id']} ({shot_info['shot_title']}) 积分不足，跳过生成: {str(e)}")
+                # 记录跳过原因，但不影响其他分镜的生成
+                results.append({
+                    "shot_id": shot_info["shot_id"],
+                    "shot_title": shot_info["shot_title"],
+                    "success": False,
+                    "error": f"积分不足: {str(e)}",
+                    "skipped": True
+                })
+            except Exception as e:
+                logger.error(f"分镜 {shot_info['shot_id']} 冻结积分失败: {str(e)}", exc_info=True)
+                # 记录错误，但不影响其他分镜的生成
+                results.append({
+                    "shot_id": shot_info["shot_id"],
+                    "shot_title": shot_info["shot_title"],
+                    "success": False,
+                    "error": f"冻结积分失败: {str(e)}",
+                    "skipped": True
+                })
+        
+        # 更新实际需要生成的分镜数量（排除积分不足的分镜）
+        actual_total_shots = len(shots_with_freeze_records)
+        if actual_total_shots == 0:
+            logger.warning(f"创作 {creation_id} 所有分镜都因积分不足而跳过生成")
+            creation.current_task_id = None
+            db.commit()
+            return {
+                "success": False,
+                "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
+                "creation_id": creation_id,
+                "total": total_shots,
+                "success_count": 0,
+                "failed_count": total_shots - actual_total_shots,
+                "message": "所有分镜都因积分不足而跳过生成",
+                "results": results
+            }
+        
+        logger.info(f"成功冻结 {actual_total_shots}/{total_shots} 个分镜的积分，开始生成图片")
+        
         # 更新任务状态
         self.update_state(
             state="PROGRESS",
             meta={
                 "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
                 "creation_id": creation_id,
-                "total": total_shots,
+                "total": actual_total_shots,
                 "completed": 0,
                 "success_count": 0,
-                "failed_count": 0,
-                "status": f"开始生成 {total_shots} 个分镜图片",
+                "failed_count": total_shots - actual_total_shots,
+                "status": f"开始生成 {actual_total_shots} 个分镜图片（{total_shots - actual_total_shots} 个因积分不足跳过）",
                 "stage": "generating",
-                "shots": all_shots
+                "shots": shots_with_freeze_records
             }
         )
         
         # 使用线程池并发执行（最多5个并发，避免过载）
-        results = []
         success_count = 0
-        failed_count = 0
+        failed_count = total_shots - actual_total_shots  # 包含因积分不足而跳过的分镜
         
-        max_workers = min(5, total_shots)
+        max_workers = min(5, actual_total_shots)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 提交所有任务
+            # 提交所有任务（传递 freeze_record_id）
             future_to_shot = {
-                executor.submit(_generate_single_shot_image, shot["shot_id"], creation_id): shot
-                for shot in all_shots
+                executor.submit(
+                    _generate_single_shot_image, 
+                    shot["shot_id"], 
+                    creation_id,
+                    shot.get("freeze_record_id")
+                ): shot
+                for shot in shots_with_freeze_records
             }
             
             # 收集结果
@@ -463,9 +546,34 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
             "results": results
         }
         
+    except BaseServiceException as e:
+        # BaseServiceException 直接重新抛出，不进行包装
+        try:
+            creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+            if creation:
+                creation.current_task_id = None
+                db.commit()
+        except Exception as cleanup_error:
+            logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+            db.rollback()
+        
+        error_msg = str(e)
+        exc_type = type(e).__name__
+        exc_module = type(e).__module__
+        self.update_state(
+            state="FAILURE",
+            meta={
+                "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
+                "creation_id": creation_id,
+                "error": error_msg,
+                "exc_type": f"{exc_module}.{exc_type}",
+                "exc_message": error_msg,
+            }
+        )
+        raise
     except Exception as e:
-        error_msg = f"创作分镜图片生成任务失败: {str(e)}"
-        logger.error(error_msg, exc_info=True)
+        error_msg = str(e)
+        logger.error(f"创作分镜图片生成任务失败: {error_msg}", exc_info=True)
         
         # 更新创作状态
         try:
@@ -473,15 +581,20 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
             if creation:
                 creation.current_task_id = None
                 db.commit()
-        except Exception:
-            pass
+        except Exception as cleanup_error:
+            logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+            db.rollback()
         
+        exc_type = type(e).__name__
+        exc_module = type(e).__module__
         self.update_state(
             state="FAILURE",
             meta={
                 "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
                 "creation_id": creation_id,
                 "error": error_msg,
+                "exc_type": f"{exc_module}.{exc_type}",
+                "exc_message": error_msg,
             }
         )
         raise BaseServiceException(message=error_msg)
@@ -513,36 +626,131 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
     total_count = len(shot_ids)
     logger.info(f"开始并发生成 {total_count} 个分镜的图片: {shot_ids}")
     
-    # 更新任务状态
-    self.update_state(
-        state="PROGRESS",
-        meta={
-            "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
-            "creation_id": creation_id,
-            "shot_ids": shot_ids,
-            "total": total_count,
-            "completed": 0,
-            "failed": 0,
-        },
-    )
-    
-    results = []
-    success_count = 0
-    failed_count = 0
-    
+    db: Session = SessionLocal()
     try:
+        # 验证创作是否存在并获取用户信息
+        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        if not creation:
+            raise NotFoundError(detail=f"创作不存在: creation_id={creation_id}")
+        
+        # 查询所有分镜信息
+        shots = db.query(Shot).filter(Shot.shot_id.in_(shot_ids)).all()
+        shot_dict = {shot.shot_id: shot for shot in shots}
+        
+        # 计算每个分镜需要的积分并冻结积分
+        # 分镜图片生成：优先使用图生图模型（因为通常有角色图片），如果没有配置则使用文生图模型
+        image_model = settings.IMAGE_MODEL_IMAGE_TO_IMAGE or settings.IMAGE_MODEL_TEXT_TO_IMAGE or settings.IMAGE_MODEL_NAME or "black-forest-labs/flux-kontext-pro/multi"
+        cost_per_image = ModelPrices.calculate_image_cost(image_model, 1)
+        required_points_per_shot = int(math.ceil(cost_per_image * 100))  # 每1元=100积分，向上取整
+        if required_points_per_shot <= 0:
+            required_points_per_shot = 1
+        
+        # 为每个分镜冻结积分
+        shots_with_freeze_records = []
+        user_id = creation.owner_id
+        novel_id = creation.novel_id
+        results = []
+        
+        for shot_id in shot_ids:
+            shot = shot_dict.get(shot_id)
+            if not shot:
+                logger.warning(f"分镜 {shot_id} 不存在，跳过")
+                results.append({
+                    "shot_id": shot_id,
+                    "success": False,
+                    "error": "分镜不存在",
+                    "skipped": True
+                })
+                continue
+            
+            try:
+                freeze_record = PointsService.freeze_points(
+                    db=db,
+                    user_id=user_id,
+                    points=required_points_per_shot,
+                    operation_type="generate_shot",
+                    creation_id=creation_id,
+                    novel_id=novel_id,
+                    description=f"生成分镜图片（{shot.title}）",
+                    extra_data={
+                        "shot_id": shot_id,
+                        "task_type": "shot_image_generation"
+                    }
+                )
+                shots_with_freeze_records.append({
+                    "shot_id": shot_id,
+                    "freeze_record_id": freeze_record.record_id
+                })
+                logger.info(f"分镜 {shot_id} 积分已冻结: {required_points_per_shot} 积分, freeze_record_id={freeze_record.record_id}")
+            except InsufficientPointsError as e:
+                logger.warning(f"分镜 {shot_id} ({shot.title}) 积分不足，跳过生成: {str(e)}")
+                results.append({
+                    "shot_id": shot_id,
+                    "success": False,
+                    "error": f"积分不足: {str(e)}",
+                    "skipped": True
+                })
+            except Exception as e:
+                logger.error(f"分镜 {shot_id} 冻结积分失败: {str(e)}", exc_info=True)
+                results.append({
+                    "shot_id": shot_id,
+                    "success": False,
+                    "error": f"冻结积分失败: {str(e)}",
+                    "skipped": True
+                })
+        
+        # 更新实际需要生成的分镜数量（排除积分不足的分镜）
+        actual_total_shots = len(shots_with_freeze_records)
+        if actual_total_shots == 0:
+            logger.warning(f"创作 {creation_id} 所有分镜都因积分不足而跳过生成")
+            return {
+                "success": False,
+                "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
+                "creation_id": creation_id,
+                "total": total_count,
+                "success_count": 0,
+                "failed_count": total_count,
+                "message": "所有分镜都因积分不足而跳过生成",
+                "results": results
+            }
+        
+        logger.info(f"成功冻结 {actual_total_shots}/{total_count} 个分镜的积分，开始生成图片")
+        
+        # 更新任务状态
+        self.update_state(
+            state="PROGRESS",
+            meta={
+                "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
+                "creation_id": creation_id,
+                "shot_ids": shot_ids,
+                "total": actual_total_shots,
+                "completed": 0,
+                "success": 0,
+                "failed": total_count - actual_total_shots,
+            },
+        )
+        
+        success_count = 0
+        failed_count = total_count - actual_total_shots  # 包含因积分不足而跳过的分镜
+        
         # 使用线程池并发执行（最多5个并发）
-        max_workers = min(5, total_count)
+        max_workers = min(5, actual_total_shots)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 提交所有任务
-            future_to_shot_id = {
-                executor.submit(_generate_single_shot_image, sid, creation_id): sid
-                for sid in shot_ids
+            # 提交所有任务（传递 freeze_record_id）
+            future_to_shot_info = {
+                executor.submit(
+                    _generate_single_shot_image, 
+                    shot_info["shot_id"], 
+                    creation_id,
+                    shot_info.get("freeze_record_id")
+                ): shot_info
+                for shot_info in shots_with_freeze_records
             }
             
             # 收集结果
-            for future in as_completed(future_to_shot_id):
-                shot_id = future_to_shot_id[future]
+            for future in as_completed(future_to_shot_info):
+                shot_info = future_to_shot_info[future]
+                shot_id = shot_info["shot_id"]
                 try:
                     result = future.result()
                     results.append(result)
@@ -561,7 +769,7 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
                             "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
                             "creation_id": creation_id,
                             "shot_ids": shot_ids,
-                            "total": total_count,
+                            "total": actual_total_shots,
                             "completed": success_count + failed_count,
                             "success": success_count,
                             "failed": failed_count,
@@ -587,15 +795,26 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
             "success": failed_count == 0,
             "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
             "creation_id": creation_id,
-            "total": total_count,
+            "total": actual_total_shots,
             "success_count": success_count,
             "failed_count": failed_count,
             "results": results
         }
         
-    except Exception as e:
-        error_msg = f"分镜图片生成任务失败: {str(e)}"
-        logger.error(error_msg, exc_info=True)
+    except BaseServiceException as e:
+        # BaseServiceException 直接重新抛出，不进行包装
+        try:
+            creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+            if creation:
+                creation.current_task_id = None
+                db.commit()
+        except Exception as cleanup_error:
+            logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+            db.rollback()
+        
+        error_msg = str(e)
+        exc_type = type(e).__name__
+        exc_module = type(e).__module__
         self.update_state(
             state="FAILURE",
             meta={
@@ -603,6 +822,35 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
                 "creation_id": creation_id,
                 "shot_ids": shot_ids,
                 "error": error_msg,
+                "exc_type": f"{exc_module}.{exc_type}",
+                "exc_message": error_msg,
+            },
+        )
+        raise
+    except Exception as e:
+        error_msg = f"分镜图片生成任务失败: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        
+        try:
+            creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+            if creation:
+                creation.current_task_id = None
+                db.commit()
+        except Exception as cleanup_error:
+            logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+            db.rollback()
+        
+        exc_type = type(e).__name__
+        exc_module = type(e).__module__
+        self.update_state(
+            state="FAILURE",
+            meta={
+                "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
+                "creation_id": creation_id,
+                "shot_ids": shot_ids,
+                "error": error_msg,
+                "exc_type": f"{exc_module}.{exc_type}",
+                "exc_message": error_msg,
             },
         )
         raise BaseServiceException(message=error_msg)

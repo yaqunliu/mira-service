@@ -123,6 +123,7 @@ class Settings(BaseSettings):
     MODEL_PRICES_IMAGE: str = '{"black-forest-labs/flux-kontext-pro/multi": 0.35}'  # 图片模型价格：元/张
     MODEL_PRICES_AUDIO: str = '{"s1": 120}'  # 音频模型价格：元/兆字节
     
+    ENABLE_TEST_EXCEPTION: str = "false"
     class Config:
         env_file = ".env"
         case_sensitive = True

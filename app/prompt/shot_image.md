@@ -14,7 +14,7 @@
 1. **角色匹配 (Character Matching)**: 分析 [当前分镜] 中出现了哪些角色。只提取当前分镜中出现的角色的 **关键特征** 融入提示词。
 2. **环境优先 (Environment Priority)**: 确保环境、光影和氛围的描述详细且生动。
 3. **翻译与润色 (Translate & Refine)**: 将中文描述翻译为精准的英文视觉描述词。增加必要的画质修饰词 (e.g., cinematic lighting, 8k, masterpiece)。
-4. **字数控制 (Word Count)**: 最终输出的英文提示词应控制在200词以内。
+4. **字数控制 (Word Count)**: 最终输出的英文提示词应控制在150英文单词以内。
 5. **强制后缀 (Mandatory Suffix)**: 在提示词的最后，**必须** 加上以下这句话：
    "strictly preserve reference face and hairstyle"
 
@@ -45,5 +45,5 @@ Wide shot of three astronauts, led by a female Captain (braided brown hair), sta
 {current_shot}
 
 # Output Requirement
-请根据上述规则和提供的中文信息，立即生成最终的英文提示词。
+请根据上述规则和提供的中文信息，立即生成最终的英文提示词（150单词以内）。
 

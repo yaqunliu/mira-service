@@ -1118,7 +1118,14 @@ class PointsService:
         
         # 筛选条件
         if record_type:
+            # 如果明确指定了记录类型，则按指定类型查询
             query = query.filter(PointsRecord.record_type == record_type)
+        else:
+            # 如果没有指定记录类型，默认排除内部使用的 freeze 和 release 记录
+            # 这些是中间状态记录，用户不需要看到，只需要看到最终的消耗记录
+            query = query.filter(
+                ~PointsRecord.record_type.in_(["freeze", "release"])
+            )
         if operation_type:
             query = query.filter(PointsRecord.operation_type == operation_type)
         if creation_id:

@@ -232,6 +232,10 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
     failed_count = 0
     
     try:
+        ##X## Debug 模式下抛出测试异常 - 测试角色图片生成错误
+        # if settings.DEBUG:
+        #     raise Exception("测试角色图片生成错误")
+        
         # 使用线程池并发执行（最多5个并发）
         max_workers = min(5, total_count)  # 限制最大并发数，避免过多请求
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -291,15 +295,35 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
             "results": results
         }
         
-    except Exception as e:
-        error_msg = f"角色图片生成任务失败: {str(e)}"
-        logger.error(error_msg, exc_info=True)
+    except BaseServiceException as e:
+        # BaseServiceException 直接重新抛出，不进行包装
+        error_msg = str(e)
+        exc_type = type(e).__name__
+        exc_module = type(e).__module__
         self.update_state(
             state="FAILURE",
             meta={
                 "task_type": TaskType.CHARACTER_IMAGE_GENERATION,
                 "character_ids": character_ids,
                 "error": error_msg,
+                "exc_type": f"{exc_module}.{exc_type}",
+                "exc_message": error_msg,
+            },
+        )
+        raise
+    except Exception as e:
+        error_msg = f"角色图片生成任务失败: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        exc_type = type(e).__name__
+        exc_module = type(e).__module__
+        self.update_state(
+            state="FAILURE",
+            meta={
+                "task_type": TaskType.CHARACTER_IMAGE_GENERATION,
+                "character_ids": character_ids,
+                "error": error_msg,
+                "exc_type": f"{exc_module}.{exc_type}",
+                "exc_message": error_msg,
             },
         )
         raise BaseServiceException(message=error_msg)

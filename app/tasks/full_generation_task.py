@@ -308,7 +308,7 @@ def _generate_shot_video(image_path: str, duration_ms: int, output_path: str) ->
         cmd = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path,
             "-vf", filter_str, "-t", str(duration_seconds),
-            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
             output_path
         ]
         
@@ -415,7 +415,7 @@ def _merge_video_audio_subtitle(video_path: str, audio_path: str, subtitle_path:
                 "-i", video_path, 
                 "-i", audio_path,
                 "-vf", vf_filter,
-                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
                 "-c:a", "aac", "-b:a", "192k", "-shortest",
                 output_path
             ]
@@ -424,7 +424,7 @@ def _merge_video_audio_subtitle(video_path: str, audio_path: str, subtitle_path:
                 "ffmpeg", "-y", 
                 "-i", video_path, 
                 "-i", audio_path,
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-preset", "veryfast", "-shortest",
                 output_path
             ]
         
@@ -462,6 +462,10 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
     temp_files = []
     
     try:
+        ##X## Debug 模式下抛出测试异常 - 测试完整视频生成错误
+        # if settings.DEBUG:
+        #     raise Exception("测试完整视频生成错误")
+        
         # 获取创作信息
         creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
         if not creation:
@@ -849,23 +853,63 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
             "subtitle_url": subtitle_url,
         }
         
-    except Exception as e:
-        error_msg = f"视频生成任务失败: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        
+    except BaseServiceException as e:
+        # BaseServiceException 直接重新抛出，不进行包装
         try:
-            if 'creation' in locals():
+            # 重新查询 creation，确保能够设置 current_task_id
+            creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+            if creation:
                 creation.current_task_id = None
                 db.commit()
-        except:
-            pass
+        except Exception as cleanup_error:
+            logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+            db.rollback()
         
+        error_msg = str(e)
+        exc_type = type(e).__name__
+        exc_module = type(e).__module__
         self.update_state(state="FAILURE", meta={
             "task_type": TaskType.VIDEO_MERGE,
             "creation_id": creation_id,
             "error": error_msg,
+            "exc_type": f"{exc_module}.{exc_type}",
+            "exc_message": error_msg,
         })
-        raise BaseServiceException(message=error_msg)
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        # 测试异常直接抛出，不进行包装
+        is_test_exception = "测试错误" in error_msg
+        
+        if not is_test_exception:
+            error_msg = f"视频生成任务失败: {error_msg}"
+            logger.error(error_msg, exc_info=True)
+        
+        try:
+            # 重新查询 creation，确保能够设置 current_task_id
+            creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+            if creation:
+                creation.current_task_id = None
+                db.commit()
+        except Exception as cleanup_error:
+            logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+            db.rollback()
+        
+        exc_type = type(e).__name__
+        exc_module = type(e).__module__
+        self.update_state(state="FAILURE", meta={
+            "task_type": TaskType.VIDEO_MERGE,
+            "creation_id": creation_id,
+            "error": error_msg,
+            "exc_type": f"{exc_module}.{exc_type}",
+            "exc_message": error_msg,
+        })
+        
+        # 测试异常直接抛出，其他异常包装成 BaseServiceException
+        if is_test_exception:
+            raise
+        else:
+            raise BaseServiceException(message=error_msg)
         
     finally:
         for path in temp_files:
