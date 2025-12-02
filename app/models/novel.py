@@ -23,6 +23,15 @@ class Novel(Base):
     
     # 关系
     owner = relationship("User", back_populates="novels")
-    chapters = relationship("Chapter", back_populates="novel", cascade="all, delete-orphan")
-    creations = relationship("Creation", back_populates="novel")
+    chapters = relationship(
+        "Chapter", 
+        back_populates="novel", 
+        cascade="all, delete-orphan",
+        primaryjoin="and_(Novel.novel_id == Chapter.novel_id, Chapter.deleted_at.is_(None))"
+    )
+    creations = relationship(
+        "Creation", 
+        back_populates="novel",
+        primaryjoin="and_(Novel.novel_id == Creation.novel_id, Creation.deleted_at.is_(None))"
+    )
     characters = relationship("Character", back_populates="novel")

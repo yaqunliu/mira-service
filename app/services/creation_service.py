@@ -134,8 +134,11 @@ class CreationService:
         Returns:
             (创作记录列表, 总数) 元组
         """
-        # 构建查询
-        query = db.query(Creation).filter(Creation.owner_id == user_id)
+        # 构建查询（排除已删除的）
+        query = db.query(Creation).filter(
+            Creation.owner_id == user_id,
+            Creation.deleted_at.is_(None)
+        )
         
         # 状态过滤
         if status_filter:
@@ -185,7 +188,10 @@ class CreationService:
             selectinload(Creation.scenes).selectinload(Scene.shots).selectinload(Shot.characters),
             selectinload(Creation.novel),
             selectinload(Creation.chapter)
-        ).filter(Creation.creation_id == creation_id).first()
+        ).filter(
+            Creation.creation_id == creation_id,
+            Creation.deleted_at.is_(None)
+        ).first()
         
         return creation
 
@@ -207,9 +213,10 @@ class CreationService:
         Returns:
             创作记录对象（仅包含基本字段，不包含关联数据）
         """
-        # 只查询创作的基本字段，不加载任何关联数据
+        # 只查询创作的基本字段，不加载任何关联数据（排除已删除的）
         creation = db.query(Creation).filter(
-            Creation.creation_id == creation_id
+            Creation.creation_id == creation_id,
+            Creation.deleted_at.is_(None)
         ).first()
         
         return creation
@@ -237,8 +244,11 @@ class CreationService:
         """
         logger.info(f"根据章节ID查询创作: chapter_id={chapter_id}, user_id={user_id}")
         
-        # 先查询章节，验证章节是否存在和权限
-        chapter = db.query(Chapter).filter(Chapter.chapter_id == chapter_id).first()
+        # 先查询章节，验证章节是否存在和权限（排除已删除的）
+        chapter = db.query(Chapter).filter(
+            Chapter.chapter_id == chapter_id,
+            Chapter.deleted_at.is_(None)
+        ).first()
         if not chapter:
             raise NotFoundError(detail="章节不存在")
         
@@ -251,11 +261,14 @@ class CreationService:
         if novel.owner_id != user_id:
             raise PermissionError(detail="无权限访问该章节")
         
-        # 查询该章节的创作
+        # 查询该章节的创作（排除已删除的）
         creation = db.query(Creation).options(
             selectinload(Creation.characters),
             selectinload(Creation.scenes)
-        ).filter(Creation.chapter_id == chapter_id).first()
+        ).filter(
+            Creation.chapter_id == chapter_id,
+            Creation.deleted_at.is_(None)
+        ).first()
         
         if not creation:
             logger.info(f"章节 {chapter_id} 没有关联的创作")
@@ -294,8 +307,11 @@ class CreationService:
         if novel.owner_id != user_id:
             raise PermissionError(detail="无权限访问该小说")
         
-        # 验证章节是否存在
-        chapter = db.query(Chapter).filter(Chapter.chapter_id == chapter_id).first()
+        # 验证章节是否存在（排除已删除的）
+        chapter = db.query(Chapter).filter(
+            Chapter.chapter_id == chapter_id,
+            Chapter.deleted_at.is_(None)
+        ).first()
         if not chapter:
             raise NotFoundError(detail="章节不存在")
         
@@ -315,7 +331,8 @@ class CreationService:
         """
         existing_creation = db.query(Creation).filter(
             Creation.novel_id == novel_id,
-            Creation.chapter_id == chapter_id
+            Creation.chapter_id == chapter_id,
+            Creation.deleted_at.is_(None)
         ).first()
         
         if existing_creation:
@@ -344,7 +361,8 @@ class CreationService:
             DatabaseError: 当创作状态不允许继续时，或已有正在执行的任务时
         """
         creation = db.query(Creation).filter(
-            Creation.creation_id == creation_id
+            Creation.creation_id == creation_id,
+            Creation.deleted_at.is_(None)
         ).first()
         
         if not creation:

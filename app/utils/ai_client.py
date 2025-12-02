@@ -680,13 +680,49 @@ class AIClient:
             'blocked'
         ]
         
+        # 排除的关键词（这些明确表示不是审核错误）
+        exclusion_keywords = [
+            'model not support',
+            'model not found',
+            'invalid param',
+            'param_error',
+            'invalid_request_error',
+            'not found',
+            'unauthorized',
+            'forbidden',
+            'rate limit',
+            'timeout',
+            'connection',
+            'network'
+        ]
+        
+        # 先检查排除关键词，如果匹配则肯定不是审核错误
+        for exclusion_keyword in exclusion_keywords:
+            if exclusion_keyword in error_msg:
+                return False
+        
         # 检查是否为特定的 OpenAI API 错误类型
         if isinstance(error, openai.APIError):
-            # 检查状态码（400 通常表示内容审核失败）
-            if hasattr(error, 'status_code') and error.status_code == 400:
-                return True
+            # 检查错误代码和类型
+            if hasattr(error, 'code'):
+                error_code = str(error.code).lower()
+                # 参数错误、模型不支持等不是审核错误
+                if any(excl in error_code for excl in ['param', 'model', 'invalid', 'not_found']):
+                    return False
+            
+            # 检查错误消息中的详细信息
+            if hasattr(error, 'message'):
+                error_detail = str(error.message).lower()
+                # 如果错误消息中包含排除关键词，不是审核错误
+                for exclusion_keyword in exclusion_keywords:
+                    if exclusion_keyword in error_detail:
+                        return False
+                # 如果错误消息中包含审核关键词，是审核错误
+                for keyword in moderation_keywords:
+                    if keyword in error_detail:
+                        return True
         
-        # 检查错误消息
+        # 检查错误消息中是否包含审核关键词
         for keyword in moderation_keywords:
             if keyword in error_msg:
                 return True

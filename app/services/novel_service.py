@@ -406,8 +406,11 @@ class NovelService:
         """
         logger.info(f"更新章节: chapter_id={chapter_id}, user_id={user_id}, update_data={chapter_update.model_dump(exclude_unset=True)}")
         
-        # 查询章节（同时加载关联的小说以验证权限）
-        chapter = db.query(Chapter).filter(Chapter.chapter_id == chapter_id).first()
+        # 查询章节（同时加载关联的小说以验证权限，排除已删除的）
+        chapter = db.query(Chapter).filter(
+            Chapter.chapter_id == chapter_id,
+            Chapter.deleted_at.is_(None)
+        ).first()
         
         if not chapter:
             raise NotFoundError(detail="章节不存在")
@@ -436,4 +439,74 @@ class NovelService:
             logger.error(f"更新章节失败: {str(e)}", exc_info=True)
             db.rollback()
             raise DatabaseError(detail=f"更新章节失败: {str(e)}") from e
+    
+    @staticmethod
+    def delete_chapter_service(
+        db: Session,
+        chapter_id: int,
+        user_id: int
+    ) -> None:
+        """
+        软删除章节
+        
+        Args:
+            db: 数据库会话
+            chapter_id: 章节ID
+            user_id: 当前用户ID（已通过API层验证）
+            
+        Returns:
+            None
+            
+        Raises:
+            NotFoundError: 当章节不存在时
+            PermissionError: 当用户无权限时
+            DatabaseError: 当删除失败时
+        """
+        from app.models.creation import Creation
+        from datetime import datetime
+        
+        logger.info(f"软删除章节: chapter_id={chapter_id}, user_id={user_id}")
+        
+        # 查询章节（同时加载关联的小说以验证权限，排除已删除的）
+        chapter = db.query(Chapter).filter(
+            Chapter.chapter_id == chapter_id,
+            Chapter.deleted_at.is_(None)
+        ).first()
+        
+        if not chapter:
+            raise NotFoundError(detail="章节不存在")
+        
+        # 查询小说以验证权限
+        novel = db.query(Novel).filter(Novel.novel_id == chapter.novel_id).first()
+        if not novel:
+            raise NotFoundError(detail="章节所属的小说不存在")
+        
+        # 验证权限
+        if novel.owner_id != user_id:
+            raise PermissionError(detail="无权限删除该章节")
+        
+        try:
+            # 软删除：设置 deleted_at 时间戳
+            now = datetime.utcnow()
+            
+            # 1. 软删除所有关联的创作（Creation）
+            creations_count = db.query(Creation).filter(
+                Creation.chapter_id == chapter_id,
+                Creation.deleted_at.is_(None)
+            ).update(
+                {Creation.deleted_at: now},
+                synchronize_session=False
+            )
+            if creations_count > 0:
+                logger.info(f"已软删除 {creations_count} 个相关的创作")
+            
+            # 2. 软删除章节
+            chapter.deleted_at = now
+            db.commit()
+            
+            logger.info(f"章节已软删除: chapter_id={chapter_id}, user_id={user_id}")
+        except Exception as e:
+            logger.error(f"删除章节失败: {str(e)}", exc_info=True)
+            db.rollback()
+            raise DatabaseError(detail=f"删除章节失败: {str(e)}") from e
 

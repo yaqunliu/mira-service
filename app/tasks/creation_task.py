@@ -227,20 +227,41 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
         logger.error(f"创作初始化任务失败: {str(e)}", exc_info=True)
         db.rollback()  # 确保回滚事务
         
+        error_msg = str(e).lower()
+        # 判断是否为不可重试的错误（如参数错误、模型不支持等）
+        non_retryable_keywords = [
+            'invalid param',
+            'param_error',
+            'invalid_request_error',
+            'model not support',
+            'model not found',
+            'max_tokens',
+            'invalid max_tokens',
+            'bad request'
+        ]
+        is_non_retryable = any(keyword in error_msg for keyword in non_retryable_keywords)
+        
         # 检查是否还有重试机会
         retry_count = self.request.retries if hasattr(self.request, 'retries') else 0
         max_retries = 3
         
-        if retry_count >= max_retries:
-            # 已达到最大重试次数，不再重试，需要清空 current_task_id
+        # 如果是不可重试的错误，或者已达到最大重试次数，需要清空 current_task_id
+        if is_non_retryable or retry_count >= max_retries:
             try:
                 creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
                 if creation:
                     creation.current_task_id = None
                     db.commit()
+                    logger.info(f"已清理 current_task_id，creation_id={creation_id}")
             except Exception as cleanup_error:
                 logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
                 db.rollback()
+            
+            # 如果是不可重试的错误，直接抛出，不进行重试
+            if is_non_retryable:
+                logger.error(f"遇到不可重试的错误，直接失败: {error_msg}")
+                raise
+            # 如果已达到最大重试次数，也直接抛出
             raise
         else:
             # 还有重试机会，触发重试（临时文件会在 finally 中清理，重试时会重新下载）

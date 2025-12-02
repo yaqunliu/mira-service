@@ -148,7 +148,7 @@ async def get_novels(
         # 构建 characters 列表（ID列表）
         character_ids = [character.character_id for character in novel.characters]
         
-        # 构建 chapters 列表（简化信息）
+        # 构建 chapters 列表（简化信息，关系查询已自动过滤已删除的）
         chapters = [
             {
                 "chapter_id": chapter.chapter_id,
@@ -208,7 +208,7 @@ async def get_novel(
             detail=e.detail
         )
     
-    # 构建章节列表
+    # 构建章节列表（关系查询已自动过滤已删除的）
     chapters = [
         {
             "chapter_id": chapter.chapter_id,
@@ -222,7 +222,7 @@ async def get_novel(
         for chapter in sorted(novel.chapters, key=lambda c: c.chapter_number)
     ]
     
-    # 构建创作列表
+    # 构建创作列表（关系查询已自动过滤已删除的）
     creations = [
         {
             "creation_id": creation.creation_id,
@@ -395,6 +395,60 @@ async def update_chapter(
             "chapter_number": chapter.chapter_number,
         },
         message="章节更新成功"
+    )
+
+
+@router.delete("/{novel_id}/chapters/{chapter_id}")
+async def delete_chapter(
+    novel_id: int,
+    chapter_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    删除章节
+    
+    注意：
+    - 只有章节所属小说的所有者可以删除
+    - 删除章节时会同时删除相关的创作（Creation）
+    """
+    try:
+        # 先验证章节是否属于指定的小说（排除已删除的）
+        from app.models.chapter import Chapter
+        chapter = db.query(Chapter).filter(
+            Chapter.chapter_id == chapter_id,
+            Chapter.deleted_at.is_(None)
+        ).first()
+        if not chapter:
+            raise HTTPException(
+                status_code=404,
+                detail="章节不存在"
+            )
+        if chapter.novel_id != novel_id:
+            raise HTTPException(
+                status_code=400,
+                detail="章节不属于指定的小说"
+            )
+        
+        # 调用服务层删除章节
+        NovelService.delete_chapter_service(
+            db=db,
+            chapter_id=chapter_id,
+            user_id=user.user_id
+        )
+    except HTTPException:
+        raise
+    except BaseServiceException as e:
+        # 将业务异常转换为HTTP异常
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail
+        )
+    
+    # 返回删除成功的响应格式
+    return success_response(
+        data={"chapter_id": chapter_id},
+        message="章节删除成功"
     )
 
 

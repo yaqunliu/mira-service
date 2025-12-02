@@ -18,7 +18,12 @@ class Chapter(Base):
     novel_id = Column(Integer, ForeignKey("novels.novel_id"), nullable=False)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)  # 软删除时间戳
     
     # 关系
     novel = relationship("Novel", back_populates="chapters")
-    creation = relationship("Creation", back_populates="chapter")
+    creation = relationship(
+        "Creation", 
+        back_populates="chapter",
+        primaryjoin="and_(Chapter.chapter_id == Creation.chapter_id, Creation.deleted_at.is_(None))"
+    )
