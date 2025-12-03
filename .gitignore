@@ -187,3 +187,6 @@ static/fonts/*.woff2
 .coverage
 htmlcov/
 .pytest_cache/
+
+test.ipynb
+note.md

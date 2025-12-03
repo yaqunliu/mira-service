@@ -115,7 +115,7 @@ class SceneResponse(BaseModel):
                 space=scene.space_type,
                 atmosphere=scene.atmosphere
             ),
-            shotList=[shot.shot_id for shot in scene.shots] if scene.shots else []
+            shotList=[shot.shot_id for shot in sorted(scene.shots, key=lambda s: s.shot_id)] if scene.shots else []
         )
 
 
@@ -149,5 +149,5 @@ class SceneWithShotsResponse(BaseModel):
                 space=scene.space_type,
                 atmosphere=scene.atmosphere
             ),
-            shots=[ShotDetail.from_db_model(shot) for shot in sorted(scene.shots, key=lambda s: s.shot_number)] if scene.shots else []
+            shots=[ShotDetail.from_db_model(shot) for shot in sorted(scene.shots, key=lambda s: s.shot_id)] if scene.shots else []
         )

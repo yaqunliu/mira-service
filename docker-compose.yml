@@ -9,10 +9,13 @@ services:
       POSTGRES_DB: video_generator
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
+      TZ: Asia/Shanghai
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     networks:
       - video_generator_network
 
@@ -20,8 +23,13 @@ services:
   redis:
     image: redis:7-alpine
     container_name: video_generator_redis
+    environment:
+      TZ: Asia/Shanghai
     ports:
       - "6379:6379"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     networks:
       - video_generator_network
 
@@ -37,14 +45,17 @@ services:
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
       - PYTHONIOENCODING=utf-8
+      - TZ=Asia/Shanghai
     depends_on:
       - postgres
       - redis
     volumes:
-      - ./uploads:/app/uploads
-      - ./logs:/app/logs
+      # - ./uploads:/app/uploads
+      # - ./logs:/app/logs
+      - ./:/app
       - /tmp:/tmp
-      # - ./:/app
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     networks:
       - video_generator_network
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -60,15 +71,19 @@ services:
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
       - PYTHONIOENCODING=utf-8
+      - TZ=Asia/Shanghai
     # Celery 依赖于 Redis (作为 Broker) 和 PostgreSQL (如果任务需要访问数据库)
     depends_on:
       - postgres
       - redis
     volumes:
       # 挂载卷以访问上传文件和日志
-      - ./uploads:/app/uploads
-      - ./logs:/app/logs
+      # - ./uploads:/app/uploads
+      # - ./logs:/app/logs
+      - ./:/app
       - /tmp:/tmp
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     networks:
       - video_generator_network
     # 启动 Celery Worker 的命令

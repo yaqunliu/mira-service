@@ -25,8 +25,9 @@ class CreationBase(BaseModel):
 
 
 class CreationCreate(CreationBase):
-    novel_id: int
-    chapter_id: int
+    novel_id: Optional[int] = None  # 如果提供了 creation_id，则可以为 None
+    chapter_id: Optional[int] = None  # 如果提供了 creation_id，则可以为 None
+    creation_id: Optional[int] = None  # 可选的创作ID，用于继续已存在但未成功的创作
     voice_id: Optional[str] = None  # Fish Audio 语音模型ID
     voice_speed: Optional[float] = Field(default=1.0, ge=0.0, le=10.0, description="语速设置，范围 0-10，默认 1.0")
 

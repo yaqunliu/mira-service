@@ -26,4 +26,4 @@ class Scene(Base):
     
     # 关系
     creation = relationship("Creation", back_populates="scenes")
-    shots = relationship("Shot", back_populates="scene", cascade="all, delete-orphan")
+    shots = relationship("Shot", back_populates="scene", cascade="all, delete-orphan", order_by="Shot.shot_id")

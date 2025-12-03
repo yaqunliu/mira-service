@@ -57,8 +57,6 @@ def process_novel_upload_task(
         # 步骤2: 解析小说
         metadata = parse_novel_metadata(content, original_filename)
         chapters_data = split_chapters(content)
-        # hard-code to 10 chapters
-        chapters_data = chapters_data[:10]
         
         logger.info(f"解析完成: 标题={metadata['title']}, 作者={metadata['author']}, 章节数={len(chapters_data)}")
         
@@ -246,7 +244,7 @@ def process_novel_upload_task(
         }
         
     except Exception as e:
-        logger.error(f"处理小说上传任务失败: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error("处理小说上传任务失败: {}", str(e))
         
         # 步骤7: 错误处理与回滚
         if novel:

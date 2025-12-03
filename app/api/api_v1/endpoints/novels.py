@@ -7,6 +7,8 @@ from app.services.novel_service import NovelService
 from app.core.logger import logger
 from app.core.exceptions import BaseServiceException
 from app.utils.response import success_response
+from app.schemas.novel import NovelUpdate
+from app.schemas.chapter import ChapterUpdate
 
 router = APIRouter()
 
@@ -87,6 +89,7 @@ async def get_novels(
     status: Optional[str] = Query(None, description="过滤状态：uploaded, processing, completed, failed"),
     owner_id: Optional[int] = Query(None, description="过滤所有者ID"),
     search: Optional[str] = Query(None, description="搜索关键词（标题或作者）"),
+    title: Optional[str] = Query(None, description="按标题筛选（模糊匹配）"),
     order_by: str = Query("created_at", description="排序字段：created_at, updated_at, title"),
     order: str = Query("desc", description="排序方向：asc, desc"),
     db: Session = Depends(get_db),
@@ -100,6 +103,7 @@ async def get_novels(
     - 状态过滤（status）
     - 所有者过滤（owner_id）
     - 关键词搜索（标题或作者）
+    - 按标题筛选（title）
     - 排序（按创建时间、更新时间、标题）
     
     Args:
@@ -108,6 +112,7 @@ async def get_novels(
         status: 过滤状态
         owner_id: 过滤所有者ID（如果未指定，默认只返回当前用户的小说）
         search: 搜索关键词
+        title: 按标题筛选（模糊匹配）
         order_by: 排序字段
         order: 排序方向（asc/desc）
         db: 数据库会话
@@ -126,6 +131,7 @@ async def get_novels(
             status_filter=status,
             owner_id=owner_id,
             search=search,
+            title_filter=title,
             order_by=order_by,
             order=order
         )
@@ -146,19 +152,6 @@ async def get_novels(
         # 构建 characters 列表（ID列表）
         character_ids = [character.character_id for character in novel.characters]
         
-        # 构建 chapters 列表（简化信息）
-        chapters = [
-            {
-                "chapter_id": chapter.chapter_id,
-                "title": chapter.title,
-                "chapter_number": chapter.chapter_number,
-                "word_count": chapter.word_count,
-                "preview": chapter.preview,
-                "created_at": chapter.created_at,
-            }
-            for chapter in novel.chapters
-        ]
-        
         items.append({
             "novel_id": novel.novel_id,
             "title": novel.title,
@@ -170,7 +163,6 @@ async def get_novels(
             "updated_at": novel.updated_at,
             "creation_ids": creation_ids,
             "character_ids": character_ids,
-            "chapters": chapters,
         })
     
     return success_response(
@@ -195,7 +187,7 @@ async def get_novel(
     """
     根据ID获取小说详情
     
-    注意：当实现后，需要在API层将Novel对象转换为响应格式
+    注意：章节列表需要通过 GET /{novel_id}/chapters 接口单独获取（支持分页）
     """
     try:
         novel = NovelService.get_novel_by_id_service(db=db, novel_id=novel_id, user_id=user.user_id)
@@ -205,9 +197,63 @@ async def get_novel(
             status_code=e.status_code,
             detail=e.detail
         )
+    
+    # 构建创作列表（关系查询已自动过滤已删除的）
+    creations = [
+        {
+            "creation_id": creation.creation_id,
+            "title": creation.title,
+            "status": creation.status,
+            "chapter_id": creation.chapter_id,
+            "video_url": creation.video_url,
+            "audio_url": creation.audio_url,
+            "subtitle_url": creation.subtitle_url,
+            "voice_id": creation.voice_id,
+            "voice_speed": creation.voice_speed,
+            "current_task_id": creation.current_task_id,
+            "created_at": creation.created_at,
+            "updated_at": creation.updated_at,
+        }
+        for creation in novel.creations
+    ]
+    
+    # 构建角色列表
+    characters = [
+        {
+            "character_id": character.character_id,
+            "name": character.name,
+            "status": character.status,
+            "basic_info": character.basic_info,
+            "appearance": character.appearance,
+            "body": character.body,
+            "hair": character.hair,
+            "clothing": character.clothing,
+            "tags": character.tags,
+            "image_prompt": character.image_prompt,
+            "visual_style": character.visual_style,
+            "image_url": character.image_url,
+            "creation_id": character.creation_id,
+            "created_at": character.created_at,
+            "updated_at": character.updated_at,
+        }
+        for character in novel.characters
+    ]
+    
     # 将Novel对象转换为响应格式
     return success_response(
-        data=novel,
+        data={
+            "novel_id": novel.novel_id,
+            "title": novel.title,
+            "author": novel.author,
+            "chapter_count": novel.chapter_count,
+            "status": novel.status,
+            "owner_id": novel.owner_id,
+            "task_id": novel.task_id,
+            "created_at": novel.created_at,
+            "updated_at": novel.updated_at,
+            "creations": creations,
+            "characters": characters,
+        },
         message="小说获取成功"
     )
 
@@ -215,26 +261,200 @@ async def get_novel(
 @router.get("/{novel_id}/chapters")
 async def get_novel_chapters(
     novel_id: int,
+    page: int = Query(1, ge=1, description="页码，从1开始"),
+    page_size: int = Query(10, ge=1, le=100, description="每页数量，默认10，最大100"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
     """
-    获取小说章节列表
+    获取小说章节列表（分页）
     
-    注意：当实现后，需要在API层将Chapter对象列表转换为响应格式
+    支持分页查询，默认每页10个章节
     """
     try:
-        chapters = NovelService.get_novel_chapters_service(db=db, novel_id=novel_id, user_id=user.user_id)
+        chapters, total = NovelService.get_novel_chapters_service(
+            db=db, 
+            novel_id=novel_id, 
+            user_id=user.user_id,
+            page=page,
+            page_size=page_size
+        )
     except BaseServiceException as e:
         # 将业务异常转换为HTTP异常
         raise HTTPException(
             status_code=e.status_code,
             detail=e.detail
         )
-    # 将Chapter对象列表转换为响应格式
+    
+    # 转换为响应格式
+    total_pages = (total + page_size - 1) // page_size
+    items = [
+        {
+            "chapter_id": chapter.chapter_id,
+            "title": chapter.title,
+            "chapter_number": chapter.chapter_number,
+            "word_count": chapter.word_count,
+            "preview": chapter.preview,
+            "content_url": chapter.content_url,
+            "created_at": chapter.created_at,
+        }
+        for chapter in chapters
+    ]
+    
     return success_response(
-        data=chapters,
+        data={
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_prev": page > 1
+        },
         message="章节列表获取成功"
+    )
+
+
+@router.put("/{novel_id}")
+async def update_novel(
+    novel_id: int,
+    novel_update: NovelUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    更新小说信息
+    
+    支持更新字段：
+    - title: 小说标题
+    - author: 作者
+    - status: 状态
+    """
+    try:
+        novel = NovelService.update_novel_service(
+            db=db,
+            novel_id=novel_id,
+            novel_update=novel_update,
+            user_id=user.user_id
+        )
+    except BaseServiceException as e:
+        # 将业务异常转换为HTTP异常
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail
+        )
+    
+    # 转换为响应格式
+    return success_response(
+        data={
+            "novel_id": novel.novel_id,
+            "title": novel.title,
+            "author": novel.author,
+            "status": novel.status,
+            "updated_at": novel.updated_at,
+        },
+        message="小说更新成功"
+    )
+
+
+@router.put("/{novel_id}/chapters/{chapter_id}")
+async def update_chapter(
+    novel_id: int,
+    chapter_id: int,
+    chapter_update: ChapterUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    更新章节信息
+    
+    支持更新字段：
+    - title: 章节标题
+    """
+    try:
+        chapter = NovelService.update_chapter_service(
+            db=db,
+            chapter_id=chapter_id,
+            chapter_update=chapter_update,
+            user_id=user.user_id
+        )
+        
+        # 验证章节是否属于指定的小说
+        if chapter.novel_id != novel_id:
+            raise HTTPException(
+                status_code=400,
+                detail="章节不属于指定的小说"
+            )
+    except BaseServiceException as e:
+        # 将业务异常转换为HTTP异常
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail
+        )
+    
+    # 转换为响应格式
+    return success_response(
+        data={
+            "chapter_id": chapter.chapter_id,
+            "title": chapter.title,
+            "novel_id": chapter.novel_id,
+            "chapter_number": chapter.chapter_number,
+        },
+        message="章节更新成功"
+    )
+
+
+@router.delete("/{novel_id}/chapters/{chapter_id}")
+async def delete_chapter(
+    novel_id: int,
+    chapter_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    删除章节
+    
+    注意：
+    - 只有章节所属小说的所有者可以删除
+    - 删除章节时会同时删除相关的创作（Creation）
+    """
+    try:
+        # 先验证章节是否属于指定的小说（排除已删除的）
+        from app.models.chapter import Chapter
+        chapter = db.query(Chapter).filter(
+            Chapter.chapter_id == chapter_id,
+            Chapter.deleted_at.is_(None)
+        ).first()
+        if not chapter:
+            raise HTTPException(
+                status_code=404,
+                detail="章节不存在"
+            )
+        if chapter.novel_id != novel_id:
+            raise HTTPException(
+                status_code=400,
+                detail="章节不属于指定的小说"
+            )
+        
+        # 调用服务层删除章节
+        NovelService.delete_chapter_service(
+            db=db,
+            chapter_id=chapter_id,
+            user_id=user.user_id
+        )
+    except HTTPException:
+        raise
+    except BaseServiceException as e:
+        # 将业务异常转换为HTTP异常
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail
+        )
+    
+    # 返回删除成功的响应格式
+    return success_response(
+        data={"chapter_id": chapter_id},
+        message="章节删除成功"
     )
 
 

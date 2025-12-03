@@ -5,6 +5,9 @@ from .creation import Creation
 from .character import Character
 from .scene import Scene
 from .shot import Shot
+from .points_account import PointsAccount
+from .points_record import PointsRecord
+from .temporary_points import TemporaryPoints
 
 __all__ = [
     "User",
@@ -14,4 +17,7 @@ __all__ = [
     "Character",
     "Scene",
     "Shot",
+    "PointsAccount",
+    "PointsRecord",
+    "TemporaryPoints",
 ]

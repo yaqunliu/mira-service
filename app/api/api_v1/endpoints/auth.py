@@ -8,6 +8,7 @@ from app.models.user import User
 from app.schemas.user import UserCreate, User as UserSchema, Token
 from app.api.deps import get_current_user
 from app.utils.response import success_response
+from app.services.points_service import PointsService
 
 router = APIRouter()
 
@@ -45,6 +46,14 @@ async def register(
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    
+    # 创建积分账户并赠送注册积分
+    try:
+        PointsService.register_reward(db, new_user.user_id)
+    except Exception as e:
+        # 如果积分赠送失败，记录日志但不影响注册流程
+        import logging
+        logging.error(f"用户注册积分赠送失败: user_id={new_user.user_id}, error={str(e)}")
     
     return success_response(
         data=UserSchema.model_validate(new_user).model_dump(),

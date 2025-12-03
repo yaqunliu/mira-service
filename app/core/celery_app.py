@@ -2,6 +2,7 @@
 Celery 应用配置
 """
 from celery import Celery
+from celery.schedules import crontab
 from app.core.config import settings
 
 # 创建 Celery 应用实例
@@ -15,8 +16,8 @@ app = Celery(
         "app.tasks.creation_task",
         "app.tasks.character_task",
         "app.tasks.shot_task",
-        "app.tasks.audio_task",
         "app.tasks.full_generation_task",
+        "app.tasks.points_task",
     ]
 )
 
@@ -38,6 +39,14 @@ app.conf.update(
     broker_connection_max_retries=10,  # 最大重试次数
     broker_connection_retry_delay=1.0,  # 重试延迟（秒）
 )
+
+# 定时任务配置
+app.conf.beat_schedule = {
+    'expire-daily-points': {
+        'task': 'expire_daily_points_task',
+        'schedule': crontab(hour=0, minute=0),  # 每天 00:00 执行
+    },
+}
 
 # 为了向后兼容，也导出 celery_app 别名
 celery_app = app

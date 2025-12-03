@@ -18,6 +18,8 @@ from app.core.exceptions import (
     AITimeoutError,
     AIRetryExhaustedError
 )
+from app.utils.points_deduction import deduct_points_for_llm
+from app.db.session import SessionLocal
 import openai
 
 
@@ -28,7 +30,8 @@ class AIClient:
     """
 
     def __init__(
-        self, api_key: str = None, base_url: str = None, llm_model_name: str = None, image_model_name: str = None
+        self, api_key: str = None, base_url: str = None, llm_model_name: str = None, 
+        image_model_name: str = None, text_to_image_model: str = None, image_to_image_model: str = None
     ):
         """
         初始化 AIGC 客户端
@@ -37,12 +40,22 @@ class AIClient:
             api_key: OpenAI API 密钥，默认从配置读取
             base_url: API 基础 URL，默认从配置读取
             llm_model_name: 模型名称，默认从配置读取
+            image_model_name: 图片模型名称（向后兼容，已废弃）
+            text_to_image_model: 文生图模型名称（用于生成角色图片）
+            image_to_image_model: 图生图模型名称（用于生成分镜图片）
         """
         self.api_key = api_key or settings.OPENAI_API_KEY
         self.base_url = base_url or settings.OPENAI_BASE_URL
         self.llm_model_name = llm_model_name or settings.LLM_MODEL_NAME
-        self.image_model_name = image_model_name or settings.IMAGE_MODEL_NAME
-        logger.info(f"生图模型: {self.image_model_name}")
+        
+        # 图片模型配置：优先使用新配置，否则使用旧配置（向后兼容）
+        self.text_to_image_model = text_to_image_model or settings.IMAGE_MODEL_TEXT_TO_IMAGE or settings.IMAGE_MODEL_NAME
+        self.image_to_image_model = image_to_image_model or settings.IMAGE_MODEL_IMAGE_TO_IMAGE or settings.IMAGE_MODEL_NAME
+        # 向后兼容：保留旧属性
+        self.image_model_name = image_model_name or self.text_to_image_model
+        
+        logger.info(f"文生图模型（角色）: {self.text_to_image_model}")
+        logger.info(f"图生图模型（分镜）: {self.image_to_image_model}")
 
         if not self.api_key:
             raise ValueError("OpenAI API Key 未配置")
@@ -162,7 +175,13 @@ class AIClient:
         }
 
     def chat_completion(
-        self, messages: List[Dict[str, str]], model: str = None, **kwargs
+        self, 
+        messages: List[Dict[str, str]], 
+        model: str = None,
+        user_id: int = None,
+        creation_id: int = None,
+        novel_id: int = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """
         调用 LLM 进行文本生成（带重试机制）
@@ -170,6 +189,9 @@ class AIClient:
         Args:
             messages: 消息列表
             model: 模型名称，默认使用初始化时的模型
+            user_id: 用户ID（用于积分扣除，可选）
+            creation_id: 创作ID（用于积分扣除，可选）
+            novel_id: 小说ID（用于积分扣除，可选）
             **kwargs: 其他参数（如 temperature, max_tokens 等）
 
         Returns:
@@ -204,6 +226,29 @@ class AIClient:
                         raise TimeoutError(f"LLM 调用超时（{self.timeout}秒）")
                 
                 logger.debug(f"LLM 调用成功，模型: {model}")
+                
+                # 扣除积分（后扣机制，如果提供了用户信息）
+                if user_id and response.get('usage'):
+                    usage = response['usage']
+                    try:
+                        db = SessionLocal()
+                        try:
+                            deduct_points_for_llm(
+                                db=db,
+                                user_id=user_id,
+                                model_name=model,
+                                prompt_tokens=usage.get('prompt_tokens', 0),
+                                completion_tokens=usage.get('completion_tokens', 0),
+                                total_tokens=usage.get('total_tokens', 0),
+                                creation_id=creation_id,
+                                novel_id=novel_id
+                            )
+                        finally:
+                            db.close()
+                    except Exception as e:
+                        logger.error(f"LLM调用积分扣除失败: {str(e)}", exc_info=True)
+                        # 积分扣除失败不影响LLM调用流程，只记录错误
+                
                 return response
                 
             except TimeoutError as e:
@@ -212,8 +257,12 @@ class AIClient:
                 
             except Exception as e:
                 last_error = e
-                error_type = type(e).__name__
-                error_msg = str(e)
+                try:
+                    error_type = type(e).__name__
+                    error_msg = str(e)
+                except Exception:
+                    error_type = "Unknown"
+                    error_msg = "无法获取错误信息"
                 
                 # 检查是否为内容审核错误
                 if self._is_content_moderation_error(e):
@@ -260,7 +309,13 @@ class AIClient:
             raise AIRetryExhaustedError(error_msg) from last_error
 
     def gen_playbook_by_chapter(
-        self, prompt: str, chapter_content: str, model: str = None
+        self, 
+        prompt: str, 
+        chapter_content: str, 
+        model: str = None,
+        user_id: int = None,
+        creation_id: int = None,
+        novel_id: int = None
     ) -> Dict[str, Any]:
         """
         根据章节内容生成剧本（Playbook）
@@ -269,6 +324,9 @@ class AIClient:
             prompt: 提示词
             chapter_content: 章节内容
             model: 模型名称，默认使用初始化时的模型
+            user_id: 用户ID（用于积分扣除，可选）
+            creation_id: 创作ID（用于积分扣除，可选）
+            novel_id: 小说ID（用于积分扣除，可选）
 
         Returns:
             解析后的 JSON 数据
@@ -281,7 +339,18 @@ class AIClient:
         ]
 
         try:
-            response = self.chat_completion(messages=messages, model=model, response_format={"type": "json_object"})
+            ##X## Debug 模式下抛出测试异常 - 测试角色分析LLM调用错误（生成剧本）
+            # if settings.DEBUG:
+            #     raise Exception("测试角色分析LLM调用错误（生成剧本）")
+            
+            response = self.chat_completion(
+                messages=messages, 
+                model=model, 
+                response_format={"type": "json_object"},
+                user_id=user_id,
+                creation_id=creation_id,
+                novel_id=novel_id
+            )
             ai_content = response.get("content", "")
             logger.info(f"AI 返回内容: {ai_content}")
 
@@ -299,7 +368,7 @@ class AIClient:
             raise
     
     def _do_generate_image_by_prompt(
-        self, prompt: str, model: str, aspectRatio: str
+        self, prompt: str, model: str, aspectRatio: str, guidance_scale: float = None
     ) -> str:
         """
         执行图片生成调用的内部方法（不包含重试逻辑）
@@ -308,15 +377,15 @@ class AIClient:
             prompt: 提示词
             model: 模型名称
             aspectRatio: 图片尺寸
-            
+            guidance_scale: 引导尺度
         Returns:
             生成的图片URL
         """
-        response = self.ai_client.images.generate(
-            model=model,
-            prompt=prompt,
-            size=aspectRatio,
-        )
+        response = None
+        if guidance_scale:
+            response = self.ai_client.images.generate(model=model, prompt=prompt, size=aspectRatio, guidance_scale=guidance_scale)
+        else:
+            response = self.ai_client.images.generate(model=model, prompt=prompt, size=aspectRatio)
         image_url = response.data[0].url
         return image_url
     
@@ -337,8 +406,10 @@ class AIClient:
             AITimeoutError: 调用超时
             AIRetryExhaustedError: 重试次数耗尽
         """
-        model = model or self.image_model_name
-        logger.info(f"生成图片开始，模型: {model}, 提示词长度: {len(prompt)}")
+        # 文生图使用 text_to_image_model
+        model = model or self.text_to_image_model
+        logger.info(f"生成图片开始（文生图），模型: {model}, 提示词长度: {len(prompt)}")
+        logger.info(f"【文生图提示词】: {prompt}")
         
         last_error = None
         
@@ -413,7 +484,8 @@ class AIClient:
         prompt: str,
         reference_images: List[str],
         model: str,
-        aspect_ratio: str
+        aspect_ratio: str,
+        guidance_scale: float = None
     ) -> str:
         """
         执行图生图调用的内部方法（不包含重试逻辑）
@@ -423,30 +495,33 @@ class AIClient:
             reference_images: 参考图片URL列表
             model: 模型名称
             aspect_ratio: 图片宽高比
-            
+            guidance_scale: 引导尺度
         Returns:
             生成的图片URL
         """
         # 构建extra_body参数
         extra_body = {
             "images": reference_images,
-            "aspect_ratio": aspect_ratio
+            "aspect_ratio": aspect_ratio,
+            "guidance_scale": guidance_scale if guidance_scale else 3.5,
+            "negative_prompt": "bad hand, extra fingers, too dark, overexposed, color shift, monochromatic, ugly"
         }
         
         response = self.ai_client.images.generate(
             model=model,
             prompt=prompt,
-            extra_body=extra_body
+            extra_body=extra_body,
         )
         
         image_url = response.data[0].url
+
         return image_url
     
     def generate_image_by_reference(
         self, 
         prompt: str, 
         reference_images: List[str], 
-        model: str = "black-forest-labs/flux-kontext-pro/multi",
+        model: str = None,
         aspect_ratio: str = "16:9"
     ) -> str:
         """
@@ -455,7 +530,7 @@ class AIClient:
         Args:
             prompt: 图片生成提示词（英文）
             reference_images: 参考图片URL列表（shot关联的角色图片）
-            model: 模型名称，默认使用 flux-kontext-pro/multi
+            model: 模型名称，默认使用 image_to_image_model（图生图模型）
             aspect_ratio: 图片宽高比，格式为 "宽度:高度"，默认 "16:9"
             
         Returns:
@@ -466,7 +541,11 @@ class AIClient:
             AITimeoutError: 调用超时
             AIRetryExhaustedError: 重试次数耗尽
         """
+        # 图生图使用 image_to_image_model
+        model = model or self.image_to_image_model
         logger.info(f"图生图开始，模型: {model}, 提示词长度: {len(prompt)}, 参考图片数量: {len(reference_images)}")
+        logger.info(f"【图生图提示词】: {prompt}")
+        logger.info(f"【图生图参考图片】: {reference_images}")
         
         last_error = None
         
@@ -481,7 +560,8 @@ class AIClient:
                         prompt=prompt,
                         reference_images=reference_images,
                         model=model,
-                        aspect_ratio=aspect_ratio
+                        aspect_ratio=aspect_ratio,
+                        guidance_scale=3.5
                     )
                     
                     try:
@@ -577,7 +657,11 @@ class AIClient:
         Returns:
             是否为内容审核错误
         """
-        error_msg = str(error).lower()
+        try:
+            error_msg = str(error).lower()
+        except Exception:
+            error_msg = ""
+        
         error_type = type(error).__name__
         
         # 检查错误消息中是否包含内容审核相关的关键词
@@ -605,13 +689,69 @@ class AIClient:
             'blocked'
         ]
         
+        # 排除的关键词（这些明确表示不是审核错误）
+        exclusion_keywords = [
+            'model not support',
+            'model not found',
+            'invalid param',
+            'param_error',
+            'invalid_request_error',
+            'not found',
+            'unauthorized',
+            'forbidden',
+            'rate limit',
+            'timeout',
+            'connection',
+            'network'
+        ]
+        
+        # 先检查排除关键词，如果匹配则肯定不是审核错误
+        for exclusion_keyword in exclusion_keywords:
+            if exclusion_keyword in error_msg:
+                return False
+        
         # 检查是否为特定的 OpenAI API 错误类型
         if isinstance(error, openai.APIError):
-            # 检查状态码（400 通常表示内容审核失败）
-            if hasattr(error, 'status_code') and error.status_code == 400:
-                return True
+            try:
+                # 检查错误代码和类型
+                if hasattr(error, 'code') and error.code is not None:
+                    error_code = str(error.code).lower()
+                    # 参数错误、模型不支持等不是审核错误
+                    if any(excl in error_code for excl in ['param', 'model', 'invalid', 'not_found']):
+                        return False
+                
+                # 检查错误消息中的详细信息
+                if hasattr(error, 'message') and error.message is not None:
+                    error_detail = str(error.message).lower()
+                    # 如果错误消息中包含排除关键词，不是审核错误
+                    for exclusion_keyword in exclusion_keywords:
+                        if exclusion_keyword in error_detail:
+                            return False
+                    # 如果错误消息中包含审核关键词，是审核错误
+                    for keyword in moderation_keywords:
+                        if keyword in error_detail:
+                            return True
+                
+                # 安全地访问 error.body（如果存在）
+                if hasattr(error, 'body') and error.body is not None:
+                    try:
+                        # body 可能是字典或字符串
+                        if isinstance(error.body, dict):
+                            body_str = str(error.body).lower()
+                        else:
+                            body_str = str(error.body).lower()
+                        # 检查 body 中是否包含审核关键词
+                        for keyword in moderation_keywords:
+                            if keyword in body_str:
+                                return True
+                    except (KeyError, AttributeError, TypeError):
+                        # 如果访问 body 时出错，忽略并继续
+                        pass
+            except (KeyError, AttributeError, TypeError) as e:
+                # 如果访问异常属性时出错，记录警告但继续处理
+                logger.warning(f"访问 OpenAI 异常属性时出错: {e}")
         
-        # 检查错误消息
+        # 检查错误消息中是否包含审核关键词
         for keyword in moderation_keywords:
             if keyword in error_msg:
                 return True
@@ -628,30 +768,39 @@ class AIClient:
         Returns:
             是否为可重试的错误
         """
-        # 内容审核错误不可重试
-        if self._is_content_moderation_error(error):
+        try:
+            # 内容审核错误不可重试
+            if self._is_content_moderation_error(error):
+                return False
+            
+            # 超时错误可重试
+            if isinstance(error, (TimeoutError, FuturesTimeoutError)):
+                return True
+            
+            # 网络错误可重试
+            if isinstance(error, (openai.APIConnectionError, openai.APITimeoutError)):
+                return True
+            
+            # 5xx 服务器错误可重试
+            if isinstance(error, openai.APIError):
+                try:
+                    if hasattr(error, 'status_code') and error.status_code is not None:
+                        status_code = error.status_code
+                        if 500 <= status_code < 600:
+                            return True
+                except (KeyError, AttributeError, TypeError):
+                    # 如果访问 status_code 时出错，忽略并继续
+                    pass
+            
+            # 429 限流错误可重试
+            if isinstance(error, openai.RateLimitError):
+                return True
+            
             return False
-        
-        # 超时错误可重试
-        if isinstance(error, (TimeoutError, FuturesTimeoutError)):
-            return True
-        
-        # 网络错误可重试
-        if isinstance(error, (openai.APIConnectionError, openai.APITimeoutError)):
-            return True
-        
-        # 5xx 服务器错误可重试
-        if isinstance(error, openai.APIError):
-            if hasattr(error, 'status_code'):
-                status_code = error.status_code
-                if status_code and 500 <= status_code < 600:
-                    return True
-        
-        # 429 限流错误可重试
-        if isinstance(error, openai.RateLimitError):
-            return True
-        
-        return False
+        except Exception as e:
+            # 如果判断过程中出现任何异常，记录警告并返回 False（不可重试）
+            logger.warning(f"判断错误是否可重试时出错: {e}")
+            return False
     
     def generate_shot_image_prompt(
         self,
@@ -696,6 +845,10 @@ class AIClient:
         ]
         
         try:
+            ##X## Debug 模式下抛出测试异常 - 测试角色分析LLM调用错误（生成分镜提示词）
+            # if settings.DEBUG:
+            #     raise Exception("测试角色分析LLM调用错误（生成分镜提示词）")
+            
             response = self.chat_completion(messages=messages, model=model)
             prompt_text = response.get("content", "").strip()
             

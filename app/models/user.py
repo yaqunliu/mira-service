@@ -19,3 +19,4 @@ class User(Base):
     # 关系
     novels = relationship("Novel", back_populates="owner")
     creations = relationship("Creation", back_populates="owner")
+    points_account = relationship("PointsAccount", back_populates="user", uselist=False)

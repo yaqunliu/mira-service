@@ -1,3 +1,4 @@
+import math
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func
@@ -18,6 +19,10 @@ from app.schemas.shot import (
 from app.utils.response import success_response
 from app.tasks.shot_task import generate_single_shot_image_task
 from app.core.logger import logger
+from app.services.points_service import PointsService
+from app.utils.model_prices import ModelPrices
+from app.core.config import settings
+from app.core.exceptions import InsufficientPointsError
 
 router = APIRouter()
 
@@ -278,19 +283,48 @@ async def generate_shot_image(
     
     creation_id = shot.scene.creation.creation_id
     
-    # 启动 Celery 任务
+    # 计算需要的积分（提交任务时立即冻结，防止多设备并发超额使用）
+    # 分镜图片生成：优先使用图生图模型（因为通常有角色图片），如果没有配置则使用文生图模型
+    image_model = settings.IMAGE_MODEL_IMAGE_TO_IMAGE or settings.IMAGE_MODEL_TEXT_TO_IMAGE or settings.IMAGE_MODEL_NAME or "black-forest-labs/flux-kontext-pro/multi"
+    cost = ModelPrices.calculate_image_cost(image_model, 1)
+    required_points = int(math.ceil(cost * 100))  # 每1元=100积分，向上取整
+    # 确保至少1积分
+    if required_points <= 0:
+        required_points = 1
+    
+    # 冻结积分（提交任务时立即冻结）
+    try:
+        freeze_record = PointsService.freeze_points(
+            db=db,
+            user_id=user.user_id,
+            points=required_points,
+            operation_type="generate_shot",
+            creation_id=creation_id,
+            novel_id=shot.scene.creation.novel_id,
+            description=f"生成分镜图片（{shot.title}）",
+            extra_data={
+                "shot_id": shot_id,
+                "task_type": "shot_image_generation"
+            }
+        )
+    except InsufficientPointsError as e:
+        raise HTTPException(status_code=402, detail=str(e))
+    
+    # 启动 Celery 任务（传递 freeze_record_id）
     task = generate_single_shot_image_task.delay(
         shot_id=shot_id,
-        creation_id=creation_id
+        creation_id=creation_id,
+        freeze_record_id=freeze_record.record_id  # 传递冻结记录ID
     )
     
-    logger.info(f"分镜 {shot_id} 图片生成任务已启动: task_id={task.id}")
+    logger.info(f"分镜 {shot_id} 图片生成任务已启动: task_id={task.id}, freeze_record_id={freeze_record.record_id}")
     
     return success_response(
         data={
             "task_id": task.id,
             "shot_id": shot_id,
-            "creation_id": creation_id
+            "creation_id": creation_id,
+            "freeze_record_id": freeze_record.record_id
         },
         message="分镜图片生成任务已启动"
     )

@@ -11,6 +11,8 @@ from app.utils.ai_client import AIClient
 from app.core.logger import logger
 from app.utils.file_utils import read_prompt_file
 from app.utils.us3 import US3Client
+from app.utils.points_deduction import deduct_points_for_image
+from app.core.config import settings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 import uuid
@@ -127,15 +129,49 @@ def _generate_single_character_image(character_id: int, visual_style: str) -> di
         character.image_prompt = image_prompt
         # character.image_base64 = image_base64
 
+        # 获取用户ID和相关信息用于积分扣除
+        user_id = None
         creation_id = character.creation_id
+        novel_id = character.novel_id
+        
         if creation_id:
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
             if creation:
                 creation.status = CreationStatus.CHARACTER_GENERATED
+                user_id = creation.owner_id
+                novel_id = creation.novel_id or novel_id
+        elif novel_id:
+            # 如果没有 creation_id，通过 novel_id 获取用户ID
+            from app.models.novel import Novel
+            novel = db.query(Novel).filter(Novel.novel_id == novel_id).first()
+            if novel:
+                user_id = novel.owner_id
+        
+        # 扣除积分（按实际成本，带幂等性检查）
+        # 角色生成使用文生图模型
+        if user_id:
+            try:
+                deduct_points_for_image(
+                    db=db,
+                    user_id=user_id,
+                    image_count=1,
+                    model_name=settings.IMAGE_MODEL_TEXT_TO_IMAGE or settings.IMAGE_MODEL_NAME or "black-forest-labs/flux-kontext-pro/multi",
+                    creation_id=creation_id,
+                    novel_id=novel_id,
+                    description=f"生成角色图片（{character.name}）",
+                    character_id=character_id  # 用于幂等性检查，防止重试重复扣费
+                )
+                logger.info(f"角色 {character_id} 图片生成积分扣除成功")
+            except Exception as e:
+                logger.opt(exception=True).error("角色图片生成积分扣除失败: {}", str(e))
+                # 积分扣除失败不影响图片生成流程，只记录错误
+        else:
+            logger.warning(f"角色 {character_id} 无法获取用户ID，跳过积分扣除（creation_id={creation_id}, novel_id={novel_id}）")
 
         db.commit()
-        db.refresh(creation)
         db.refresh(character)
+        if creation_id:
+            db.refresh(creation)
         
         logger.info(f"角色 {character.name}(ID: {character_id}) 图片生成成功")
         return {
@@ -145,7 +181,7 @@ def _generate_single_character_image(character_id: int, visual_style: str) -> di
             "image_url": image_url
         }
     except Exception as e:
-        logger.error(f"角色 {character_id} 图片生成失败: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error("角色 {} 图片生成失败: {}", character_id, str(e))
         db.rollback()
         return {
             "character_id": character_id,
@@ -196,6 +232,10 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
     failed_count = 0
     
     try:
+        ##X## Debug 模式下抛出测试异常 - 测试角色图片生成错误
+        # if settings.DEBUG:
+        #     raise Exception("测试角色图片生成错误")
+        
         # 使用线程池并发执行（最多5个并发）
         max_workers = min(5, total_count)  # 限制最大并发数，避免过多请求
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -234,7 +274,7 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
                 except Exception as e:
                     failed_count += 1
                     error_msg = f"角色 {character_id} 处理异常: {str(e)}"
-                    logger.error(error_msg, exc_info=True)
+                    logger.opt(exception=True).error("{}", error_msg)
                     results.append({
                         "character_id": character_id,
                         "success": False,
@@ -255,15 +295,35 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
             "results": results
         }
         
-    except Exception as e:
-        error_msg = f"角色图片生成任务失败: {str(e)}"
-        logger.error(error_msg, exc_info=True)
+    except BaseServiceException as e:
+        # BaseServiceException 直接重新抛出，不进行包装
+        error_msg = str(e)
+        exc_type = type(e).__name__
+        exc_module = type(e).__module__
         self.update_state(
             state="FAILURE",
             meta={
                 "task_type": TaskType.CHARACTER_IMAGE_GENERATION,
                 "character_ids": character_ids,
                 "error": error_msg,
+                "exc_type": f"{exc_module}.{exc_type}",
+                "exc_message": error_msg,
+            },
+        )
+        raise
+    except Exception as e:
+        error_msg = f"角色图片生成任务失败: {str(e)}"
+        logger.opt(exception=True).error("{}", error_msg)
+        exc_type = type(e).__name__
+        exc_module = type(e).__module__
+        self.update_state(
+            state="FAILURE",
+            meta={
+                "task_type": TaskType.CHARACTER_IMAGE_GENERATION,
+                "character_ids": character_ids,
+                "error": error_msg,
+                "exc_type": f"{exc_module}.{exc_type}",
+                "exc_message": error_msg,
             },
         )
         raise BaseServiceException(message=error_msg)

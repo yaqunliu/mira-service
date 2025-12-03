@@ -13,23 +13,21 @@
 # Rules & Logic
 1. **角色匹配 (Character Matching)**: 分析 [当前分镜] 中出现了哪些角色。只提取当前分镜中出现的角色的 **关键特征** 融入提示词。
 2. **环境优先 (Environment Priority)**: 确保环境、光影和氛围的描述详细且生动。
-3. **翻译与润色 (Translate & Refine)**: 将中文描述翻译为精准的英文视觉描述词。增加必要的画质修饰词 (e.g., cinematic lighting, 8k, masterpiece)。
-4. **字数控制 (Word Count)**: 最终输出的英文提示词应控制在200词以内。
-5. **强制后缀 (Mandatory Suffix)**: 在提示词的最后，**必须** 加上以下这句话：
-   "strictly preserve reference face and hairstyle"
-
+3. **翻译与润色 (Translate & Refine)**: 将中文描述翻译为精准的英文视觉描述词。
+4. **字数控制 (Word Count)**: 最终输出的英文提示词应控制在150英文单词以内。
+4. **场景名称忽略 (Word Count)**: 遇到带名称的场景时 如：xxx楼 xxx阁 xxx池等 忽略他的名称。
 ---
 
 # FEW-SHOT EXAMPLES (已更新，侧重环境描述)
 
 **Example 1 (Close-up/Drama):**
-Close-up of an elegant woman (vintage hairstyle, pearl earrings) gazing out a heavily rain-streaked window. The **streetlights outside cast long, blurred orange reflections** across the wet glass, creating a **moody, cinematic noir atmosphere**. Soft, diffused light highlights her silk dress. Cinematic composition, shallow depth of field, 4k, photorealistic, strictly preserve reference face and hairstyle.
+Close-up of an elegant woman (vintage hairstyle, pearl earrings) gazing out a heavily rain-streaked window. The **streetlights outside cast long, blurred orange reflections** across the wet glass, creating a **moody, cinematic noir atmosphere**. Soft, diffused light highlights her silk dress.
 
 **Example 2 (Dynamic Duo/Action):**
-Dynamic medium shot of a muscular male hero (short black hair, tactical gear) fighting a cloaked female villain (long white hair) on a rain-slicked Tokyo rooftop. The air is thick with **volumetric steam rising from industrial vents**, illuminated by **deep blue and vibrant magenta neon signs**. High-speed shutter, dramatic chiaroscuro lighting, wide angle, 8k, strictly preserve reference face and hairstyle.
+Dynamic medium shot of a muscular male hero (short black hair, tactical gear) fighting a cloaked female villain (long white hair) on a rain-slicked Tokyo rooftop. The air is thick with **volumetric steam rising from industrial vents**, illuminated by **deep blue and vibrant magenta neon signs**. 
 
 **Example 3 (Group Shot/Sci-Fi):**
-Wide shot of three astronauts, led by a female Captain (braided brown hair), standing on the futuristic bridge of a starship. The massive panoramic viewport dominates the scene, displaying a **vivid, hyper-detailed purple and gold swirling nebula**. The interior is dimly lit by **deep-blue console holographic readouts and structural shadows**. Epic scale, deep space photography, cinematic matte painting style, strictly preserve reference face and hairstyle.
+Wide shot of three astronauts, led by a female Captain (braided brown hair), standing on the futuristic bridge of a starship. The massive panoramic viewport dominates the scene, displaying a **vivid, hyper-detailed purple and gold swirling nebula**. The interior is dimly lit by **deep-blue console holographic readouts and structural shadows**. 
 
 ---
 
@@ -45,5 +43,5 @@ Wide shot of three astronauts, led by a female Captain (braided brown hair), sta
 {current_shot}
 
 # Output Requirement
-请根据上述规则和提供的中文信息，立即生成最终的英文提示词。
+请根据上述规则和提供的中文信息，立即生成最终的英文提示词（150单词以内）。
 

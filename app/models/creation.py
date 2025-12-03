@@ -25,10 +25,19 @@ class Creation(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     current_task_id = Column(String(100), nullable=True, index=True)  # Celery任务ID，用于关联当前正在执行任务的状态
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)  # 软删除时间戳
     
     # 关系
     owner = relationship("User", back_populates="creations")
-    novel = relationship("Novel", back_populates="creations")
-    chapter = relationship("Chapter", back_populates="creation")
+    novel = relationship(
+        "Novel", 
+        back_populates="creations",
+        primaryjoin="and_(Creation.novel_id == Novel.novel_id, Creation.deleted_at.is_(None))"
+    )
+    chapter = relationship(
+        "Chapter", 
+        back_populates="creation",
+        primaryjoin="and_(Creation.chapter_id == Chapter.chapter_id, Chapter.deleted_at.is_(None))"
+    )
     characters = relationship("Character", back_populates="creation", order_by="Character.character_id")
     scenes = relationship("Scene", back_populates="creation", cascade="all, delete-orphan", order_by="Scene.scene_id")

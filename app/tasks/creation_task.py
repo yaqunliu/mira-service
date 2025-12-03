@@ -27,6 +27,10 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
     temp_file_path = None
     logger.info(f"开始处理创作初始化任务: novel_id={novel_id}, chapter_id={chapter_id}, creation_id={creation_id}")
     try:
+        ##X## Debug 模式下抛出测试异常 - 测试创作初始化错误
+        # if settings.DEBUG:
+        #     raise Exception("测试创作初始化错误")
+        
         self.update_state(
             state='PROGRESS',
             meta={
@@ -61,13 +65,24 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
             chapter_content = f.read()
         logger.info(f"成功读取章节内容，长度: {len(chapter_content)} 字符")
 
+        # 查询对应的 Creation 记录以获取用户信息
+        creation = db.query(Creation).filter(
+            Creation.creation_id == creation_id
+        ).first()
+        
+        if not creation:
+            raise Exception(f"创作不存在: creation_id={creation_id}")
+        
         # TODO: 生成剧本 - 临时简化开发，直接返回 demo.json 数据
         # 正式环境应使用以下代码：
         ai_client = AIClient()
         prompt_playbook = read_prompt_file("playbook.md")
         playbook = ai_client.gen_playbook_by_chapter(
             prompt=prompt_playbook, 
-            chapter_content=chapter_content
+            chapter_content=chapter_content,
+            user_id=creation.owner_id,
+            creation_id=creation_id,
+            novel_id=creation.novel_id
         )
         
         # 临时方案：直接读取 demo.json 文件
@@ -82,16 +97,6 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
         #     playbook = json.load(f)
         
         logger.info(f"成功加载演示数据，包含 {len(playbook.get('场景拆解', []))} 个场景")
-        
-        # 查询对应的 Creation 记录
-        creation = db.query(Creation).filter(
-            Creation.creation_id == creation_id
-        ).first()
-        
-        if not creation:
-            raise Exception(f"未找到对应的创作记录: creation_id={creation_id}")
-        
-        creation_id = creation.creation_id
         logger.info(f"找到创作记录: creation_id={creation_id}")
         
         # 解析并保存角色信息
@@ -219,15 +224,56 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
         }
 
     except Exception as e:
-        logger.error(f"创作初始化任务失败: {str(e)}", exc_info=True)
+        # 使用 loguru 的格式化方式，避免错误消息中的字典字符串被误认为是格式化占位符
+        logger.opt(exception=True).error("创作初始化任务失败: {}", str(e))
         db.rollback()  # 确保回滚事务
+        
+        try:
+            error_msg = str(e).lower()
+        except Exception:
+            error_msg = str(e) if e else "未知错误"
+        
+        # 判断是否为不可重试的错误（如参数错误、模型不支持等）
+        non_retryable_keywords = [
+            'invalid param',
+            'param_error',
+            'invalid_request_error',
+            'model not support',
+            'model not found',
+            'max_tokens',
+            'invalid max_tokens',
+            'bad request',
+            'keyerror',
+            'content moderation',
+            '内容审核'
+        ]
+        is_non_retryable = any(keyword in error_msg for keyword in non_retryable_keywords)
         
         # 检查是否还有重试机会
         retry_count = self.request.retries if hasattr(self.request, 'retries') else 0
         max_retries = 3
         
-        if retry_count >= max_retries:
-            # 已达到最大重试次数，不再重试
+        # 如果是不可重试的错误，或者已达到最大重试次数，需要清空 current_task_id
+        if is_non_retryable or retry_count >= max_retries:
+            try:
+                # 重新查询 creation，确保能够设置 current_task_id
+                creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+                if creation:
+                    creation.current_task_id = None
+                    db.commit()
+                    logger.info(f"已清理 current_task_id，creation_id={creation_id}")
+            except Exception as cleanup_error:
+                logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            
+            # 如果是不可重试的错误，直接抛出，不进行重试
+            if is_non_retryable:
+                logger.error(f"遇到不可重试的错误，直接失败: {error_msg}")
+                raise
+            # 如果已达到最大重试次数，也直接抛出
             raise
         else:
             # 还有重试机会，触发重试（临时文件会在 finally 中清理，重试时会重新下载）

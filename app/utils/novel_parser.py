@@ -8,6 +8,107 @@ from pathlib import Path
 from app.core.logger import logger
 
 
+def clean_chapter_title(title: str, max_length: int = 200) -> str:
+    """
+    清理章节标题
+    
+    处理规则：
+    1. 从句号、感叹号、问号等标点符号截断
+    2. 去除重复内容
+    3. 清理常见的垃圾内容（如"牢记本站网址"、"七更求花"等）
+    4. 限制长度
+    5. 去除多余的空格和换行
+    
+    Args:
+        title: 原始章节标题
+        max_length: 最大长度，默认200
+        
+    Returns:
+        清理后的章节标题
+    """
+    if not title:
+        return title
+    
+    # 去除首尾空白和换行
+    title = title.strip().replace('\n', ' ').replace('\r', ' ')
+    
+    # 去除多余的空格（多个空格替换为单个空格）
+    title = re.sub(r'\s+', ' ', title)
+    
+    # 清理常见的垃圾内容模式
+    # 1. 牢记本站网址相关（包括后面的所有内容）
+    title = re.sub(r'牢记本站网址[：:].*', '', title, flags=re.IGNORECASE)
+    title = re.sub(r'牢记本站网址.*', '', title, flags=re.IGNORECASE)
+    
+    # 2. 更求xxx相关（包括各种变体）
+    # 先匹配带括号的：【七更求花】、【六更求花】等
+    title = re.sub(r'[【\[]+[零一二三四五六七八九十百千万]*[更求]+[花票收藏订阅月票推荐打赏支持点击鲜花钻石红包礼物评价评论点赞分享转发关注]+[】\]]+', '', title, flags=re.IGNORECASE)
+    # 再匹配不带括号的：七更求花、六更求花等（数字+更求+内容）
+    title = re.sub(r'[零一二三四五六七八九十百千万\d]+[更求]+[花票收藏订阅月票推荐打赏支持点击鲜花钻石红包礼物评价评论点赞分享转发关注]+', '', title, flags=re.IGNORECASE)
+    # 匹配：更求花、更求票等（没有数字前缀的）
+    title = re.sub(r'[更求]+[花票收藏订阅月票推荐打赏支持点击鲜花钻石红包礼物评价评论点赞分享转发关注]+', '', title, flags=re.IGNORECASE)
+    
+    # 从句号、感叹号、问号等标点符号截断（保留章节号部分）
+    # 匹配章节号后的内容，如果遇到句号等标点，截断
+    # 先找到章节号的位置
+    chapter_match = re.search(r'(第[^章回]*[章回])', title)
+    if chapter_match:
+        chapter_part = chapter_match.group(1)
+        rest_part = title[chapter_match.end():].strip()
+        
+        # 在剩余部分中查找截断点
+        # 优先在句号、感叹号、问号处截断
+        truncate_chars = ['。', '！', '？', '.', '!', '?']
+        truncate_pos = len(rest_part)
+        for char in truncate_chars:
+            pos = rest_part.find(char)
+            if pos != -1 and pos < truncate_pos:
+                truncate_pos = pos + 1
+        
+        # 如果找到截断点，截断
+        if truncate_pos < len(rest_part):
+            rest_part = rest_part[:truncate_pos].strip()
+        
+        title = (chapter_part + ' ' + rest_part).strip()
+    else:
+        # 如果没有找到章节号，直接查找截断点
+        truncate_chars = ['。', '！', '？', '.', '!', '?']
+        for char in truncate_chars:
+            pos = title.find(char)
+            if pos != -1:
+                title = title[:pos + 1].strip()
+                break
+    
+    # 去除重复内容（如果标题重复出现，只保留第一次）
+    # 简单的重复检测：如果标题的前半部分和后半部分相同
+    title_len = len(title)
+    if title_len > 10:
+        half_len = title_len // 2
+        first_half = title[:half_len]
+        second_half = title[half_len:half_len * 2]
+        # 如果前半部分和后半部分相似度很高（去除空格后相似），只保留前半部分
+        if first_half.replace(' ', '') == second_half.replace(' ', ''):
+            title = first_half.strip()
+    
+    # 去除多余的空格
+    title = re.sub(r'\s+', ' ', title).strip()
+    
+    # 限制长度
+    if len(title) > max_length:
+        title = title[:max_length].strip()
+        # 如果截断后最后一个字符不是标点，尝试在最后一个标点处截断
+        last_punct = max(
+            title.rfind('。'), title.rfind('！'), title.rfind('？'),
+            title.rfind('.'), title.rfind('!'), title.rfind('?'),
+            title.rfind('，'), title.rfind(','), title.rfind('：'),
+            title.rfind(':'), title.rfind('；'), title.rfind(';')
+        )
+        if last_punct > max_length * 0.7:  # 如果标点在70%位置之后，使用标点位置
+            title = title[:last_punct + 1].strip()
+    
+    return title
+
+
 def parse_novel_metadata(content: str, filename: str) -> Dict[str, str]:
     """
     解析小说元数据（标题、作者）
@@ -81,12 +182,22 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
         章节列表，每个章节包含 title 和 content
     """
     # 章节匹配模式
-    # 中文：第[一二三四五六七八九十百千万\d]+章、第[0-9]+章、第[0-9]+回
+    # 中文数字：支持完整的中文数字格式，包括零一二三四五六七八九十百千万
+    # 例如：第一章、第一千九百九十章、第一万章等
+    # 支持带空格的格式：第 一 章、第 一 回、第 1999 章、第 一 百 章等
+    # 阿拉伯数字：第[0-9]+章、第[0-9]+回
     # 英文：Chapter\s+[0-9]+、CHAPTER\s+[0-9]+
+    # 注意：\s* 表示零个或多个空白字符（空格、制表符等）
+    # 对于中文数字，允许数字字符之间有空格，使用 ([零一二三四五六七八九十百千万]\s*)+ 模式
     chapter_patterns = [
-        r'第[一二三四五六七八九十百千万\d]+章',
-        r'第[0-9]+章',
-        r'第[0-9]+回',
+        r'第\s*([零一二三四五六七八九十百千万]\s*)+\s*章',  # 纯中文数字，支持数字字符间空格
+        r'第\s*[零一二三四五六七八九十百千万]+\s*章',  # 纯中文数字，无空格（向后兼容）
+        r'第\s*[零一二三四五六七八九十百千万\d]+\s*章',  # 中文数字和阿拉伯数字混合，支持空格
+        r'第\s*[0-9]+\s*章',  # 纯阿拉伯数字，支持空格
+        r'第\s*([零一二三四五六七八九十百千万]\s*)+\s*回',  # 纯中文数字的回，支持数字字符间空格
+        r'第\s*[零一二三四五六七八九十百千万]+\s*回',  # 纯中文数字的回，无空格（向后兼容）
+        r'第\s*[零一二三四五六七八九十百千万\d]+\s*回',  # 中文数字和阿拉伯数字混合的回，支持空格
+        r'第\s*[0-9]+\s*回',  # 纯阿拉伯数字的回，支持空格
         r'Chapter\s+[0-9]+',
         r'CHAPTER\s+[0-9]+',
     ]
@@ -115,8 +226,8 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
                         "content": chapter_content
                     })
             
-            # 开始新章节
-            current_chapter_title = line_stripped
+            # 开始新章节，清理标题
+            current_chapter_title = clean_chapter_title(line_stripped)
             current_chapter_content = []
         else:
             # 添加到当前章节内容
@@ -125,7 +236,7 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
             elif line_stripped:  # 如果还没有章节标题，但内容不为空，可能是前言
                 # 如果没有找到章节标题，将整个内容作为第一章
                 if not chapters:
-                    current_chapter_title = "第一章"
+                    current_chapter_title = clean_chapter_title("第一章")
                     current_chapter_content = [line]
     
     # 保存最后一个章节
@@ -142,9 +253,13 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
         content_stripped = content.strip()
         if content_stripped:
             chapters.append({
-                "title": "第一章",
+                "title": clean_chapter_title("第一章"),
                 "content": content_stripped
             })
+    
+    # 对所有章节标题进行最终清理（防止遗漏）
+    for chapter in chapters:
+        chapter['title'] = clean_chapter_title(chapter['title'])
     
     logger.info(f"解析得到 {len(chapters)} 个章节")
     return chapters

@@ -26,6 +26,8 @@ from app.utils.fish_audio import get_fish_audio_client
 from app.utils.font_utils import ensure_font_exists
 from app.core.logger import logger
 from app.utils.us3 import US3Client
+from app.utils.points_deduction import deduct_points_for_video, deduct_points_for_audio
+from app.core.config import settings
 
 
 # ============== 音频相关函数 ==============
@@ -306,7 +308,7 @@ def _generate_shot_video(image_path: str, duration_ms: int, output_path: str) ->
         cmd = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path,
             "-vf", filter_str, "-t", str(duration_seconds),
-            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
             output_path
         ]
         
@@ -413,7 +415,7 @@ def _merge_video_audio_subtitle(video_path: str, audio_path: str, subtitle_path:
                 "-i", video_path, 
                 "-i", audio_path,
                 "-vf", vf_filter,
-                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
                 "-c:a", "aac", "-b:a", "192k", "-shortest",
                 output_path
             ]
@@ -422,7 +424,7 @@ def _merge_video_audio_subtitle(video_path: str, audio_path: str, subtitle_path:
                 "ffmpeg", "-y", 
                 "-i", video_path, 
                 "-i", audio_path,
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-preset", "veryfast", "-shortest",
                 output_path
             ]
         
@@ -460,16 +462,21 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
     temp_files = []
     
     try:
+        ##X## Debug 模式下抛出测试异常 - 测试完整视频生成错误
+        # if settings.DEBUG:
+        #     raise Exception("测试完整视频生成错误")
+        
+        # 获取创作信息
+        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        if not creation:
+            raise NotFoundError(detail=f"创作不存在: creation_id={creation_id}")
+        
         # 预先下载字体文件，确保合成视频时字体可用
         font_path = ensure_font_exists()
         if font_path:
             logger.info(f"字体文件准备就绪: {font_path}")
         else:
             logger.warning("字体文件准备失败，将使用默认字体")
-        
-        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
-        if not creation:
-            raise NotFoundError(detail=f"创作不存在: creation_id={creation_id}")
         
         creation.voice_id = voice_id
         creation.voice_speed = voice_speed
@@ -525,7 +532,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
                 "creation_id": creation_id,
                 "stage": "generating_audio",
                 "stage_name": "生成音频",
-                "total_stages": 4,
+                "total_stages": 5,
                 "current_stage": 1,
                 "total": total_shots,
                 "completed": 0,
@@ -553,22 +560,66 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
                         "creation_id": creation_id,
                         "stage": "generating_audio",
                         "stage_name": "生成音频",
-                        "total_stages": 4,
+                        "total_stages": 5,
                         "current_stage": 1,
                         "total": total_shots,
                         "completed": len(audio_results),
                         "status": f"音频生成: {len(audio_results)}/{total_shots}"
                     })
         
-        # ========== 阶段2: 合并音频+字幕（如果已存在则跳过）==========
+        # ========== 阶段2: 批量扣除音频生成积分 ==========
+        # 统计所有成功生成的音频，一次性扣除积分
+        if audio_results:
+            successful_audio_results = [r for r in audio_results if r.get("success")]
+            if successful_audio_results:
+                total_text_bytes = 0
+                total_duration_seconds = 0.0
+                shot_count = 0
+                
+                for result in successful_audio_results:
+                    narration = result.get("narration", "")
+                    if narration:
+                        total_text_bytes += len(narration.encode('utf-8'))
+                    duration_ms = result.get("duration_ms", 0)
+                    if duration_ms:
+                        total_duration_seconds += duration_ms / 1000.0
+                    shot_count += 1
+                
+                if total_text_bytes > 0:
+                    try:
+                        deduct_points_for_audio(
+                            db=db,
+                            user_id=creation.owner_id,
+                            text_bytes=total_text_bytes,
+                            audio_duration_seconds=total_duration_seconds,
+                            model_name=settings.FISH_AUDIO_DEFAULT_VOICE_ID or "s1",
+                            creation_id=creation_id,
+                            novel_id=creation.novel_id,
+                            description=f"批量生成音频（{shot_count}个分镜，总时长{total_duration_seconds:.1f}秒）",
+                            shot_id=None  # 批量操作，不关联单个分镜
+                        )
+                        logger.info(
+                            f"创作 {creation_id} 音频生成积分扣除成功: "
+                            f"{shot_count}个分镜, {total_text_bytes}字节, {total_duration_seconds:.1f}秒"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"创作 {creation_id} 音频生成积分扣除失败: {str(e)} | "
+                            f"user_id={creation.owner_id}, text_bytes={total_text_bytes}, "
+                            f"audio_duration={total_duration_seconds:.1f}s, shot_count={shot_count}",
+                            exc_info=True
+                        )
+                        # 积分扣除失败不影响音频生成流程，只记录错误
+        
+        # ========== 阶段3: 合并音频+字幕（如果已存在则跳过）==========
         if not merged_audio_url or not subtitle_url:
             self.update_state(state="PROGRESS", meta={
                 "task_type": TaskType.VIDEO_MERGE,
                 "creation_id": creation_id,
                 "stage": "merging_audio",
                 "stage_name": "合并音频和字幕",
-                "total_stages": 4,
-                "current_stage": 2,
+                "total_stages": 5,
+                "current_stage": 3,
                 "status": "正在合并音频..."
             })
             
@@ -585,14 +636,14 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
         else:
             logger.info("跳过音频合并和字幕生成，使用已有文件")
         
-        # ========== 阶段3: 生成视频片段 ==========
+        # ========== 阶段4: 生成视频片段 ==========
         self.update_state(state="PROGRESS", meta={
             "task_type": TaskType.VIDEO_MERGE,
             "creation_id": creation_id,
             "stage": "generating_video",
             "stage_name": "生成视频片段",
-            "total_stages": 4,
-            "current_stage": 3,
+            "total_stages": 5,
+            "current_stage": 4,
             "total": total_shots,
             "completed": 0,
             "status": f"开始生成 {total_shots} 个视频片段"
@@ -671,8 +722,8 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
                     "creation_id": creation_id,
                     "stage": "generating_video",
                     "stage_name": "生成视频片段",
-                    "total_stages": 4,
-                    "current_stage": 3,
+                    "total_stages": 5,
+                    "current_stage": 4,
                     "total": len(video_tasks),
                     "completed": len(video_results),
                     "status": f"视频片段: {len(video_results)}/{len(video_tasks)}"
@@ -695,14 +746,29 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
         # 按 (scene_id, shot_number) 顺序排序
         video_clips.sort(key=lambda x: (x.get("scene_id", 0), x.get("shot_number", 0)))
         
-        # ========== 阶段4: 合并最终视频 ==========
+        # 扣除视频生成积分（按片段数，每个片段1积分）
+        shot_count = len(video_clips)
+        try:
+            deduct_points_for_video(
+                db=db,
+                user_id=creation.owner_id,
+                shot_count=shot_count,
+                creation_id=creation_id,
+                novel_id=creation.novel_id,
+                description=f"生成视频（{shot_count}个片段）"
+            )
+        except Exception as e:
+            logger.opt(exception=True).error("视频生成积分扣除失败: {}", str(e))
+            # 积分扣除失败不影响视频生成流程，只记录错误
+        
+        # ========== 阶段5: 合并最终视频 ==========
         self.update_state(state="PROGRESS", meta={
             "task_type": TaskType.VIDEO_MERGE,
             "creation_id": creation_id,
             "stage": "merging_video",
             "stage_name": "合并最终视频",
-            "total_stages": 4,
-            "current_stage": 4,
+            "total_stages": 5,
+            "current_stage": 5,
             "status": "正在拼接视频..."
         })
         
@@ -736,8 +802,8 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
             "creation_id": creation_id,
             "stage": "merging_video",
             "stage_name": "合并最终视频",
-            "total_stages": 4,
-            "current_stage": 4,
+            "total_stages": 5,
+            "current_stage": 5,
             "status": "正在合并音频和字幕..."
         })
         
@@ -754,8 +820,8 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
             "creation_id": creation_id,
             "stage": "uploading",
             "stage_name": "上传视频",
-            "total_stages": 4,
-            "current_stage": 4,
+            "total_stages": 5,
+            "current_stage": 5,
             "status": "正在上传最终视频..."
         })
         
@@ -771,12 +837,10 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
         video_url = us3_client.get_file_url(put_key)
         
         # 更新创作状态
-        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
-        if creation:
-            creation.video_url = video_url
-            creation.status = CreationStatus.COMPLETED
-            creation.current_task_id = None
-            db.commit()
+        creation.video_url = video_url
+        creation.status = CreationStatus.COMPLETED
+        creation.current_task_id = None
+        db.commit()
         
         logger.info(f"创作 {creation_id} 视频生成完成: {video_url}")
         
@@ -789,24 +853,63 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
             "subtitle_url": subtitle_url,
         }
         
-    except Exception as e:
-        error_msg = f"视频生成任务失败: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        
+    except BaseServiceException as e:
+        # BaseServiceException 直接重新抛出，不进行包装
         try:
+            # 重新查询 creation，确保能够设置 current_task_id
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
             if creation:
                 creation.current_task_id = None
                 db.commit()
-        except:
-            pass
+        except Exception as cleanup_error:
+            logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
+            db.rollback()
         
+        error_msg = str(e)
+        exc_type = type(e).__name__
+        exc_module = type(e).__module__
         self.update_state(state="FAILURE", meta={
             "task_type": TaskType.VIDEO_MERGE,
             "creation_id": creation_id,
             "error": error_msg,
+            "exc_type": f"{exc_module}.{exc_type}",
+            "exc_message": error_msg,
         })
-        raise BaseServiceException(message=error_msg)
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        # 测试异常直接抛出，不进行包装
+        is_test_exception = "测试错误" in error_msg
+        
+        if not is_test_exception:
+            error_msg = f"视频生成任务失败: {error_msg}"
+            logger.opt(exception=True).error("{}", error_msg)
+        
+        try:
+            # 重新查询 creation，确保能够设置 current_task_id
+            creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+            if creation:
+                creation.current_task_id = None
+                db.commit()
+        except Exception as cleanup_error:
+            logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
+            db.rollback()
+        
+        exc_type = type(e).__name__
+        exc_module = type(e).__module__
+        self.update_state(state="FAILURE", meta={
+            "task_type": TaskType.VIDEO_MERGE,
+            "creation_id": creation_id,
+            "error": error_msg,
+            "exc_type": f"{exc_module}.{exc_type}",
+            "exc_message": error_msg,
+        })
+        
+        # 测试异常直接抛出，其他异常包装成 BaseServiceException
+        if is_test_exception:
+            raise
+        else:
+            raise BaseServiceException(message=error_msg)
         
     finally:
         for path in temp_files:

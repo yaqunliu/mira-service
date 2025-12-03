@@ -702,7 +702,7 @@ async def get_task_shots_progress(task_id: str, db: Session = Depends(get_db)):
         scenes_data = []
         for scene in scenes:
             shots_data = []
-            for shot in sorted(scene.shots, key=lambda s: s.shot_number):
+            for shot in sorted(scene.shots, key=lambda s: s.shot_id):
                 # 确定分镜状态
                 shot_status = "pending"
                 if shot.image_url:
