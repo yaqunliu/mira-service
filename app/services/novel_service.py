@@ -204,11 +204,11 @@ class NovelService:
             total = query.count()
             
             # 分页（使用 selectinload 预加载关联数据，避免 N+1 查询问题）
+            # 注意：不再加载 chapters，因为章节列表通过单独的接口获取
             skip = (page - 1) * page_size
             novels = query.options(
                 selectinload(Novel.creations),
-                selectinload(Novel.characters),
-                selectinload(Novel.chapters)
+                selectinload(Novel.characters)
             ).offset(skip).limit(page_size).all()
             
             logger.info(f"查询小说列表: 用户={user_id}, 页码={page}, 每页={page_size}, 总数={total}, 返回={len(novels)}")
@@ -243,8 +243,8 @@ class NovelService:
         logger.info(f"获取小说详情: novel_id={novel_id}, user_id={user_id}")
         
         # 查询小说（使用 selectinload 预加载关联数据，避免 N+1 查询问题，排除已删除的）
+        # 注意：不再加载 chapters，因为章节列表通过单独的接口获取
         novel = db.query(Novel).options(
-            selectinload(Novel.chapters),
             selectinload(Novel.creations),
             selectinload(Novel.characters)
         ).filter(
@@ -271,25 +271,66 @@ class NovelService:
     def get_novel_chapters_service(
         db: Session,
         novel_id: int,
-        user_id: int
-    ) -> List[Chapter]:
+        user_id: int,
+        page: int = 1,
+        page_size: int = 10
+    ) -> Tuple[List[Chapter], int]:
         """
-        获取小说章节列表
+        获取小说章节列表（分页）
         
         Args:
             db: 数据库会话
             novel_id: 小说ID
             user_id: 当前用户ID（已通过API层验证）
+            page: 页码，从1开始
+            page_size: 每页数量，默认10
             
         Returns:
-            章节对象列表
+            (章节对象列表, 总数) 元组
             
         Raises:
-            HTTPException: 当小说不存在或用户无权限时
+            NotFoundError: 当小说不存在时
+            PermissionError: 当用户无权限时
         """
-        # TODO: 实现获取章节列表逻辑
-        from app.core.exceptions import BaseServiceException
-        raise BaseServiceException("功能尚未实现", status_code=501)
+        logger.info(f"获取小说章节列表: novel_id={novel_id}, user_id={user_id}, page={page}, page_size={page_size}")
+        
+        # 先验证小说是否存在且有权限访问
+        novel = db.query(Novel).filter(
+            Novel.novel_id == novel_id,
+            Novel.deleted_at.is_(None)
+        ).first()
+        
+        if not novel:
+            raise NotFoundError(detail="小说不存在")
+        
+        # 验证权限
+        if novel.owner_id != user_id:
+            raise PermissionError(detail="无权限访问该小说")
+        
+        try:
+            # 构建查询（排除已删除的章节）
+            query = db.query(Chapter).filter(
+                Chapter.novel_id == novel_id,
+                Chapter.deleted_at.is_(None)
+            )
+            
+            # 按章节序号排序
+            query = query.order_by(Chapter.chapter_number.asc())
+            
+            # 计算总数
+            total = query.count()
+            
+            # 分页
+            skip = (page - 1) * page_size
+            chapters = query.offset(skip).limit(page_size).all()
+            
+            logger.info(f"查询章节列表: novel_id={novel_id}, 页码={page}, 每页={page_size}, 总数={total}, 返回={len(chapters)}")
+            
+            return chapters, total
+            
+        except Exception as e:
+            logger.error(f"查询章节列表失败: {str(e)}", exc_info=True)
+            raise DatabaseError(detail=f"查询章节列表失败: {str(e)}")
     
     @staticmethod
     def delete_novel_service(

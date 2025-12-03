@@ -57,8 +57,6 @@ def process_novel_upload_task(
         # 步骤2: 解析小说
         metadata = parse_novel_metadata(content, original_filename)
         chapters_data = split_chapters(content)
-        # hard-code to 10 chapters
-        chapters_data = chapters_data[:10]
         
         logger.info(f"解析完成: 标题={metadata['title']}, 作者={metadata['author']}, 章节数={len(chapters_data)}")
         

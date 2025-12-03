@@ -152,19 +152,6 @@ async def get_novels(
         # 构建 characters 列表（ID列表）
         character_ids = [character.character_id for character in novel.characters]
         
-        # 构建 chapters 列表（简化信息，关系查询已自动过滤已删除的）
-        chapters = [
-            {
-                "chapter_id": chapter.chapter_id,
-                "title": chapter.title,
-                "chapter_number": chapter.chapter_number,
-                "word_count": chapter.word_count,
-                "preview": chapter.preview,
-                "created_at": chapter.created_at,
-            }
-            for chapter in novel.chapters
-        ]
-        
         items.append({
             "novel_id": novel.novel_id,
             "title": novel.title,
@@ -176,7 +163,6 @@ async def get_novels(
             "updated_at": novel.updated_at,
             "creation_ids": creation_ids,
             "character_ids": character_ids,
-            "chapters": chapters,
         })
     
     return success_response(
@@ -201,7 +187,7 @@ async def get_novel(
     """
     根据ID获取小说详情
     
-    返回小说信息和对应的章节列表
+    注意：章节列表需要通过 GET /{novel_id}/chapters 接口单独获取（支持分页）
     """
     try:
         novel = NovelService.get_novel_by_id_service(db=db, novel_id=novel_id, user_id=user.user_id)
@@ -211,20 +197,6 @@ async def get_novel(
             status_code=e.status_code,
             detail=e.detail
         )
-    
-    # 构建章节列表（关系查询已自动过滤已删除的）
-    chapters = [
-        {
-            "chapter_id": chapter.chapter_id,
-            "title": chapter.title,
-            "chapter_number": chapter.chapter_number,
-            "word_count": chapter.word_count,
-            "preview": chapter.preview,
-            "content_url": chapter.content_url,
-            "created_at": chapter.created_at,
-        }
-        for chapter in sorted(novel.chapters, key=lambda c: c.chapter_number)
-    ]
     
     # 构建创作列表（关系查询已自动过滤已删除的）
     creations = [
@@ -279,7 +251,6 @@ async def get_novel(
             "task_id": novel.task_id,
             "created_at": novel.created_at,
             "updated_at": novel.updated_at,
-            "chapters": chapters,
             "creations": creations,
             "characters": characters,
         },
@@ -290,25 +261,56 @@ async def get_novel(
 @router.get("/{novel_id}/chapters")
 async def get_novel_chapters(
     novel_id: int,
+    page: int = Query(1, ge=1, description="页码，从1开始"),
+    page_size: int = Query(10, ge=1, le=100, description="每页数量，默认10，最大100"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
     """
-    获取小说章节列表
+    获取小说章节列表（分页）
     
-    注意：当实现后，需要在API层将Chapter对象列表转换为响应格式
+    支持分页查询，默认每页10个章节
     """
     try:
-        chapters = NovelService.get_novel_chapters_service(db=db, novel_id=novel_id, user_id=user.user_id)
+        chapters, total = NovelService.get_novel_chapters_service(
+            db=db, 
+            novel_id=novel_id, 
+            user_id=user.user_id,
+            page=page,
+            page_size=page_size
+        )
     except BaseServiceException as e:
         # 将业务异常转换为HTTP异常
         raise HTTPException(
             status_code=e.status_code,
             detail=e.detail
         )
-    # 将Chapter对象列表转换为响应格式
+    
+    # 转换为响应格式
+    total_pages = (total + page_size - 1) // page_size
+    items = [
+        {
+            "chapter_id": chapter.chapter_id,
+            "title": chapter.title,
+            "chapter_number": chapter.chapter_number,
+            "word_count": chapter.word_count,
+            "preview": chapter.preview,
+            "content_url": chapter.content_url,
+            "created_at": chapter.created_at,
+        }
+        for chapter in chapters
+    ]
+    
     return success_response(
-        data=chapters,
+        data={
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_prev": page > 1
+        },
         message="章节列表获取成功"
     )
 
