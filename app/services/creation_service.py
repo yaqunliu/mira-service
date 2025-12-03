@@ -116,6 +116,7 @@ class CreationService:
         page: int = 1,
         page_size: int = 20,
         status_filter: Optional[str] = None,
+        title_filter: Optional[str] = None,
         order_by: str = "created_at",
         order: str = "desc"
     ) -> Tuple[List[Creation], int]:
@@ -128,6 +129,7 @@ class CreationService:
             page: 页码，从1开始
             page_size: 每页数量，最大100
             status_filter: 状态过滤（可选）
+            title_filter: 按标题筛选（模糊匹配，可选）
             order_by: 排序字段（created_at, updated_at, title）
             order: 排序方向（asc, desc）
             
@@ -143,6 +145,11 @@ class CreationService:
         # 状态过滤
         if status_filter:
             query = query.filter(Creation.status == status_filter)
+        
+        # 按标题筛选
+        if title_filter:
+            title_pattern = f"%{title_filter}%"
+            query = query.filter(Creation.title.like(title_pattern))
         
         # 排序
         order_column = None

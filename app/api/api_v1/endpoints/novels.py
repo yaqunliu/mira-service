@@ -89,6 +89,7 @@ async def get_novels(
     status: Optional[str] = Query(None, description="过滤状态：uploaded, processing, completed, failed"),
     owner_id: Optional[int] = Query(None, description="过滤所有者ID"),
     search: Optional[str] = Query(None, description="搜索关键词（标题或作者）"),
+    title: Optional[str] = Query(None, description="按标题筛选（模糊匹配）"),
     order_by: str = Query("created_at", description="排序字段：created_at, updated_at, title"),
     order: str = Query("desc", description="排序方向：asc, desc"),
     db: Session = Depends(get_db),
@@ -102,6 +103,7 @@ async def get_novels(
     - 状态过滤（status）
     - 所有者过滤（owner_id）
     - 关键词搜索（标题或作者）
+    - 按标题筛选（title）
     - 排序（按创建时间、更新时间、标题）
     
     Args:
@@ -110,6 +112,7 @@ async def get_novels(
         status: 过滤状态
         owner_id: 过滤所有者ID（如果未指定，默认只返回当前用户的小说）
         search: 搜索关键词
+        title: 按标题筛选（模糊匹配）
         order_by: 排序字段
         order: 排序方向（asc/desc）
         db: 数据库会话
@@ -128,6 +131,7 @@ async def get_novels(
             status_filter=status,
             owner_id=owner_id,
             search=search,
+            title_filter=title,
             order_by=order_by,
             order=order
         )

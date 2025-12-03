@@ -80,6 +80,7 @@ async def get_creations_service(
     page: int = Query(1, ge=1, description="页码，从1开始"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量，最大100"),
     status: Optional[str] = Query(None, description="过滤状态"),
+    title: Optional[str] = Query(None, description="按标题筛选（模糊匹配）"),
     order_by: str = Query(
         "created_at", description="排序字段：created_at, updated_at, title"
     ),
@@ -93,12 +94,14 @@ async def get_creations_service(
     支持功能：
     - 分页查询
     - 状态过滤（status）
+    - 按标题筛选（title）
     - 排序（按创建时间、更新时间、标题）
 
     Args:
         page: 页码，从1开始
         page_size: 每页数量，最大100
         status: 过滤状态
+        title: 按标题筛选（模糊匹配）
         order_by: 排序字段
         order: 排序方向（asc/desc）
         db: 数据库会话
@@ -114,6 +117,7 @@ async def get_creations_service(
             page=page,
             page_size=page_size,
             status_filter=status,
+            title_filter=title,
             order_by=order_by,
             order=order,
         )

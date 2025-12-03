@@ -125,6 +125,7 @@ class NovelService:
         status_filter: Optional[str] = None,
         owner_id: Optional[int] = None,
         search: Optional[str] = None,
+        title_filter: Optional[str] = None,
         order_by: str = "created_at",
         order: str = "desc"
     ) -> Tuple[List[Novel], int]:
@@ -136,6 +137,7 @@ class NovelService:
         - 状态过滤（status）
         - 所有者过滤（owner_id）
         - 关键词搜索（标题或作者）
+        - 按标题筛选（title_filter）
         - 排序（按创建时间、更新时间、标题）
         
         Args:
@@ -146,6 +148,7 @@ class NovelService:
             status_filter: 过滤状态
             owner_id: 过滤所有者ID（如果未指定，默认只返回当前用户的小说）
             search: 搜索关键词
+            title_filter: 按标题筛选（模糊匹配）
             order_by: 排序字段
             order: 排序方向（asc/desc）
             
@@ -175,6 +178,11 @@ class NovelService:
                     (Novel.title.like(search_pattern)) | 
                     (Novel.author.like(search_pattern))
                 )
+            
+            # 按标题筛选
+            if title_filter:
+                title_pattern = f"%{title_filter}%"
+                query = query.filter(Novel.title.like(title_pattern))
             
             # 排序
             order_column = None
