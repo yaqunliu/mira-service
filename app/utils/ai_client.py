@@ -257,8 +257,12 @@ class AIClient:
                 
             except Exception as e:
                 last_error = e
-                error_type = type(e).__name__
-                error_msg = str(e)
+                try:
+                    error_type = type(e).__name__
+                    error_msg = str(e)
+                except Exception:
+                    error_type = "Unknown"
+                    error_msg = "无法获取错误信息"
                 
                 # 检查是否为内容审核错误
                 if self._is_content_moderation_error(e):
@@ -499,7 +503,8 @@ class AIClient:
         extra_body = {
             "images": reference_images,
             "aspect_ratio": aspect_ratio,
-            "guidance_scale": guidance_scale if guidance_scale else 3.5
+            "guidance_scale": guidance_scale if guidance_scale else 3.5,
+            "negative_prompt": "bad hand, extra fingers, too dark, overexposed, color shift, monochromatic, ugly"
         }
         
         response = self.ai_client.images.generate(
@@ -652,7 +657,11 @@ class AIClient:
         Returns:
             是否为内容审核错误
         """
-        error_msg = str(error).lower()
+        try:
+            error_msg = str(error).lower()
+        except Exception:
+            error_msg = ""
+        
         error_type = type(error).__name__
         
         # 检查错误消息中是否包含内容审核相关的关键词
@@ -703,24 +712,44 @@ class AIClient:
         
         # 检查是否为特定的 OpenAI API 错误类型
         if isinstance(error, openai.APIError):
-            # 检查错误代码和类型
-            if hasattr(error, 'code'):
-                error_code = str(error.code).lower()
-                # 参数错误、模型不支持等不是审核错误
-                if any(excl in error_code for excl in ['param', 'model', 'invalid', 'not_found']):
-                    return False
-            
-            # 检查错误消息中的详细信息
-            if hasattr(error, 'message'):
-                error_detail = str(error.message).lower()
-                # 如果错误消息中包含排除关键词，不是审核错误
-                for exclusion_keyword in exclusion_keywords:
-                    if exclusion_keyword in error_detail:
+            try:
+                # 检查错误代码和类型
+                if hasattr(error, 'code') and error.code is not None:
+                    error_code = str(error.code).lower()
+                    # 参数错误、模型不支持等不是审核错误
+                    if any(excl in error_code for excl in ['param', 'model', 'invalid', 'not_found']):
                         return False
-                # 如果错误消息中包含审核关键词，是审核错误
-                for keyword in moderation_keywords:
-                    if keyword in error_detail:
-                        return True
+                
+                # 检查错误消息中的详细信息
+                if hasattr(error, 'message') and error.message is not None:
+                    error_detail = str(error.message).lower()
+                    # 如果错误消息中包含排除关键词，不是审核错误
+                    for exclusion_keyword in exclusion_keywords:
+                        if exclusion_keyword in error_detail:
+                            return False
+                    # 如果错误消息中包含审核关键词，是审核错误
+                    for keyword in moderation_keywords:
+                        if keyword in error_detail:
+                            return True
+                
+                # 安全地访问 error.body（如果存在）
+                if hasattr(error, 'body') and error.body is not None:
+                    try:
+                        # body 可能是字典或字符串
+                        if isinstance(error.body, dict):
+                            body_str = str(error.body).lower()
+                        else:
+                            body_str = str(error.body).lower()
+                        # 检查 body 中是否包含审核关键词
+                        for keyword in moderation_keywords:
+                            if keyword in body_str:
+                                return True
+                    except (KeyError, AttributeError, TypeError):
+                        # 如果访问 body 时出错，忽略并继续
+                        pass
+            except (KeyError, AttributeError, TypeError) as e:
+                # 如果访问异常属性时出错，记录警告但继续处理
+                logger.warning(f"访问 OpenAI 异常属性时出错: {e}")
         
         # 检查错误消息中是否包含审核关键词
         for keyword in moderation_keywords:
@@ -739,30 +768,39 @@ class AIClient:
         Returns:
             是否为可重试的错误
         """
-        # 内容审核错误不可重试
-        if self._is_content_moderation_error(error):
+        try:
+            # 内容审核错误不可重试
+            if self._is_content_moderation_error(error):
+                return False
+            
+            # 超时错误可重试
+            if isinstance(error, (TimeoutError, FuturesTimeoutError)):
+                return True
+            
+            # 网络错误可重试
+            if isinstance(error, (openai.APIConnectionError, openai.APITimeoutError)):
+                return True
+            
+            # 5xx 服务器错误可重试
+            if isinstance(error, openai.APIError):
+                try:
+                    if hasattr(error, 'status_code') and error.status_code is not None:
+                        status_code = error.status_code
+                        if 500 <= status_code < 600:
+                            return True
+                except (KeyError, AttributeError, TypeError):
+                    # 如果访问 status_code 时出错，忽略并继续
+                    pass
+            
+            # 429 限流错误可重试
+            if isinstance(error, openai.RateLimitError):
+                return True
+            
             return False
-        
-        # 超时错误可重试
-        if isinstance(error, (TimeoutError, FuturesTimeoutError)):
-            return True
-        
-        # 网络错误可重试
-        if isinstance(error, (openai.APIConnectionError, openai.APITimeoutError)):
-            return True
-        
-        # 5xx 服务器错误可重试
-        if isinstance(error, openai.APIError):
-            if hasattr(error, 'status_code'):
-                status_code = error.status_code
-                if status_code and 500 <= status_code < 600:
-                    return True
-        
-        # 429 限流错误可重试
-        if isinstance(error, openai.RateLimitError):
-            return True
-        
-        return False
+        except Exception as e:
+            # 如果判断过程中出现任何异常，记录警告并返回 False（不可重试）
+            logger.warning(f"判断错误是否可重试时出错: {e}")
+            return False
     
     def generate_shot_image_prompt(
         self,

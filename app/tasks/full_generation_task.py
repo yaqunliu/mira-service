@@ -758,7 +758,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
                 description=f"生成视频（{shot_count}个片段）"
             )
         except Exception as e:
-            logger.error(f"视频生成积分扣除失败: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error("视频生成积分扣除失败: {}", str(e))
             # 积分扣除失败不影响视频生成流程，只记录错误
         
         # ========== 阶段5: 合并最终视频 ==========
@@ -862,7 +862,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
                 creation.current_task_id = None
                 db.commit()
         except Exception as cleanup_error:
-            logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+            logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
             db.rollback()
         
         error_msg = str(e)
@@ -883,7 +883,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
         
         if not is_test_exception:
             error_msg = f"视频生成任务失败: {error_msg}"
-            logger.error(error_msg, exc_info=True)
+            logger.opt(exception=True).error("{}", error_msg)
         
         try:
             # 重新查询 creation，确保能够设置 current_task_id
@@ -892,7 +892,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
                 creation.current_task_id = None
                 db.commit()
         except Exception as cleanup_error:
-            logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+            logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
             db.rollback()
         
         exc_type = type(e).__name__

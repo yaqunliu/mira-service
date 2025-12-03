@@ -244,7 +244,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 )
                 logger.info(f"分镜 {shot_id} 图片生成成功，已确认扣除冻结积分: freeze_record_id={freeze_record_id}")
             except Exception as e:
-                logger.error(f"确认扣除冻结积分失败: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error("确认扣除冻结积分失败: {}", str(e))
                 # 确认失败不影响任务完成，但需要记录错误
         
         logger.info(f"分镜 {shot.title}(ID: {shot_id}) 图片生成成功")
@@ -255,7 +255,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             "image_url": image_url
         }
     except Exception as e:
-        logger.error(f"分镜 {shot_id} 图片生成失败: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error("分镜 {} 图片生成失败: {}", shot_id, str(e))
         
         # 任务失败，释放冻结的积分
         if freeze_record_id:
@@ -267,7 +267,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 )
                 logger.info(f"分镜 {shot_id} 图片生成失败，已释放冻结积分: freeze_record_id={freeze_record_id}")
             except Exception as release_error:
-                logger.error(f"释放冻结积分失败: {str(release_error)}", exc_info=True)
+                logger.opt(exception=True).error("释放冻结积分失败: {}", str(release_error))
         
         db.rollback()
         return {
@@ -421,7 +421,7 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
                     "skipped": True
                 })
             except Exception as e:
-                logger.error(f"分镜 {shot_info['shot_id']} 冻结积分失败: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error("分镜 {} 冻结积分失败: {}", shot_info['shot_id'], str(e))
                 # 记录错误，但不影响其他分镜的生成
                 results.append({
                     "shot_id": shot_info["shot_id"],
@@ -515,7 +515,7 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
                 except Exception as e:
                     failed_count += 1
                     error_msg = f"分镜 {shot_info['shot_id']} 处理异常: {str(e)}"
-                    logger.error(error_msg, exc_info=True)
+                    logger.opt(exception=True).error("{}", error_msg)
                     results.append({
                         "shot_id": shot_info["shot_id"],
                         "shot_title": shot_info["shot_title"],
@@ -554,7 +554,7 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
                 creation.current_task_id = None
                 db.commit()
         except Exception as cleanup_error:
-            logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+            logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
             db.rollback()
         
         error_msg = str(e)
@@ -573,7 +573,7 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
         raise
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"创作分镜图片生成任务失败: {error_msg}", exc_info=True)
+        logger.opt(exception=True).error("创作分镜图片生成任务失败: {}", error_msg)
         
         # 更新创作状态
         try:
@@ -582,7 +582,7 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
                 creation.current_task_id = None
                 db.commit()
         except Exception as cleanup_error:
-            logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+            logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
             db.rollback()
         
         exc_type = type(e).__name__
@@ -691,7 +691,7 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
                     "skipped": True
                 })
             except Exception as e:
-                logger.error(f"分镜 {shot_id} 冻结积分失败: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error("分镜 {} 冻结积分失败: {}", shot_id, str(e))
                 results.append({
                     "shot_id": shot_id,
                     "success": False,
@@ -778,7 +778,7 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
                 except Exception as e:
                     failed_count += 1
                     error_msg = f"分镜 {shot_id} 处理异常: {str(e)}"
-                    logger.error(error_msg, exc_info=True)
+                    logger.opt(exception=True).error("{}", error_msg)
                     results.append({
                         "shot_id": shot_id,
                         "success": False,
@@ -809,7 +809,7 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
                 creation.current_task_id = None
                 db.commit()
         except Exception as cleanup_error:
-            logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+            logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
             db.rollback()
         
         error_msg = str(e)
@@ -829,7 +829,7 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
         raise
     except Exception as e:
         error_msg = f"分镜图片生成任务失败: {str(e)}"
-        logger.error(error_msg, exc_info=True)
+        logger.opt(exception=True).error("{}", error_msg)
         
         try:
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
@@ -837,7 +837,7 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
                 creation.current_task_id = None
                 db.commit()
         except Exception as cleanup_error:
-            logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
+            logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
             db.rollback()
         
         exc_type = type(e).__name__

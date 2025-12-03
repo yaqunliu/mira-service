@@ -163,7 +163,7 @@ def _generate_single_character_image(character_id: int, visual_style: str) -> di
                 )
                 logger.info(f"角色 {character_id} 图片生成积分扣除成功")
             except Exception as e:
-                logger.error(f"角色图片生成积分扣除失败: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error("角色图片生成积分扣除失败: {}", str(e))
                 # 积分扣除失败不影响图片生成流程，只记录错误
         else:
             logger.warning(f"角色 {character_id} 无法获取用户ID，跳过积分扣除（creation_id={creation_id}, novel_id={novel_id}）")
@@ -181,7 +181,7 @@ def _generate_single_character_image(character_id: int, visual_style: str) -> di
             "image_url": image_url
         }
     except Exception as e:
-        logger.error(f"角色 {character_id} 图片生成失败: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error("角色 {} 图片生成失败: {}", character_id, str(e))
         db.rollback()
         return {
             "character_id": character_id,
@@ -274,7 +274,7 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
                 except Exception as e:
                     failed_count += 1
                     error_msg = f"角色 {character_id} 处理异常: {str(e)}"
-                    logger.error(error_msg, exc_info=True)
+                    logger.opt(exception=True).error("{}", error_msg)
                     results.append({
                         "character_id": character_id,
                         "success": False,
@@ -313,7 +313,7 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
         raise
     except Exception as e:
         error_msg = f"角色图片生成任务失败: {str(e)}"
-        logger.error(error_msg, exc_info=True)
+        logger.opt(exception=True).error("{}", error_msg)
         exc_type = type(e).__name__
         exc_module = type(e).__module__
         self.update_state(

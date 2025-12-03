@@ -246,7 +246,7 @@ def process_novel_upload_task(
         }
         
     except Exception as e:
-        logger.error(f"处理小说上传任务失败: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error("处理小说上传任务失败: {}", str(e))
         
         # 步骤7: 错误处理与回滚
         if novel:

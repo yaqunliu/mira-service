@@ -20,7 +20,7 @@ def expire_daily_points_task():
         logger.info(f"积分过期任务完成，共过期 {expired_points} 积分")
         return {"expired_points": expired_points}
     except Exception as e:
-        logger.error(f"积分过期任务失败: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error("积分过期任务失败: {}", str(e))
         raise
     finally:
         db.close()

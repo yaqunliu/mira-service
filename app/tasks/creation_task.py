@@ -224,10 +224,15 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
         }
 
     except Exception as e:
-        logger.error(f"创作初始化任务失败: {str(e)}", exc_info=True)
+        # 使用 loguru 的格式化方式，避免错误消息中的字典字符串被误认为是格式化占位符
+        logger.opt(exception=True).error("创作初始化任务失败: {}", str(e))
         db.rollback()  # 确保回滚事务
         
-        error_msg = str(e).lower()
+        try:
+            error_msg = str(e).lower()
+        except Exception:
+            error_msg = str(e) if e else "未知错误"
+        
         # 判断是否为不可重试的错误（如参数错误、模型不支持等）
         non_retryable_keywords = [
             'invalid param',
@@ -237,7 +242,10 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
             'model not found',
             'max_tokens',
             'invalid max_tokens',
-            'bad request'
+            'bad request',
+            'keyerror',
+            'content moderation',
+            '内容审核'
         ]
         is_non_retryable = any(keyword in error_msg for keyword in non_retryable_keywords)
         
@@ -248,14 +256,18 @@ def process_creation_init_task(self, novel_id: int, chapter_id: int, creation_id
         # 如果是不可重试的错误，或者已达到最大重试次数，需要清空 current_task_id
         if is_non_retryable or retry_count >= max_retries:
             try:
+                # 重新查询 creation，确保能够设置 current_task_id
                 creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
                 if creation:
                     creation.current_task_id = None
                     db.commit()
                     logger.info(f"已清理 current_task_id，creation_id={creation_id}")
             except Exception as cleanup_error:
-                logger.error(f"清理 current_task_id 失败: {str(cleanup_error)}", exc_info=True)
-                db.rollback()
+                logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
             
             # 如果是不可重试的错误，直接抛出，不进行重试
             if is_non_retryable:
