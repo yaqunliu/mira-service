@@ -20,6 +20,7 @@ class Novel(Base):
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)  # 软删除时间戳
     
     # 关系
     owner = relationship("User", back_populates="novels")
@@ -34,4 +35,8 @@ class Novel(Base):
         back_populates="novel",
         primaryjoin="and_(Novel.novel_id == Creation.novel_id, Creation.deleted_at.is_(None))"
     )
-    characters = relationship("Character", back_populates="novel")
+    characters = relationship(
+        "Character", 
+        back_populates="novel",
+        primaryjoin="and_(Novel.novel_id == Character.novel_id, Character.deleted_at.is_(None))"
+    )

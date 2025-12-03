@@ -153,8 +153,8 @@ class NovelService:
             (小说列表, 总数) 元组
         """
         try:
-            # 构建查询
-            query = db.query(Novel)
+            # 构建查询（排除已删除的小说）
+            query = db.query(Novel).filter(Novel.deleted_at.is_(None))
             
             # 默认只返回当前用户的小说（除非指定了 owner_id）
             if owner_id is None:
@@ -234,12 +234,15 @@ class NovelService:
         """
         logger.info(f"获取小说详情: novel_id={novel_id}, user_id={user_id}")
         
-        # 查询小说（使用 selectinload 预加载关联数据，避免 N+1 查询问题）
+        # 查询小说（使用 selectinload 预加载关联数据，避免 N+1 查询问题，排除已删除的）
         novel = db.query(Novel).options(
             selectinload(Novel.chapters),
             selectinload(Novel.creations),
             selectinload(Novel.characters)
-        ).filter(Novel.novel_id == novel_id).first()
+        ).filter(
+            Novel.novel_id == novel_id,
+            Novel.deleted_at.is_(None)
+        ).first()
         
         if not novel:
             raise NotFoundError(detail="小说不存在")
@@ -287,7 +290,7 @@ class NovelService:
         user_id: int
     ) -> None:
         """
-        删除小说
+        软删除小说
         
         Args:
             db: 数据库会话
@@ -303,11 +306,18 @@ class NovelService:
             DatabaseError: 当删除失败时
         """
         from app.core.exceptions import NotFoundError, PermissionError, DatabaseError
+        from app.models.creation import Creation
+        from app.models.character import Character
+        from app.models.chapter import Chapter
+        from datetime import datetime
         
-        logger.info(f"删除小说: novel_id={novel_id}, user_id={user_id}")
+        logger.info(f"软删除小说: novel_id={novel_id}, user_id={user_id}")
         
-        # 查询小说
-        novel = db.query(Novel).filter(Novel.novel_id == novel_id).first()
+        # 查询小说（排除已删除的）
+        novel = db.query(Novel).filter(
+            Novel.novel_id == novel_id,
+            Novel.deleted_at.is_(None)
+        ).first()
         
         if not novel:
             raise NotFoundError(detail="小说不存在")
@@ -317,12 +327,46 @@ class NovelService:
             raise PermissionError(detail="无权限删除该小说")
         
         try:
-            # 删除小说（级联删除相关的 chapters）
-            # chapters 关系已设置 cascade="all, delete-orphan"，会自动删除
-            db.delete(novel)
+            now = datetime.utcnow()
+            
+            # 1. 软删除所有关联的章节（Chapter）
+            chapters_count = db.query(Chapter).filter(
+                Chapter.novel_id == novel_id,
+                Chapter.deleted_at.is_(None)
+            ).update(
+                {Chapter.deleted_at: now},
+                synchronize_session=False
+            )
+            if chapters_count > 0:
+                logger.info(f"已软删除 {chapters_count} 个相关的章节")
+            
+            # 2. 软删除所有关联的创作（Creation）
+            creations_count = db.query(Creation).filter(
+                Creation.novel_id == novel_id,
+                Creation.deleted_at.is_(None)
+            ).update(
+                {Creation.deleted_at: now},
+                synchronize_session=False
+            )
+            if creations_count > 0:
+                logger.info(f"已软删除 {creations_count} 个相关的创作")
+            
+            # 3. 软删除所有关联的角色（Character）
+            characters_count = db.query(Character).filter(
+                Character.novel_id == novel_id,
+                Character.deleted_at.is_(None)
+            ).update(
+                {Character.deleted_at: now},
+                synchronize_session=False
+            )
+            if characters_count > 0:
+                logger.info(f"已软删除 {characters_count} 个相关的角色")
+            
+            # 4. 软删除小说本身
+            novel.deleted_at = now
             db.commit()
             
-            logger.info(f"小说已删除: novel_id={novel_id}, user_id={user_id}")
+            logger.info(f"小说已软删除: novel_id={novel_id}, user_id={user_id}")
         except Exception as e:
             logger.error(f"删除小说失败: {str(e)}", exc_info=True)
             db.rollback()
@@ -354,8 +398,11 @@ class NovelService:
         """
         logger.info(f"更新小说: novel_id={novel_id}, user_id={user_id}, update_data={novel_update.model_dump(exclude_unset=True)}")
         
-        # 查询小说
-        novel = db.query(Novel).filter(Novel.novel_id == novel_id).first()
+        # 查询小说（排除已删除的）
+        novel = db.query(Novel).filter(
+            Novel.novel_id == novel_id,
+            Novel.deleted_at.is_(None)
+        ).first()
         
         if not novel:
             raise NotFoundError(detail="小说不存在")
@@ -415,8 +462,11 @@ class NovelService:
         if not chapter:
             raise NotFoundError(detail="章节不存在")
         
-        # 查询小说以验证权限
-        novel = db.query(Novel).filter(Novel.novel_id == chapter.novel_id).first()
+        # 查询小说以验证权限（排除已删除的）
+        novel = db.query(Novel).filter(
+            Novel.novel_id == chapter.novel_id,
+            Novel.deleted_at.is_(None)
+        ).first()
         if not novel:
             raise NotFoundError(detail="章节所属的小说不存在")
         
@@ -476,8 +526,11 @@ class NovelService:
         if not chapter:
             raise NotFoundError(detail="章节不存在")
         
-        # 查询小说以验证权限
-        novel = db.query(Novel).filter(Novel.novel_id == chapter.novel_id).first()
+        # 查询小说以验证权限（排除已删除的）
+        novel = db.query(Novel).filter(
+            Novel.novel_id == chapter.novel_id,
+            Novel.deleted_at.is_(None)
+        ).first()
         if not novel:
             raise NotFoundError(detail="章节所属的小说不存在")
         
