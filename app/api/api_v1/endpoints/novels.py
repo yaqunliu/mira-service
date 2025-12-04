@@ -146,11 +146,11 @@ async def get_novels(
     total_pages = (total + page_size - 1) // page_size
     items = []
     for novel in novels:
-        # 构建 creations 列表（ID列表）
-        creation_ids = [creation.creation_id for creation in novel.creations]
+        # 构建 creations 列表（ID列表），按ID降序排序
+        creation_ids = sorted([creation.creation_id for creation in novel.creations], reverse=True)
         
-        # 构建 characters 列表（ID列表）
-        character_ids = [character.character_id for character in novel.characters]
+        # 构建 characters 列表（ID列表），按ID降序排序
+        character_ids = sorted([character.character_id for character in novel.characters], reverse=True)
         
         items.append({
             "novel_id": novel.novel_id,
@@ -198,7 +198,7 @@ async def get_novel(
             detail=e.detail
         )
     
-    # 构建创作列表（关系查询已自动过滤已删除的）
+    # 构建创作列表（关系查询已自动过滤已删除的），按creation_id降序排序
     creations = [
         {
             "creation_id": creation.creation_id,
@@ -214,10 +214,10 @@ async def get_novel(
             "created_at": creation.created_at,
             "updated_at": creation.updated_at,
         }
-        for creation in novel.creations
+        for creation in sorted(novel.creations, key=lambda c: c.creation_id, reverse=True)
     ]
     
-    # 构建角色列表
+    # 构建角色列表，按character_id降序排序
     characters = [
         {
             "character_id": character.character_id,
@@ -236,7 +236,7 @@ async def get_novel(
             "created_at": character.created_at,
             "updated_at": character.updated_at,
         }
-        for character in novel.characters
+        for character in sorted(novel.characters, key=lambda c: c.character_id, reverse=True)
     ]
     
     # 将Novel对象转换为响应格式
@@ -255,6 +255,48 @@ async def get_novel(
             "characters": characters,
         },
         message="小说获取成功"
+    )
+
+
+@router.get("/{novel_id}/chapters/{chapter_id}")
+async def get_chapter(
+    novel_id: int,
+    chapter_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    根据ID获取章节详情
+    
+    返回章节的完整信息，包括标题、内容URL、字数等
+    """
+    try:
+        chapter = NovelService.get_chapter_by_id_service(
+            db=db,
+            novel_id=novel_id,
+            chapter_id=chapter_id,
+            user_id=user.user_id
+        )
+    except BaseServiceException as e:
+        # 将业务异常转换为HTTP异常
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail
+        )
+    
+    # 转换为响应格式
+    return success_response(
+        data={
+            "chapter_id": chapter.chapter_id,
+            "title": chapter.title,
+            "chapter_number": chapter.chapter_number,
+            "word_count": chapter.word_count,
+            "preview": chapter.preview,
+            "content_url": chapter.content_url,
+            "novel_id": chapter.novel_id,
+            "created_at": chapter.created_at,
+        },
+        message="章节获取成功"
     )
 
 

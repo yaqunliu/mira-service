@@ -90,10 +90,9 @@ def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str, v
         
         fish_client = get_fish_audio_client()
         # 将 voice_speed 转换为 Fish Audio 的 speed 参数
-        # Fish Audio 的 speed 范围通常是 0.5-2.0，我们需要将 0-10 映射到这个范围
-        # 假设 1.0 对应正常语速，0 对应最慢（0.5），10 对应最快（2.0）
-        # 线性映射：speed = 0.5 + (voice_speed / 10) * 1.5
-        fish_speed = 0.5 + (voice_speed / 10.0) * 1.5
+        # Fish Audio 的 speed 范围是 0-2.0，前端传入的 voice_speed 范围也是 0-2
+        # 直接使用，但需要确保在有效范围内
+        fish_speed = max(0.0, min(2.0, voice_speed))
         audio_bytes = fish_client.text_to_speech_bytes(
             text=shot.narration,
             reference_id=voice_id,

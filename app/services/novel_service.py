@@ -333,6 +333,60 @@ class NovelService:
             raise DatabaseError(detail=f"查询章节列表失败: {str(e)}")
     
     @staticmethod
+    def get_chapter_by_id_service(
+        db: Session,
+        novel_id: int,
+        chapter_id: int,
+        user_id: int
+    ) -> Chapter:
+        """
+        根据ID获取章节详情
+        
+        Args:
+            db: 数据库会话
+            novel_id: 小说ID
+            chapter_id: 章节ID
+            user_id: 当前用户ID（已通过API层验证）
+            
+        Returns:
+            章节对象
+            
+        Raises:
+            NotFoundError: 当小说或章节不存在时
+            PermissionError: 当用户无权限时
+        """
+        logger.info(f"获取章节详情: novel_id={novel_id}, chapter_id={chapter_id}, user_id={user_id}")
+        
+        # 先验证小说是否存在且有权限访问
+        novel = db.query(Novel).filter(
+            Novel.novel_id == novel_id,
+            Novel.deleted_at.is_(None)
+        ).first()
+        
+        if not novel:
+            raise NotFoundError(detail="小说不存在")
+        
+        # 验证权限
+        if novel.owner_id != user_id:
+            raise PermissionError(detail="无权限访问该小说")
+        
+        # 查询章节（排除已删除的）
+        chapter = db.query(Chapter).filter(
+            Chapter.chapter_id == chapter_id,
+            Chapter.novel_id == novel_id,
+            Chapter.deleted_at.is_(None)
+        ).first()
+        
+        if not chapter:
+            raise NotFoundError(detail="章节不存在")
+        
+        logger.info(
+            f"成功获取章节详情: chapter_id={chapter_id}, title={chapter.title}, "
+            f"chapter_number={chapter.chapter_number}, novel_id={novel_id}"
+        )
+        return chapter
+    
+    @staticmethod
     def delete_novel_service(
         db: Session,
         novel_id: int,

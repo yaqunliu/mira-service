@@ -852,9 +852,9 @@ class AIClient:
             response = self.chat_completion(messages=messages, model=model)
             prompt_text = response.get("content", "").strip()
             
-            # 确保末尾包含强制后缀
-            if not prompt_text.endswith("strictly preserve reference face and hairstyle"):
-                prompt_text += ", strictly preserve reference face and hairstyle"
+            # # 确保末尾包含强制后缀
+            # if not prompt_text.endswith("strictly preserve reference face and hairstyle"):
+            #     prompt_text += ", strictly preserve reference face and hairstyle"
             
             logger.info(f"生成的图片提示词长度: {len(prompt_text)}")
             return prompt_text
