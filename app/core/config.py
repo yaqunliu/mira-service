@@ -105,7 +105,7 @@ class Settings(BaseSettings):
     
     # 每日签到
     POINTS_CHECKIN_REWARD: int = 10  # 每日签到积分
-    POINTS_CHECKIN_EXPIRE_HOURS: int = 24  # 签到积分过期时间（小时），0表示当天00:00过期
+    POINTS_CHECKIN_EXPIRE_HOURS: int = 0  # 签到积分过期时间（小时），0表示当天24:00过期
     
     # 积分消耗配置（支持多种计费方式，通过配置字符串定义）
     # 格式：operation_type:计费方式:数值

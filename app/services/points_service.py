@@ -366,8 +366,8 @@ class PointsService:
         
         # 计算过期时间
         if settings.POINTS_CHECKIN_EXPIRE_HOURS == 0:
-            # 当天 23:59:59 过期
-            expires_at = today_start.replace(hour=23, minute=59, second=59)
+            # 当天24:00过期（即次日00:00:00）
+            expires_at = today_end
         else:
             # N小时后过期
             expires_at = datetime.now() + timedelta(hours=settings.POINTS_CHECKIN_EXPIRE_HOURS)
