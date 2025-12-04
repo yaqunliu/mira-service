@@ -23,6 +23,7 @@ class NovelUpdate(BaseModel):
 
 class Novel(NovelBase):
     novel_id: int
+    uuid: str
     owner_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None

@@ -37,11 +37,12 @@ class CharacterUpdate(BaseModel):
 
 class CharacterGenerateImagesRequest(BaseModel):
     """生成角色图片请求"""
-    character_ids: List[int]
+    character_ids: List[str]  # UUID列表
     visual_style: str
 
 class Character(CharacterBase):
     character_id: int
+    uuid: str
     novel_id: Optional[int] = None
     creation_id: Optional[int] = None
     image_url: Optional[str] = None

@@ -268,6 +268,50 @@ class NovelService:
         return novel
     
     @staticmethod
+    def get_novel_by_uuid_service(
+        db: Session,
+        novel_uuid: str,
+        user_id: int
+    ) -> Novel:
+        """
+        根据UUID获取小说详情
+        
+        Args:
+            db: 数据库会话
+            novel_uuid: 小说UUID
+            user_id: 当前用户ID（已通过API层验证）
+            
+        Returns:
+            小说对象（包含章节信息）
+            
+        Raises:
+            NotFoundError: 当小说不存在时
+            PermissionError: 当用户无权限时
+        """
+        logger.info(f"获取小说详情: novel_uuid={novel_uuid}, user_id={user_id}")
+        
+        # 查询小说（使用 selectinload 预加载关联数据，避免 N+1 查询问题，排除已删除的）
+        novel = db.query(Novel).options(
+            selectinload(Novel.creations),
+            selectinload(Novel.characters)
+        ).filter(
+            Novel.uuid == novel_uuid,
+            Novel.deleted_at.is_(None)
+        ).first()
+        
+        if not novel:
+            raise NotFoundError(detail="小说不存在")
+        
+        # 验证权限
+        if novel.owner_id != user_id:
+            raise PermissionError(detail="无权限访问该小说")
+        
+        logger.info(
+            f"成功获取小说详情: novel_uuid={novel_uuid}, novel_id={novel.novel_id}, title={novel.title}"
+        )
+        return novel
+    
+    @staticmethod
     def get_novel_chapters_service(
         db: Session,
         novel_id: int,
@@ -383,6 +427,56 @@ class NovelService:
         logger.info(
             f"成功获取章节详情: chapter_id={chapter_id}, title={chapter.title}, "
             f"chapter_number={chapter.chapter_number}, novel_id={novel_id}"
+        )
+        return chapter
+    
+    @staticmethod
+    def get_chapter_by_uuid_service(
+        db: Session,
+        chapter_uuid: str,
+        user_id: int
+    ) -> Chapter:
+        """
+        根据UUID获取章节详情
+        
+        Args:
+            db: 数据库会话
+            chapter_uuid: 章节UUID
+            user_id: 当前用户ID（已通过API层验证）
+            
+        Returns:
+            章节对象
+            
+        Raises:
+            NotFoundError: 当章节不存在时
+            PermissionError: 当用户无权限时
+        """
+        logger.info(f"获取章节详情: chapter_uuid={chapter_uuid}, user_id={user_id}")
+        
+        # 查询章节（排除已删除的）
+        chapter = db.query(Chapter).filter(
+            Chapter.uuid == chapter_uuid,
+            Chapter.deleted_at.is_(None)
+        ).first()
+        
+        if not chapter:
+            raise NotFoundError(detail="章节不存在")
+        
+        # 验证小说权限
+        novel = db.query(Novel).filter(
+            Novel.novel_id == chapter.novel_id,
+            Novel.deleted_at.is_(None)
+        ).first()
+        
+        if not novel:
+            raise NotFoundError(detail="小说不存在")
+        
+        # 验证权限
+        if novel.owner_id != user_id:
+            raise PermissionError(detail="无权限访问该章节")
+        
+        logger.info(
+            f"成功获取章节详情: chapter_uuid={chapter_uuid}, chapter_id={chapter.chapter_id}, title={chapter.title}"
         )
         return chapter
     

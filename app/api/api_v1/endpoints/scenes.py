@@ -18,9 +18,9 @@ from app.utils.response import success_response
 router = APIRouter()
 
 
-@router.get("/creation/{creation_id}")
+@router.get("/creation/{creation_uuid}")
 async def get_creation_scenes(
-    creation_id: int,
+    creation_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -28,13 +28,13 @@ async def get_creation_scenes(
     获取创作项目的场景列表
     
     Args:
-        creation_id: 创作项目ID
+        creation_uuid: 创作项目UUID
         
     Returns:
         场景列表
     """
     # 验证创作项目是否存在
-    creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+    creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
     if not creation:
         raise HTTPException(status_code=404, detail="创作项目不存在")
     
@@ -45,7 +45,7 @@ async def get_creation_scenes(
     # 获取场景列表，预加载shots关系
     scenes = db.query(Scene).options(
         selectinload(Scene.shots)
-    ).filter(Scene.creation_id == creation_id).order_by(Scene.scene_id).all()
+    ).filter(Scene.creation_id == creation.creation_id).order_by(Scene.scene_id).all()
     
     # 转换为响应格式
     scene_responses = [SceneResponse.from_db_model(scene) for scene in scenes]
@@ -59,9 +59,9 @@ async def get_creation_scenes(
     )
 
 
-@router.get("/creation/{creation_id}/with-shots")
+@router.get("/creation/{creation_uuid}/with-shots")
 async def get_creation_scenes_with_shots(
-    creation_id: int,
+    creation_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -72,7 +72,7 @@ async def get_creation_scenes_with_shots(
     适用于前端需要显示分镜图片和生成状态的场景。
     
     Args:
-        creation_id: 创作项目ID
+        creation_uuid: 创作项目UUID
         
     Returns:
         场景列表，每个场景包含完整的分镜详情
@@ -101,7 +101,7 @@ async def get_creation_scenes_with_shots(
         }
     """
     # 验证创作项目是否存在
-    creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+    creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
     if not creation:
         raise HTTPException(status_code=404, detail="创作项目不存在")
     
@@ -112,7 +112,7 @@ async def get_creation_scenes_with_shots(
     # 获取场景列表，预加载shots关系
     scenes = db.query(Scene).options(
         selectinload(Scene.shots)
-    ).filter(Scene.creation_id == creation_id).order_by(Scene.scene_id).all()
+    ).filter(Scene.creation_id == creation.creation_id).order_by(Scene.scene_id).all()
     
     # 转换为包含完整分镜详情的响应格式
     scene_responses = [SceneWithShotsResponse.from_db_model(scene) for scene in scenes]
@@ -181,17 +181,17 @@ async def create_scene(
     )
 
 
-@router.get("/{scene_id}")
+@router.get("/{scene_uuid}")
 async def get_scene(
-    scene_id: int,
+    scene_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
     """
-    根据ID获取场景详情
+    根据UUID获取场景详情
     
     Args:
-        scene_id: 场景ID
+        scene_uuid: 场景UUID
         
     Returns:
         场景详情
@@ -200,7 +200,7 @@ async def get_scene(
     scene = db.query(Scene).options(
         selectinload(Scene.shots),
         selectinload(Scene.creation)
-    ).filter(Scene.scene_id == scene_id).first()
+    ).filter(Scene.uuid == scene_uuid).first()
     
     if not scene:
         raise HTTPException(status_code=404, detail="场景不存在")
@@ -217,9 +217,9 @@ async def get_scene(
     )
 
 
-@router.put("/{scene_id}")
+@router.put("/{scene_uuid}")
 async def update_scene(
-    scene_id: int,
+    scene_uuid: str,
     scene_update: SceneUpdate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
@@ -228,7 +228,7 @@ async def update_scene(
     更新场景信息
     
     Args:
-        scene_id: 场景ID
+        scene_uuid: 场景UUID
         scene_update: 更新数据
         
     Returns:
@@ -238,7 +238,7 @@ async def update_scene(
     scene = db.query(Scene).options(
         selectinload(Scene.shots),
         selectinload(Scene.creation)
-    ).filter(Scene.scene_id == scene_id).first()
+    ).filter(Scene.uuid == scene_uuid).first()
     
     if not scene:
         raise HTTPException(status_code=404, detail="场景不存在")
@@ -276,9 +276,9 @@ async def update_scene(
     )
 
 
-@router.delete("/{scene_id}")
+@router.delete("/{scene_uuid}")
 async def delete_scene(
-    scene_id: int,
+    scene_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -286,7 +286,7 @@ async def delete_scene(
     删除场景
     
     Args:
-        scene_id: 场景ID
+        scene_uuid: 场景UUID
         
     Returns:
         删除结果
@@ -294,7 +294,7 @@ async def delete_scene(
     # 获取场景
     scene = db.query(Scene).options(
         selectinload(Scene.creation)
-    ).filter(Scene.scene_id == scene_id).first()
+    ).filter(Scene.uuid == scene_uuid).first()
     
     if not scene:
         raise HTTPException(status_code=404, detail="场景不存在")
@@ -307,6 +307,6 @@ async def delete_scene(
     db.commit()
     
     return success_response(
-        data={"scene_id": scene_id},
+        data={"scene_uuid": scene_uuid},
         message="场景删除成功"
     )

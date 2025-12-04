@@ -201,6 +201,31 @@ class CreationService:
         ).first()
         
         return creation
+    
+    @staticmethod
+    def get_creation_by_uuid_service(db: Session, creation_uuid: str) -> Optional[Creation]:
+        """
+        根据UUID获取创作记录（包含关联数据）
+        
+        Args:
+            db: 数据库会话
+            creation_uuid: 创作UUID
+            
+        Returns:
+            创作记录对象（包含预加载的关联数据）
+        """
+        # 使用 selectinload 一次性加载所有关联数据，包括嵌套的关联
+        creation = db.query(Creation).options(
+            selectinload(Creation.characters),
+            selectinload(Creation.scenes).selectinload(Scene.shots).selectinload(Shot.characters),
+            selectinload(Creation.novel),
+            selectinload(Creation.chapter)
+        ).filter(
+            Creation.uuid == creation_uuid,
+            Creation.deleted_at.is_(None)
+        ).first()
+        
+        return creation
 
     @staticmethod
     def get_creation_simple_service(
@@ -223,6 +248,29 @@ class CreationService:
         # 只查询创作的基本字段，不加载任何关联数据（排除已删除的）
         creation = db.query(Creation).filter(
             Creation.creation_id == creation_id,
+            Creation.deleted_at.is_(None)
+        ).first()
+        
+        return creation
+    
+    @staticmethod
+    def get_creation_simple_by_uuid_service(
+        db: Session,
+        creation_uuid: str
+    ) -> Optional[Creation]:
+        """
+        根据UUID获取创作记录（仅基本字段，不加载关联数据）
+        
+        Args:
+            db: 数据库会话
+            creation_uuid: 创作UUID
+            
+        Returns:
+            创作记录对象（仅包含基本字段，不包含关联数据）
+        """
+        # 只查询创作的基本字段，不加载任何关联数据（排除已删除的）
+        creation = db.query(Creation).filter(
+            Creation.uuid == creation_uuid,
             Creation.deleted_at.is_(None)
         ).first()
         

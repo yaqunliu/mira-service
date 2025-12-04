@@ -270,7 +270,7 @@ def deduct_points_for_llm(
         
         # 生成描述
         if not description:
-            description = f"大模型调用（{model_name}，{total_tokens}tokens，成本{cost:.4f}元）"
+            description = f"大模型调用（{model_name}，{total_tokens}tokens）"
         
         # 扣除积分（后扣机制，允许负积分）
         PointsService.deduct_points_after(
@@ -291,7 +291,7 @@ def deduct_points_for_llm(
             }
         )
         
-        logger.info(f"用户 {user_id} LLM调用扣除积分: {points} (成本: {cost:.4f}元, {total_tokens}tokens)")
+        logger.info(f"用户 {user_id} LLM调用扣除积分: {points} ({total_tokens}tokens)")
         return True
         
     except Exception as e:

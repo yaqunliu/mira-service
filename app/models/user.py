@@ -1,6 +1,8 @@
 from sqlalchemy import Boolean, Column, DateTime, Integer, String
-from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func, text as sa_text
 from sqlalchemy.orm import relationship
+import uuid
 from app.db.base import Base
 
 
@@ -9,6 +11,9 @@ class User(Base):
     __tablename__ = "users"
     
     user_id = Column(Integer, primary_key=True, index=True)
+    uuid = Column(UUID(as_uuid=False), unique=True, nullable=False, index=True, 
+                  default=lambda: str(uuid.uuid4()), 
+                  server_default=sa_text('gen_random_uuid()'))
     username = Column(String(50), unique=True, index=True, nullable=False)
     email = Column(String(100), unique=True, nullable=False)
     hashed_password = Column(String(255), nullable=True)  # OAuth 用户可以为空
