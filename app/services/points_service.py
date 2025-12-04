@@ -12,6 +12,7 @@ from app.models.temporary_points import TemporaryPoints
 from app.core.config import settings
 from app.core.logger import logger
 from app.core.exceptions import InsufficientPointsError, AlreadyCheckedInError, DatabaseError
+from app.core.timezone_utils import now, today_start, today_end, month_start, to_aware
 
 
 class PointsService:
@@ -55,12 +56,12 @@ class PointsService:
         Returns:
             总积分
         """
-        now = datetime.now()
+        now_dt = now()
         # 查询所有未过期的临时积分（且还未被标记为过期处理）
         temp_points_sum = db.query(func.sum(TemporaryPoints.points)).filter(
             and_(
                 TemporaryPoints.user_id == account.user_id,
-                TemporaryPoints.expires_at > now,
+                TemporaryPoints.expires_at > now_dt,
                 TemporaryPoints.expire_record_id.is_(None)  # 还未创建过期记录
             )
         ).scalar() or 0
@@ -98,11 +99,11 @@ class PointsService:
         account = PointsService.get_or_create_account(db, user_id)
         
         # 检查并处理已过期但未创建过期记录的临时积分
-        now = datetime.now()
+        now_dt = now()
         expired_temp_points = db.query(TemporaryPoints).filter(
             and_(
                 TemporaryPoints.user_id == user_id,
-                TemporaryPoints.expires_at <= now,
+                TemporaryPoints.expires_at <= now_dt,
                 TemporaryPoints.points > 0,  # 还有未使用的积分
                 TemporaryPoints.expire_record_id.is_(None)  # 还未创建过期记录
             )
@@ -151,24 +152,24 @@ class PointsService:
         db.commit()
         
         # 计算今日消耗
-        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start_dt = today_start()
         today_consumed = db.query(func.sum(PointsRecord.points)).filter(
             and_(
                 PointsRecord.user_id == user_id,
                 PointsRecord.record_type == "consume",
-                PointsRecord.created_at >= today_start,
+                PointsRecord.created_at >= today_start_dt,
                 PointsRecord.points < 0
             )
         ).scalar() or 0
         today_consumed = abs(int(today_consumed))
         
         # 计算本月消耗
-        month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_start_dt = month_start()
         month_consumed = db.query(func.sum(PointsRecord.points)).filter(
             and_(
                 PointsRecord.user_id == user_id,
                 PointsRecord.record_type == "consume",
-                PointsRecord.created_at >= month_start,
+                PointsRecord.created_at >= month_start_dt,
                 PointsRecord.points < 0
             )
         ).scalar() or 0
@@ -176,7 +177,7 @@ class PointsService:
         
         # 按积分类型分组统计
         points_by_type = []
-        now = datetime.now()
+        now_dt = now()
         
         # 长期积分（不过期）
         permanent_points = account.permanent_points
@@ -191,7 +192,7 @@ class PointsService:
         temp_points_list = db.query(TemporaryPoints).filter(
             and_(
                 TemporaryPoints.user_id == user_id,
-                TemporaryPoints.expires_at > now,
+                TemporaryPoints.expires_at > now_dt,
                 TemporaryPoints.expire_record_id.is_(None)  # 还未创建过期记录
             )
         ).order_by(TemporaryPoints.expires_at.asc()).all()
@@ -349,15 +350,15 @@ class PointsService:
             AlreadyCheckedInError: 今日已签到
         """
         # 简化签到检查：查询临时积分表，检查今天是否有签到记录
-        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        today_end = today_start + timedelta(days=1)
+        today_start_dt = today_start()
+        today_end_dt = today_end()
         
         existing_checkin = db.query(TemporaryPoints).filter(
             and_(
                 TemporaryPoints.user_id == user_id,
                 TemporaryPoints.source_type == "daily_checkin",
-                TemporaryPoints.created_at >= today_start,
-                TemporaryPoints.created_at < today_end
+                TemporaryPoints.created_at >= today_start_dt,
+                TemporaryPoints.created_at < today_end_dt
             )
         ).first()
         
@@ -366,11 +367,11 @@ class PointsService:
         
         # 计算过期时间
         if settings.POINTS_CHECKIN_EXPIRE_HOURS == 0:
-            # 当天24:00过期（即次日00:00:00）
-            expires_at = today_end
+            # 当天24:00过期（即次日00:00:00，Asia/Shanghai时区）
+            expires_at = today_end_dt
         else:
             # N小时后过期
-            expires_at = datetime.now() + timedelta(hours=settings.POINTS_CHECKIN_EXPIRE_HOURS)
+            expires_at = now() + timedelta(hours=settings.POINTS_CHECKIN_EXPIRE_HOURS)
         
         points = settings.POINTS_CHECKIN_REWARD
         
@@ -447,7 +448,7 @@ class PointsService:
             )
         
         # 检查时间窗口内的记录
-        time_threshold = datetime.now() - timedelta(hours=time_window_hours)
+        time_threshold = now() - timedelta(hours=time_window_hours)
         query = query.filter(PointsRecord.created_at >= time_threshold)
         
         return query.order_by(desc(PointsRecord.created_at)).first()
@@ -539,7 +540,7 @@ class PointsService:
         balance_before = account.available_points
         
         # 优先扣除临时积分（按过期时间升序，最早过期的先扣除）
-        now = datetime.now()
+        now_dt = now()
         remaining_points = points
         deducted_temporary = 0
         deducted_permanent = 0
@@ -549,7 +550,7 @@ class PointsService:
         temp_points_list = db.query(TemporaryPoints).filter(
             and_(
                 TemporaryPoints.user_id == user_id,
-                TemporaryPoints.expires_at > now,
+                TemporaryPoints.expires_at > now_dt,
                 TemporaryPoints.expire_record_id.is_(None)  # 还未创建过期记录
             )
         ).order_by(TemporaryPoints.expires_at.asc()).all()
@@ -826,7 +827,7 @@ class PointsService:
         balance_before = account.available_points
         
         # 优先扣除临时积分（按过期时间升序）
-        now = datetime.now()
+        now_dt = now()
         remaining_points = points
         deducted_temporary = 0
         deducted_permanent = 0
@@ -834,7 +835,7 @@ class PointsService:
         temp_points_list = db.query(TemporaryPoints).filter(
             and_(
                 TemporaryPoints.user_id == freeze_record.user_id,
-                TemporaryPoints.expires_at > now,
+                TemporaryPoints.expires_at > now_dt,
                 TemporaryPoints.expire_record_id.is_(None)  # 还未创建过期记录
             )
         ).order_by(TemporaryPoints.expires_at.asc()).all()
@@ -1192,24 +1193,24 @@ class PointsService:
         total_consumed = abs(int(total_consumed))
         
         # 今日消耗
-        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start_dt = today_start()
         today_consumed = db.query(func.sum(PointsRecord.points)).filter(
             and_(
                 PointsRecord.user_id == user_id,
                 PointsRecord.record_type == "consume",
-                PointsRecord.created_at >= today_start,
+                PointsRecord.created_at >= today_start_dt,
                 PointsRecord.points < 0
             )
         ).scalar() or 0
         today_consumed = abs(int(today_consumed))
         
         # 本月消耗
-        month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_start_dt = month_start()
         month_consumed = db.query(func.sum(PointsRecord.points)).filter(
             and_(
                 PointsRecord.user_id == user_id,
                 PointsRecord.record_type == "consume",
-                PointsRecord.created_at >= month_start,
+                PointsRecord.created_at >= month_start_dt,
                 PointsRecord.points < 0
             )
         ).scalar() or 0
@@ -1254,12 +1255,12 @@ class PointsService:
         Returns:
             过期积分总数
         """
-        now = datetime.now()
+        now_dt = now()
         
         # 查询所有过期的临时积分（且还未创建过期记录）
         expired_temp_points = db.query(TemporaryPoints).filter(
             and_(
-                TemporaryPoints.expires_at <= now,
+                TemporaryPoints.expires_at <= now_dt,
                 TemporaryPoints.points > 0,  # 还有未使用的积分
                 TemporaryPoints.expire_record_id.is_(None)  # 还未创建过期记录
             )
