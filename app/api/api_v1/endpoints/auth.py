@@ -1,107 +1,74 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
+from typing import Optional
 
-from app.core.security import verify_password, get_password_hash, create_access_token
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.user import UserCreate, User as UserSchema, Token
 from app.api.deps import get_current_user
 from app.utils.response import success_response
-from app.services.points_service import PointsService
+from app.services.user_sync_service import UserSyncService
 
 router = APIRouter()
 
 
-@router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register(
-    user_data: UserCreate,
-    db: Session = Depends(get_db)
-):
-    """用户注册"""
-    # 检查用户名是否已存在
-    existing_user = db.query(User).filter(User.username == user_data.username).first()
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="用户名已存在"
-        )
-    
-    # 检查邮箱是否已存在
-    existing_email = db.query(User).filter(User.email == user_data.email).first()
-    if existing_email:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="邮箱已被注册"
-        )
-    
-    # 创建新用户
-    hashed_password = get_password_hash(user_data.password)
-    new_user = User(
-        username=user_data.username,
-        email=user_data.email,
-        hashed_password=hashed_password
-    )
-    
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    # 创建积分账户并赠送注册积分
-    try:
-        PointsService.register_reward(db, new_user.user_id)
-    except Exception as e:
-        # 如果积分赠送失败，记录日志但不影响注册流程
-        import logging
-        logging.error(f"用户注册积分赠送失败: user_id={new_user.user_id}, error={str(e)}")
-    
-    return success_response(
-        data=UserSchema.model_validate(new_user).model_dump(),
-        message="用户注册成功"
-    )
+# 注意：传统的注册、登录和刷新端点已废弃
+# 所有认证现在都通过 Supabase 进行
+# 用户注册和登录请使用前端 Supabase 客户端
 
 
-@router.post("/login")
-async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
+@router.post("/sync")
+async def sync_supabase_user(
+    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
-    """用户登录"""
-    # 查找用户（OAuth2PasswordRequestForm 使用 username 字段）
-    user = db.query(User).filter(User.username == form_data.username).first()
-    
-    # 验证用户和密码
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    """
+    同步 Supabase 用户到本地数据库
+    前端在登录后调用此接口
+    """
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户名或密码错误",
+            detail="缺少或无效的认证头",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # 创建访问令牌
-    access_token = create_access_token(subject=user.username)
+    token = authorization.replace("Bearer ", "")
+    user = UserSyncService.get_user_from_supabase_token(db, token)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的 token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 获取用户头像（User 模型现在有 avatar 字段）
+    avatar = user.avatar if hasattr(user, 'avatar') else None
+    
+    # 如果没有 avatar 值，尝试从 token 中获取
+    if not avatar:
+        from app.services.supabase_service import supabase_service
+        supabase_user_data = supabase_service.get_user_from_token(token)
+        if supabase_user_data:
+            avatar = supabase_user_data.get("avatar_url")
+            # 如果从 token 中获取到了头像，更新数据库
+            if avatar and hasattr(user, 'avatar'):
+                user.avatar = avatar
+                db.commit()
+                db.refresh(user)
+    
+    from app.core.logger import logger
+    logger.info(f"同步用户响应: user_id={user.user_id}, avatar={avatar}")
     
     return success_response(
         data={
-            "access_token": access_token,
-            "token_type": "bearer"
+            "user_id": user.user_id,
+            "username": user.username,
+            "email": user.email,
+            "supabase_user_id": user.supabase_user_id,
+            "avatar": avatar,  # 添加 avatar 字段
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "updated_at": user.updated_at.isoformat() if user.updated_at else None,
         },
-        message="登录成功"
-    )
-
-
-@router.post("/refresh")
-async def refresh_token(
-    current_user: User = Depends(get_current_user)
-):
-    """刷新访问令牌"""
-    # 生成新的访问令牌
-    access_token = create_access_token(subject=current_user.username)
-    
-    return success_response(
-        data={
-            "access_token": access_token,
-            "token_type": "bearer"
-        },
-        message="令牌刷新成功"
+        message="用户同步成功"
     )

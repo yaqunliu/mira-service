@@ -99,6 +99,11 @@ class Settings(BaseSettings):
     # 日志配置
     LOG_LEVEL: str = "INFO"
     
+    # Supabase 配置
+    SUPABASE_URL: str = "http://127.0.0.1:54321"
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_JWT_SECRET: str = ""  # JWT secret 用于验证 Supabase token
+    
     # 积分系统配置
     # 注册赠送
     POINTS_REGISTER_REWARD: int = 100  # 注册赠送积分
