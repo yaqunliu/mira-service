@@ -1,6 +1,8 @@
 from sqlalchemy import Column, DateTime, ForeignKey, Integer
-from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func, text as sa_text
 from sqlalchemy.orm import relationship
+import uuid
 from app.db.base import Base
 
 
@@ -9,6 +11,9 @@ class PointsAccount(Base):
     __tablename__ = "points_accounts"
     
     account_id = Column(Integer, primary_key=True, index=True)
+    uuid = Column(UUID(as_uuid=False), unique=True, nullable=False, index=True, 
+                  default=lambda: str(uuid.uuid4()), 
+                  server_default=sa_text('gen_random_uuid()'))
     user_id = Column(Integer, ForeignKey("users.user_id"), unique=True, nullable=False, index=True)
     total_points = Column(Integer, default=0, nullable=False)  # 总积分 = permanent_points + 未过期的临时积分
     available_points = Column(Integer, default=0, nullable=False)  # 可用积分 = total_points - frozen_points

@@ -1,14 +1,15 @@
 from typing import Generator, Optional
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
 from app.core.logger import logger
+from app.services.supabase_service import supabase_service
+from app.services.user_sync_service import UserSyncService
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login", auto_error=False)
+# 使用 HTTPBearer 替代 OAuth2PasswordBearer，因为不再有传统的登录端点
+security = HTTPBearer(auto_error=False)
 
 
 def get_default_user(db: Session) -> User:
@@ -37,48 +38,43 @@ def get_default_user(db: Session) -> User:
 
 
 def get_current_user(
-    db: Session = Depends(get_db), 
-    token: Optional[str] = Depends(oauth2_scheme)
+    db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ) -> User:
     """
     获取当前用户
+    只支持 Supabase JWT token 认证
+    
     如果无法获取当前用户（token无效或未提供），则抛出401未授权异常
     """
     # 如果没有提供token，抛出未授权异常
-    if not token:
+    if not credentials:
         logger.warning("未提供token，拒绝访问")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="未提供认证令牌",
+            detail="未提供认证令牌，请使用 Supabase 登录",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
-        username: str = payload.get("sub")
-        if username is None:
-            logger.warning("token中未找到用户名")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="无效的认证令牌",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    except JWTError as e:
-        logger.warning(f"token验证失败: {str(e)}")
+    token = credentials.credentials
+    
+    # 验证 Supabase token
+    supabase_user_data = supabase_service.get_user_from_token(token)
+    if not supabase_user_data:
+        logger.warning("Supabase token 验证失败")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="无效的认证令牌",
+            detail="无效的认证令牌，请使用 Supabase 登录",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    user = db.query(User).filter(User.username == username).first()
-    if user is None:
-        logger.warning(f"用户 {username} 不存在")
+    # 使用 Supabase token，同步用户到数据库
+    user = UserSyncService.get_user_from_supabase_token(db, token)
+    if not user:
+        logger.warning("Supabase token 验证成功但无法同步用户")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户不存在",
+            detail="无法获取用户信息",
             headers={"WWW-Authenticate": "Bearer"},
         )
     

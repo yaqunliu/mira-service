@@ -1,6 +1,8 @@
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, Float
-from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func, text as sa_text
 from sqlalchemy.orm import relationship
+import uuid
 from app.db.base import Base
 
 
@@ -9,6 +11,9 @@ class Creation(Base):
     __tablename__ = "creations"
     
     creation_id = Column(Integer, primary_key=True, index=True)
+    uuid = Column(UUID(as_uuid=False), unique=True, nullable=False, index=True, 
+                  default=lambda: str(uuid.uuid4()), 
+                  server_default=sa_text('gen_random_uuid()'))
     title = Column(String(200), nullable=False, index=True)
     status = Column(String(20), default="created")  # created、character_generated、scene_generated、audio_generated、video_generated、completed、failed
     video_url = Column(String(500))  # 最终视频URL

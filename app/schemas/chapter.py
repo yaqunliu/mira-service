@@ -20,6 +20,7 @@ class ChapterUpdate(BaseModel):
 
 class Chapter(ChapterBase):
     chapter_id: int
+    uuid: str
     novel_id: int
     created_at: datetime
     

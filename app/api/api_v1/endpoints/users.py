@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_db
 from app.models.user import User
+from app.utils.response import success_response
 
 router = APIRouter()
 
@@ -20,8 +21,17 @@ async def update_current_user():
     pass
 
 
-@router.get("/{user_id}")
-async def get_user(user_id: int):
-    """根据ID获取用户信息"""
-    # TODO: 实现获取用户逻辑
-    pass
+@router.get("/{user_uuid}")
+async def get_user(user_uuid: str, db: Session = Depends(get_db)):
+    """根据UUID获取用户信息"""
+    from app.models.user import User as UserModel
+    from app.schemas.user import User as UserSchema
+    
+    user = db.query(UserModel).filter(UserModel.uuid == user_uuid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    
+    return success_response(
+        data=UserSchema.model_validate(user).model_dump(),
+        message="获取用户成功"
+    )

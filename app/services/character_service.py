@@ -35,12 +35,16 @@ class CharacterService:
         return character
 
     @staticmethod
-    def generate_character_image_service(character_ids: List[int], visual_style: str, db: Session):
+    def generate_character_image_service(character_uuids: List[str], visual_style: str, db: Session):
         """生成角色图片"""
-        for character_id in character_ids:
-            character = db.query(Character).filter(Character.character_id == character_id).first()
+        # 将UUID转换为整数ID
+        character_ids = []
+        for character_uuid in character_uuids:
+            character = db.query(Character).filter(Character.uuid == character_uuid).first()
             if not character:
-                raise NotFoundError(detail=f"character_id为{character_id}的角色不存在")
+                raise NotFoundError(detail=f"uuid为{character_uuid}的角色不存在")
+            character_ids.append(character.character_id)
+        
         try:
             task = generate_character_image_task.delay(character_ids, visual_style)
 

@@ -27,9 +27,9 @@ from app.core.exceptions import InsufficientPointsError
 router = APIRouter()
 
 
-@router.get("/scene/{scene_id}")
+@router.get("/scene/{scene_uuid}")
 async def get_scene_shots(
-    scene_id: int,
+    scene_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -37,7 +37,7 @@ async def get_scene_shots(
     获取场景的分镜列表
     
     Args:
-        scene_id: 场景ID
+        scene_uuid: 场景UUID
         
     Returns:
         分镜列表
@@ -45,7 +45,7 @@ async def get_scene_shots(
     # 获取场景并验证
     scene = db.query(Scene).options(
         selectinload(Scene.creation)
-    ).filter(Scene.scene_id == scene_id).first()
+    ).filter(Scene.uuid == scene_uuid).first()
     
     if not scene:
         raise HTTPException(status_code=404, detail="场景不存在")
@@ -57,7 +57,7 @@ async def get_scene_shots(
     # 获取分镜列表，预加载characters关系
     shots = db.query(Shot).options(
         selectinload(Shot.characters)
-    ).filter(Shot.scene_id == scene_id).order_by(Shot.shot_number).all()
+    ).filter(Shot.scene_id == scene.scene_id).order_by(Shot.shot_number).all()
     
     # 转换为响应格式
     shot_responses = [ShotResponse.from_db_model(shot) for shot in shots]
@@ -86,7 +86,7 @@ async def create_shot(
     Returns:
         创建的分镜信息
     """
-    # 获取场景并验证
+    # 获取场景并验证（shot_data.scene_id是数字ID，因为它是外键）
     scene = db.query(Scene).options(
         selectinload(Scene.creation)
     ).filter(Scene.scene_id == shot_data.scene_id).first()
@@ -142,17 +142,17 @@ async def create_shot(
     )
 
 
-@router.get("/{shot_id}")
+@router.get("/{shot_uuid}")
 async def get_shot(
-    shot_id: int,
+    shot_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
     """
-    根据ID获取分镜详情
+    根据UUID获取分镜详情
     
     Args:
-        shot_id: 分镜ID
+        shot_uuid: 分镜UUID
         
     Returns:
         分镜详情
@@ -161,7 +161,7 @@ async def get_shot(
     shot = db.query(Shot).options(
         selectinload(Shot.characters),
         selectinload(Shot.scene).selectinload(Scene.creation)
-    ).filter(Shot.shot_id == shot_id).first()
+    ).filter(Shot.uuid == shot_uuid).first()
     
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
@@ -178,9 +178,9 @@ async def get_shot(
     )
 
 
-@router.put("/{shot_id}")
+@router.put("/{shot_uuid}")
 async def update_shot(
-    shot_id: int,
+    shot_uuid: str,
     shot_update: ShotUpdate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
@@ -189,7 +189,7 @@ async def update_shot(
     更新分镜信息
     
     Args:
-        shot_id: 分镜ID
+        shot_uuid: 分镜UUID
         shot_update: 更新数据
         
     Returns:
@@ -199,7 +199,7 @@ async def update_shot(
     shot = db.query(Shot).options(
         selectinload(Shot.characters),
         selectinload(Shot.scene).selectinload(Scene.creation)
-    ).filter(Shot.shot_id == shot_id).first()
+    ).filter(Shot.uuid == shot_uuid).first()
     
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
@@ -240,9 +240,9 @@ async def update_shot(
     )
 
 
-@router.post("/{shot_id}/generate-image")
+@router.post("/{shot_uuid}/generate-image")
 async def generate_shot_image(
-    shot_id: int,
+    shot_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -253,13 +253,13 @@ async def generate_shot_image(
     前端可以通过返回的 task_id 轮询查询任务状态。
     
     Args:
-        shot_id: 分镜ID
+        shot_uuid: 分镜UUID
         
     Returns:
         {
             "task_id": "xxx",
-            "shot_id": 123,
-            "creation_id": 456
+            "shot_uuid": "xxx",
+            "creation_uuid": "xxx"
         }
         
     任务状态查询：
@@ -268,7 +268,7 @@ async def generate_shot_image(
     # 获取分镜
     shot = db.query(Shot).options(
         selectinload(Shot.scene).selectinload(Scene.creation)
-    ).filter(Shot.shot_id == shot_id).first()
+    ).filter(Shot.uuid == shot_uuid).first()
     
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
@@ -303,7 +303,8 @@ async def generate_shot_image(
             novel_id=shot.scene.creation.novel_id,
             description=f"生成分镜图片（{shot.title}）",
             extra_data={
-                "shot_id": shot_id,
+                "shot_id": shot.shot_id,
+                "shot_uuid": shot_uuid,
                 "task_type": "shot_image_generation"
             }
         )
@@ -312,27 +313,27 @@ async def generate_shot_image(
     
     # 启动 Celery 任务（传递 freeze_record_id）
     task = generate_single_shot_image_task.delay(
-        shot_id=shot_id,
+        shot_id=shot.shot_id,
         creation_id=creation_id,
         freeze_record_id=freeze_record.record_id  # 传递冻结记录ID
     )
     
-    logger.info(f"分镜 {shot_id} 图片生成任务已启动: task_id={task.id}, freeze_record_id={freeze_record.record_id}")
+    logger.info(f"分镜 {shot_uuid} 图片生成任务已启动: task_id={task.id}, freeze_record_id={freeze_record.record_id}")
     
     return success_response(
         data={
             "task_id": task.id,
-            "shot_id": shot_id,
-            "creation_id": creation_id,
+            "shot_uuid": shot_uuid,
+            "creation_uuid": shot.scene.creation.uuid,
             "freeze_record_id": freeze_record.record_id
         },
         message="分镜图片生成任务已启动"
     )
 
 
-@router.post("/{shot_id}/regenerate")
+@router.post("/{shot_uuid}/regenerate")
 async def regenerate_shot_image(
-    shot_id: int,
+    shot_uuid: str,
     request: ShotRegenerateRequest = ShotRegenerateRequest(),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
@@ -347,15 +348,15 @@ async def regenerate_shot_image(
     4. 返回 task_id 供前端轮询查询状态
     
     Args:
-        shot_id: 分镜ID
+        shot_uuid: 分镜UUID
         request: 重新生成请求
             - image_prompt: 新的图片提示词（可选，不传则使用现有提示词）
         
     Returns:
         {
             "task_id": "xxx",
-            "shot_id": 123,
-            "creation_id": 456,
+            "shot_uuid": "xxx",
+            "creation_uuid": "xxx",
             "image_prompt": "更新后的提示词"
         }
         
@@ -365,7 +366,7 @@ async def regenerate_shot_image(
     # 获取分镜
     shot = db.query(Shot).options(
         selectinload(Shot.scene).selectinload(Scene.creation)
-    ).filter(Shot.shot_id == shot_id).first()
+    ).filter(Shot.uuid == shot_uuid).first()
     
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
@@ -393,26 +394,26 @@ async def regenerate_shot_image(
     
     # 启动 Celery 任务
     task = generate_single_shot_image_task.delay(
-        shot_id=shot_id,
+        shot_id=shot.shot_id,
         creation_id=creation_id
     )
     
-    logger.info(f"分镜 {shot_id} 重新生成任务已启动: task_id={task.id}, image_prompt已更新={request.image_prompt is not None}")
+    logger.info(f"分镜 {shot_uuid} 重新生成任务已启动: task_id={task.id}, image_prompt已更新={request.image_prompt is not None}")
     
     return success_response(
         data={
             "task_id": task.id,
-            "shot_id": shot_id,
-            "creation_id": creation_id,
+            "shot_uuid": shot_uuid,
+            "creation_uuid": shot.scene.creation.uuid,
             "image_prompt": shot.image_prompt
         },
         message="分镜图片重新生成任务已启动"
     )
 
 
-@router.post("/{shot_id}/generate-audio")
+@router.post("/{shot_uuid}/generate-audio")
 async def generate_shot_audio(
-    shot_id: int,
+    shot_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -420,7 +421,7 @@ async def generate_shot_audio(
     生成分镜音频
     
     Args:
-        shot_id: 分镜ID
+        shot_uuid: 分镜UUID
         
     Returns:
         任务启动信息
@@ -428,7 +429,7 @@ async def generate_shot_audio(
     # 获取分镜
     shot = db.query(Shot).options(
         selectinload(Shot.scene).selectinload(Scene.creation)
-    ).filter(Shot.shot_id == shot_id).first()
+    ).filter(Shot.uuid == shot_uuid).first()
     
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
@@ -441,14 +442,14 @@ async def generate_shot_audio(
     # 这里可以启动一个Celery任务来异步生成音频
     
     return success_response(
-        data={"shot_id": shot_id, "status": "pending"},
+        data={"shot_uuid": shot_uuid, "status": "pending"},
         message="分镜音频生成任务已启动"
     )
 
 
-@router.delete("/{shot_id}")
+@router.delete("/{shot_uuid}")
 async def delete_shot(
-    shot_id: int,
+    shot_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -456,7 +457,7 @@ async def delete_shot(
     删除分镜
     
     Args:
-        shot_id: 分镜ID
+        shot_uuid: 分镜UUID
         
     Returns:
         删除结果
@@ -464,7 +465,7 @@ async def delete_shot(
     # 获取分镜
     shot = db.query(Shot).options(
         selectinload(Shot.scene).selectinload(Scene.creation)
-    ).filter(Shot.shot_id == shot_id).first()
+    ).filter(Shot.uuid == shot_uuid).first()
     
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
@@ -477,14 +478,14 @@ async def delete_shot(
     db.commit()
     
     return success_response(
-        data={"shot_id": shot_id},
+        data={"shot_uuid": shot_uuid},
         message="分镜删除成功"
     )
 
 
-@router.post("/{shot_id}/characters")
+@router.post("/{shot_uuid}/characters")
 async def add_shot_characters(
-    shot_id: int,
+    shot_uuid: str,
     character_ids: List[int],
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
@@ -493,7 +494,7 @@ async def add_shot_characters(
     为分镜添加关联角色
     
     Args:
-        shot_id: 分镜ID
+        shot_uuid: 分镜UUID
         character_ids: 角色ID列表
         
     Returns:
@@ -503,7 +504,7 @@ async def add_shot_characters(
     shot = db.query(Shot).options(
         selectinload(Shot.characters),
         selectinload(Shot.scene).selectinload(Scene.creation)
-    ).filter(Shot.shot_id == shot_id).first()
+    ).filter(Shot.uuid == shot_uuid).first()
     
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
@@ -534,10 +535,10 @@ async def add_shot_characters(
     )
 
 
-@router.delete("/{shot_id}/characters/{character_id}")
+@router.delete("/{shot_uuid}/characters/{character_uuid}")
 async def remove_shot_character(
-    shot_id: int,
-    character_id: int,
+    shot_uuid: str,
+    character_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -545,8 +546,8 @@ async def remove_shot_character(
     移除分镜关联的角色
     
     Args:
-        shot_id: 分镜ID
-        character_id: 角色ID
+        shot_uuid: 分镜UUID
+        character_uuid: 角色UUID
         
     Returns:
         更新后的分镜信息
@@ -555,7 +556,12 @@ async def remove_shot_character(
     shot = db.query(Shot).options(
         selectinload(Shot.characters),
         selectinload(Shot.scene).selectinload(Scene.creation)
-    ).filter(Shot.shot_id == shot_id).first()
+    ).filter(Shot.uuid == shot_uuid).first()
+    
+    # 获取角色
+    character = db.query(Character).filter(Character.uuid == character_uuid).first()
+    if not character:
+        raise HTTPException(status_code=404, detail="角色不存在")
     
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
@@ -565,7 +571,7 @@ async def remove_shot_character(
         raise HTTPException(status_code=403, detail="无权限操作该分镜")
     
     # 移除角色
-    shot.characters = [c for c in shot.characters if c.character_id != character_id]
+    shot.characters = [c for c in shot.characters if c.character_id != character.character_id]
     
     db.commit()
     db.refresh(shot)

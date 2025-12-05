@@ -48,6 +48,7 @@ class ShotUpdate(BaseModel):
 class Shot(ShotBase):
     """镜头响应模型"""
     shot_id: int
+    uuid: str
     scene_id: int
     image_url: Optional[str] = None
     audio_url: Optional[str] = None
@@ -63,6 +64,7 @@ class Shot(ShotBase):
 class ShotResponse(BaseModel):
     """镜头响应（前端格式）"""
     shot_id: int = Field(..., alias="shotId")
+    uuid: str = Field(..., alias="uuid")
     title: str
     associated_characters: List[int] = Field(default_factory=list, alias="associatedCharacters")
     scene_description: Optional[str] = Field(None, alias="sceneDescription")
@@ -80,6 +82,7 @@ class ShotResponse(BaseModel):
         """从数据库模型转换"""
         return cls(
             shotId=shot.shot_id,
+            uuid=shot.uuid,
             title=shot.title,
             associatedCharacters=[char.character_id for char in shot.characters] if shot.characters else [],
             sceneDescription=shot.description,

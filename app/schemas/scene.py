@@ -40,6 +40,7 @@ class SceneUpdate(BaseModel):
 class ShotBrief(BaseModel):
     """镜头简要信息（用于场景响应中）"""
     shot_id: int
+    uuid: str
     title: str
     shot_number: int
     image_prompt: str | None
@@ -54,6 +55,7 @@ class ShotBrief(BaseModel):
 class ShotDetail(BaseModel):
     """镜头详细信息（用于场景响应中，包含图片URL）"""
     shot_id: int
+    uuid: str
     title: str
     shot_number: int
     image_url: Optional[str] = None
@@ -69,6 +71,7 @@ class ShotDetail(BaseModel):
         """从数据库模型转换"""
         return cls(
             shot_id=shot.shot_id,
+            uuid=shot.uuid,
             title=shot.title,
             shot_number=shot.shot_number,
             image_url=shot.image_url,
@@ -81,6 +84,7 @@ class ShotDetail(BaseModel):
 class Scene(SceneBase):
     """场景响应模型"""
     scene_id: int
+    uuid: str
     creation_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -93,6 +97,7 @@ class Scene(SceneBase):
 class SceneResponse(BaseModel):
     """场景响应（前端格式）"""
     scene_id: int = Field(..., alias="sceneId")
+    uuid: str = Field(..., alias="uuid")
     title: str
     duration: Optional[str] = None
     scene_setting: SceneSetting = Field(..., alias="sceneSetting")
@@ -107,6 +112,7 @@ class SceneResponse(BaseModel):
         """从数据库模型转换"""
         return cls(
             sceneId=scene.scene_id,
+            uuid=scene.uuid,
             title=scene.title,
             duration=scene.duration,
             sceneSetting=SceneSetting(
@@ -128,6 +134,7 @@ class SceneListResponse(BaseModel):
 class SceneWithShotsResponse(BaseModel):
     """场景响应（包含完整分镜详情）"""
     scene_id: int
+    uuid: str
     title: str
     duration: Optional[str] = None
     scene_setting: SceneSetting
@@ -141,6 +148,7 @@ class SceneWithShotsResponse(BaseModel):
         """从数据库模型转换"""
         return cls(
             scene_id=scene.scene_id,
+            uuid=scene.uuid,
             title=scene.title,
             duration=scene.duration,
             scene_setting=SceneSetting(

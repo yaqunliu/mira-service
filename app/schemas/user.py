@@ -19,6 +19,9 @@ class UserUpdate(BaseModel):
 
 class User(UserBase):
     user_id: int
+    uuid: str
+    supabase_user_id: Optional[str] = None
+    avatar: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     

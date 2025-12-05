@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
 from app.models.creation import Creation
+from app.models.shot import Shot
 from app.schemas.creation import CreationCreate, Creation as CreationSchema, CreationStatus
 from app.services.creation_service import CreationService
 from app.core.exceptions import BaseServiceException
@@ -55,19 +56,46 @@ async def create_creation_service(
                 detail="创建新创作时必须提供 novel_id 和 chapter_id，或提供 creation_id 继续已存在的创作"
             )
 
+    # 将UUID转换为ID（如果需要）
+    novel_id_int = None
+    chapter_id_int = None
+    creation_id_int = None
+    
+    if creation_data.novel_id:
+        # 通过UUID获取novel_id
+        from app.services.novel_service import NovelService
+        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=creation_data.novel_id, user_id=user_id)
+        novel_id_int = novel.novel_id
+    
+    if creation_data.chapter_id:
+        # 通过UUID获取chapter_id
+        from app.services.novel_service import NovelService
+        chapter = NovelService.get_chapter_by_uuid_service(db=db, chapter_uuid=creation_data.chapter_id, user_id=user_id)
+        chapter_id_int = chapter.chapter_id
+    
+    if creation_data.creation_id:
+        # 通过UUID获取creation_id
+        creation = CreationService.get_creation_simple_by_uuid_service(db=db, creation_uuid=creation_data.creation_id)
+        if creation:
+            creation_id_int = creation.creation_id
+
     # 调用服务层处理业务逻辑
     try:
         creation_id = CreationService.create_creation_service(
             db=db,
-            novel_id=creation_data.novel_id,
-            chapter_id=creation_data.chapter_id,
+            novel_id=novel_id_int,
+            chapter_id=chapter_id_int,
             user_id=user_id,
-            creation_id=creation_data.creation_id,
+            creation_id=creation_id_int,
         )
 
+        # 获取创建的创作对象，返回UUID
+        creation = CreationService.get_creation_simple_service(db=db, creation_id=creation_id)
+        creation_uuid = creation.uuid if creation else None
+        
         # 转换为响应格式
         return success_response(
-            data={"creation_id": creation_id},
+            data={"creation_id": creation_id, "uuid": creation_uuid},
             message="创作初始化成功"
         )
     except BaseServiceException as e:
@@ -144,22 +172,25 @@ async def get_creations_service(
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
-@router.get("/by-chapter/{chapter_id}")
+@router.get("/by-chapter/{chapter_uuid}")
 async def get_creation_by_chapter(
-    chapter_id: int,
+    chapter_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """
-    根据章节ID查询该章节是否已有创作
+    根据章节UUID查询该章节是否已有创作
     
     无论是否存在创作，都返回200状态码。
     如果没有创作，响应体中包含错误信息。
     """
     try:
+        # 先通过UUID获取章节
+        from app.services.novel_service import NovelService
+        chapter = NovelService.get_chapter_by_uuid_service(db=db, chapter_uuid=chapter_uuid, user_id=user.user_id)
         creation = CreationService.get_creation_by_chapter_service(
             db=db,
-            chapter_id=chapter_id,
+            chapter_id=chapter.chapter_id,
             user_id=user.user_id
         )
         
@@ -175,6 +206,7 @@ async def get_creation_by_chapter(
         characters = [
             {
                 "character_id": char.character_id,
+                "uuid": char.uuid,
                 "name": char.name,
                 "status": char.status,
                 "basic_info": char.basic_info,
@@ -197,6 +229,7 @@ async def get_creation_by_chapter(
         scenes = [
             {
                 "scene_id": scene.scene_id,
+                "uuid": scene.uuid,
                 "title": scene.title,
                 "duration": scene.duration,
                 "time_setting": scene.time_setting,
@@ -212,6 +245,7 @@ async def get_creation_by_chapter(
         # 构建响应数据
         response_data = {
             "creation_id": creation.creation_id,
+            "uuid": creation.uuid,
             "title": creation.title,
             "status": creation.status,
             "chapter_id": creation.chapter_id,
@@ -240,22 +274,22 @@ async def get_creation_by_chapter(
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
 
-@router.get("/{creation_id}/simple")
+@router.get("/{creation_uuid}/simple")
 async def get_creation_simple(
-    creation_id: int,
+    creation_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """
-    根据ID获取创作项目基本信息（简化版）
+    根据UUID获取创作项目基本信息（简化版）
     
     只返回创作的基本字段，不返回关联的characters、scenes等数据，
     用于需要快速获取创作基本信息的场景，性能更优。
     """
     try:
-        creation = CreationService.get_creation_simple_service(
+        creation = CreationService.get_creation_simple_by_uuid_service(
             db=db,
-            creation_id=creation_id
+            creation_uuid=creation_uuid
         )
         if creation is None:
             raise HTTPException(status_code=404, detail="创作项目不存在")
@@ -265,6 +299,7 @@ async def get_creation_simple(
         # 只返回基本字段，不包含关联数据
         response_data = {
             "creation_id": creation.creation_id,
+            "uuid": creation.uuid,
             "title": creation.title,
             "status": creation.status,
             "chapter_id": creation.chapter_id,
@@ -293,15 +328,15 @@ async def get_creation_simple(
         raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
 
 
-@router.get("/{creation_id}")
+@router.get("/{creation_uuid}")
 async def get_creation(
-    creation_id: int,
+    creation_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """根据ID获取创作项目详情（完整版，包含所有关联数据）"""
+    """根据UUID获取创作项目详情（完整版，包含所有关联数据）"""
     try:
-        creation = CreationService.get_creation_service(db=db, creation_id=creation_id)
+        creation = CreationService.get_creation_by_uuid_service(db=db, creation_uuid=creation_uuid)
         if creation is None:
             raise HTTPException(status_code=404, detail="创作项目不存在")
         if creation.owner_id != user.user_id:
@@ -315,9 +350,9 @@ async def get_creation(
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
-@router.delete("/{creation_id}")
+@router.delete("/{creation_uuid}")
 async def delete_creation(
-    creation_id: int,
+    creation_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -325,7 +360,7 @@ async def delete_creation(
     删除创作项目
     
     Args:
-        creation_id: 创作项目ID
+        creation_uuid: 创作项目UUID
         
     Returns:
         删除结果
@@ -337,7 +372,7 @@ async def delete_creation(
     """
     try:
         # 查询创作项目
-        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
         
         if not creation:
             raise HTTPException(status_code=404, detail="创作项目不存在")
@@ -351,10 +386,10 @@ async def delete_creation(
         db.delete(creation)
         db.commit()
         
-        logger.info(f"创作项目已删除: creation_id={creation_id}, user_id={user.user_id}")
+        logger.info(f"创作项目已删除: creation_uuid={creation_uuid}, creation_id={creation.creation_id}, user_id={user.user_id}")
         
         return success_response(
-            data={"creation_id": creation_id},
+            data={"creation_uuid": creation_uuid},
             message="创作项目删除成功"
         )
         
@@ -371,7 +406,7 @@ async def delete_creation(
 class GenerateShotsRequest(BaseModel):
     """生成分镜图片请求体"""
     force_regenerate: bool = False  # 是否强制重新生成已有图片的分镜
-    shot_ids: Optional[List[int]] = None  # 指定分镜ID列表（为空则生成所有分镜）
+    shot_ids: Optional[List[str]] = None  # 指定分镜UUID列表（为空则生成所有分镜）
 
 
 class SelectVoiceRequest(BaseModel):
@@ -381,9 +416,9 @@ class SelectVoiceRequest(BaseModel):
     force_regenerate: bool = False  # 是否强制重新生成已有音频的分镜
 
 
-@router.post("/{creation_id}/generate-shots")
+@router.post("/{creation_uuid}/generate-shots")
 async def start_generate_shots(
-    creation_id: int,
+    creation_uuid: str,
     request: GenerateShotsRequest = GenerateShotsRequest(),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -395,15 +430,15 @@ async def start_generate_shots(
     前端可以通过返回的 task_id 轮询查询任务状态。
     
     Args:
-        creation_id: 创作项目ID
+        creation_uuid: 创作项目UUID
         request: 生成请求参数
             - force_regenerate: 是否强制重新生成已有图片的分镜
-            - shot_ids: 指定分镜ID列表（为空则生成所有分镜）
+            - shot_ids: 指定分镜UUID列表（为空则生成所有分镜）
     
     Returns:
         {
             "task_id": "xxx",  # 主任务ID，用于查询任务状态
-            "creation_id": 123,
+            "creation_uuid": "xxx",
             "message": "分镜图片生成任务已启动"
         }
     
@@ -413,7 +448,7 @@ async def start_generate_shots(
     """
     try:
         # 验证创作项目是否存在
-        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
         if not creation:
             raise HTTPException(status_code=404, detail="创作项目不存在")
         
@@ -430,16 +465,28 @@ async def start_generate_shots(
         
         # 根据请求参数选择任务类型
         if request.shot_ids:
-            # 生成指定分镜
+            # 将UUID列表转换为shot_id列表（Celery任务需要整数ID）
+            shot_uuids = request.shot_ids
+            shots = db.query(Shot).filter(Shot.uuid.in_(shot_uuids)).all()
+            if len(shots) != len(shot_uuids):
+                found_uuids = {shot.uuid for shot in shots}
+                missing_uuids = set(shot_uuids) - found_uuids
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"部分分镜不存在: {list(missing_uuids)}"
+                )
+            shot_ids = [shot.shot_id for shot in shots]
+            
+            # 生成指定分镜（传递整数ID给Celery任务）
             task = generate_shots_by_ids_task.delay(
-                shot_ids=request.shot_ids,
-                creation_id=creation_id
+                shot_ids=shot_ids,
+                creation_id=creation.creation_id
             )
-            message = f"已启动 {len(request.shot_ids)} 个分镜图片生成任务"
+            message = f"已启动 {len(shot_ids)} 个分镜图片生成任务"
         else:
             # 生成所有分镜
             task = generate_creation_shots_task.delay(
-                creation_id=creation_id,
+                creation_id=creation.creation_id,
                 force_regenerate=request.force_regenerate
             )
             message = "分镜图片批量生成任务已启动"
@@ -448,12 +495,12 @@ async def start_generate_shots(
         creation.current_task_id = task.id
         db.commit()
         
-        logger.info(f"创作 {creation_id} 分镜图片生成任务已启动: task_id={task.id}")
+        logger.info(f"创作 {creation_uuid} 分镜图片生成任务已启动: task_id={task.id}")
         
         return success_response(
             data={
                 "task_id": task.id,
-                "creation_id": creation_id
+                "creation_uuid": creation_uuid
             },
             message=message
         )
@@ -467,9 +514,9 @@ async def start_generate_shots(
         raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
 
 
-@router.post("/{creation_id}/select-voice")
+@router.post("/{creation_uuid}/select-voice")
 async def select_voice_and_generate_video(
-    creation_id: int,
+    creation_uuid: str,
     request: SelectVoiceRequest,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -488,7 +535,7 @@ async def select_voice_and_generate_video(
     前端只需轮询任务状态，等待最终视频生成完成即可。
     
     Args:
-        creation_id: 创作项目ID
+        creation_uuid: 创作项目UUID
         request: 请求参数
             - voice_id: Fish Audio 语音模型ID
             - force_regenerate: 是否强制重新生成
@@ -496,7 +543,7 @@ async def select_voice_and_generate_video(
     Returns:
         {
             "task_id": "xxx",
-            "creation_id": 123,
+            "creation_uuid": "xxx",
             "voice_id": "xxx",
             "message": "视频生成任务已启动"
         }
@@ -513,7 +560,7 @@ async def select_voice_and_generate_video(
     """
     try:
         # 验证创作项目是否存在
-        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
         if not creation:
             raise HTTPException(status_code=404, detail="创作项目不存在")
         
@@ -536,7 +583,7 @@ async def select_voice_and_generate_video(
         
         # 启动完整视频生成任务
         task = generate_full_video_task.delay(
-            creation_id=creation_id,
+            creation_id=creation.creation_id,
             voice_id=request.voice_id,
             voice_speed=request.voice_speed,
             force_regenerate=request.force_regenerate
@@ -546,12 +593,12 @@ async def select_voice_and_generate_video(
         creation.current_task_id = task.id
         db.commit()
         
-        logger.info(f"创作 {creation_id} 完整视频生成任务已启动: task_id={task.id}, voice_id={request.voice_id}")
+        logger.info(f"创作 {creation_uuid} 完整视频生成任务已启动: task_id={task.id}, voice_id={request.voice_id}")
         
         return success_response(
             data={
                 "task_id": task.id,
-                "creation_id": creation_id,
+                "creation_uuid": creation_uuid,
                 "voice_id": request.voice_id,
                 "voice_speed": request.voice_speed
             },
@@ -567,9 +614,9 @@ async def select_voice_and_generate_video(
         raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
 
 
-@router.get("/{creation_id}/progress")
+@router.get("/{creation_uuid}/progress")
 async def get_generation_progress(
-    creation_id: int,
+    creation_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -577,7 +624,7 @@ async def get_generation_progress(
     获取创作项目当前任务的生成进度
     
     Args:
-        creation_id: 创作项目ID
+        creation_uuid: 创作项目UUID
         
     Returns:
         当前任务的进度信息，如果没有正在执行的任务则返回 null
@@ -586,7 +633,7 @@ async def get_generation_progress(
     
     try:
         # 验证创作项目是否存在
-        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
         if not creation:
             raise HTTPException(status_code=404, detail="创作项目不存在")
         
@@ -598,7 +645,7 @@ async def get_generation_progress(
         if not creation.current_task_id:
             return success_response(
                 data={
-                    "creation_id": creation_id,
+                    "creation_uuid": creation_uuid,
                     "task_id": None,
                     "status": None,
                     "progress": None,
@@ -612,7 +659,7 @@ async def get_generation_progress(
         task_state = task.state
         
         response_data = {
-            "creation_id": creation_id,
+            "creation_uuid": creation_uuid,
             "task_id": creation.current_task_id,
             "status": task_state,
         }

@@ -154,6 +154,7 @@ async def get_novels(
         
         items.append({
             "novel_id": novel.novel_id,
+            "uuid": novel.uuid,
             "title": novel.title,
             "author": novel.author,
             "chapter_count": novel.chapter_count,
@@ -178,19 +179,19 @@ async def get_novels(
     )
 
 
-@router.get("/{novel_id}")
+@router.get("/{novel_uuid}")
 async def get_novel(
-    novel_id: int,
+    novel_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
     """
-    根据ID获取小说详情
+    根据UUID获取小说详情
     
-    注意：章节列表需要通过 GET /{novel_id}/chapters 接口单独获取（支持分页）
+    注意：章节列表需要通过 GET /{novel_uuid}/chapters 接口单独获取（支持分页）
     """
     try:
-        novel = NovelService.get_novel_by_id_service(db=db, novel_id=novel_id, user_id=user.user_id)
+        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
     except BaseServiceException as e:
         # 将业务异常转换为HTTP异常
         raise HTTPException(
@@ -243,6 +244,7 @@ async def get_novel(
     return success_response(
         data={
             "novel_id": novel.novel_id,
+            "uuid": novel.uuid,
             "title": novel.title,
             "author": novel.author,
             "chapter_count": novel.chapter_count,
@@ -258,23 +260,22 @@ async def get_novel(
     )
 
 
-@router.get("/{novel_id}/chapters/{chapter_id}")
+@router.get("/{novel_uuid}/chapters/{chapter_uuid}")
 async def get_chapter(
-    novel_id: int,
-    chapter_id: int,
+    novel_uuid: str,
+    chapter_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
     """
-    根据ID获取章节详情
+    根据UUID获取章节详情
     
     返回章节的完整信息，包括标题、内容URL、字数等
     """
     try:
-        chapter = NovelService.get_chapter_by_id_service(
+        chapter = NovelService.get_chapter_by_uuid_service(
             db=db,
-            novel_id=novel_id,
-            chapter_id=chapter_id,
+            chapter_uuid=chapter_uuid,
             user_id=user.user_id
         )
     except BaseServiceException as e:
@@ -288,6 +289,7 @@ async def get_chapter(
     return success_response(
         data={
             "chapter_id": chapter.chapter_id,
+            "uuid": chapter.uuid,
             "title": chapter.title,
             "chapter_number": chapter.chapter_number,
             "word_count": chapter.word_count,
@@ -300,9 +302,9 @@ async def get_chapter(
     )
 
 
-@router.get("/{novel_id}/chapters")
+@router.get("/{novel_uuid}/chapters")
 async def get_novel_chapters(
-    novel_id: int,
+    novel_uuid: str,
     page: int = Query(1, ge=1, description="页码，从1开始"),
     page_size: int = Query(10, ge=1, le=100, description="每页数量，默认10，最大100"),
     db: Session = Depends(get_db),
@@ -314,9 +316,11 @@ async def get_novel_chapters(
     支持分页查询，默认每页10个章节
     """
     try:
+        # 先通过uuid获取novel_id
+        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
         chapters, total = NovelService.get_novel_chapters_service(
             db=db, 
-            novel_id=novel_id, 
+            novel_id=novel.novel_id, 
             user_id=user.user_id,
             page=page,
             page_size=page_size
@@ -333,6 +337,7 @@ async def get_novel_chapters(
     items = [
         {
             "chapter_id": chapter.chapter_id,
+            "uuid": chapter.uuid,
             "title": chapter.title,
             "chapter_number": chapter.chapter_number,
             "word_count": chapter.word_count,
@@ -357,9 +362,9 @@ async def get_novel_chapters(
     )
 
 
-@router.put("/{novel_id}")
+@router.put("/{novel_uuid}")
 async def update_novel(
-    novel_id: int,
+    novel_uuid: str,
     novel_update: NovelUpdate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
@@ -373,9 +378,11 @@ async def update_novel(
     - status: 状态
     """
     try:
+        # 先通过uuid获取novel
+        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
         novel = NovelService.update_novel_service(
             db=db,
-            novel_id=novel_id,
+            novel_id=novel.novel_id,
             novel_update=novel_update,
             user_id=user.user_id
         )
@@ -399,10 +406,10 @@ async def update_novel(
     )
 
 
-@router.put("/{novel_id}/chapters/{chapter_id}")
+@router.put("/{novel_uuid}/chapters/{chapter_uuid}")
 async def update_chapter(
-    novel_id: int,
-    chapter_id: int,
+    novel_uuid: str,
+    chapter_uuid: str,
     chapter_update: ChapterUpdate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
@@ -414,15 +421,18 @@ async def update_chapter(
     - title: 章节标题
     """
     try:
+        # 先通过uuid获取chapter
+        chapter = NovelService.get_chapter_by_uuid_service(db=db, chapter_uuid=chapter_uuid, user_id=user.user_id)
         chapter = NovelService.update_chapter_service(
             db=db,
-            chapter_id=chapter_id,
+            chapter_id=chapter.chapter_id,
             chapter_update=chapter_update,
             user_id=user.user_id
         )
         
         # 验证章节是否属于指定的小说
-        if chapter.novel_id != novel_id:
+        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
+        if chapter.novel_id != novel.novel_id:
             raise HTTPException(
                 status_code=400,
                 detail="章节不属于指定的小说"
@@ -446,10 +456,10 @@ async def update_chapter(
     )
 
 
-@router.delete("/{novel_id}/chapters/{chapter_id}")
+@router.delete("/{novel_uuid}/chapters/{chapter_uuid}")
 async def delete_chapter(
-    novel_id: int,
-    chapter_id: int,
+    novel_uuid: str,
+    chapter_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -461,18 +471,12 @@ async def delete_chapter(
     - 删除章节时会同时删除相关的创作（Creation）
     """
     try:
-        # 先验证章节是否属于指定的小说（排除已删除的）
-        from app.models.chapter import Chapter
-        chapter = db.query(Chapter).filter(
-            Chapter.chapter_id == chapter_id,
-            Chapter.deleted_at.is_(None)
-        ).first()
-        if not chapter:
-            raise HTTPException(
-                status_code=404,
-                detail="章节不存在"
-            )
-        if chapter.novel_id != novel_id:
+        # 先通过uuid获取chapter
+        chapter = NovelService.get_chapter_by_uuid_service(db=db, chapter_uuid=chapter_uuid, user_id=user.user_id)
+        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
+        
+        # 验证章节是否属于指定的小说
+        if chapter.novel_id != novel.novel_id:
             raise HTTPException(
                 status_code=400,
                 detail="章节不属于指定的小说"
@@ -481,7 +485,7 @@ async def delete_chapter(
         # 调用服务层删除章节
         NovelService.delete_chapter_service(
             db=db,
-            chapter_id=chapter_id,
+            chapter_id=chapter.chapter_id,
             user_id=user.user_id
         )
     except HTTPException:
@@ -495,14 +499,14 @@ async def delete_chapter(
     
     # 返回删除成功的响应格式
     return success_response(
-        data={"chapter_id": chapter_id},
+        data={"chapter_uuid": chapter_uuid},
         message="章节删除成功"
     )
 
 
-@router.delete("/{novel_id}")
+@router.delete("/{novel_uuid}")
 async def delete_novel(
-    novel_id: int,
+    novel_uuid: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -512,7 +516,9 @@ async def delete_novel(
     注意：当实现后，需要在API层构造删除成功的响应
     """
     try:
-        NovelService.delete_novel_service(db=db, novel_id=novel_id, user_id=user.user_id)
+        # 先通过uuid获取novel
+        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
+        NovelService.delete_novel_service(db=db, novel_id=novel.novel_id, user_id=user.user_id)
     except BaseServiceException as e:
         # 将业务异常转换为HTTP异常
         raise HTTPException(

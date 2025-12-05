@@ -99,13 +99,18 @@ class Settings(BaseSettings):
     # 日志配置
     LOG_LEVEL: str = "INFO"
     
+    # Supabase 配置
+    SUPABASE_URL: str = "http://127.0.0.1:54321"
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_JWT_SECRET: str = ""  # JWT secret 用于验证 Supabase token
+    
     # 积分系统配置
     # 注册赠送
     POINTS_REGISTER_REWARD: int = 100  # 注册赠送积分
     
     # 每日签到
     POINTS_CHECKIN_REWARD: int = 10  # 每日签到积分
-    POINTS_CHECKIN_EXPIRE_HOURS: int = 24  # 签到积分过期时间（小时），0表示当天00:00过期
+    POINTS_CHECKIN_EXPIRE_HOURS: int = 0  # 签到积分过期时间（小时），0表示当天24:00过期
     
     # 积分消耗配置（支持多种计费方式，通过配置字符串定义）
     # 格式：operation_type:计费方式:数值
