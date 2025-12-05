@@ -48,8 +48,10 @@ def _get_resource_by_task_result(
                 return {
                     "type": "novel",
                     "novel_id": novel.novel_id,
+                    "novel_uuid": novel.uuid,
                     "novel": {
                         "novel_id": novel.novel_id,
+                        "uuid": novel.uuid,
                         "title": novel.title,
                         "author": novel.author,
                         "status": novel.status,
@@ -298,9 +300,10 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
                     },
                 })
                 
-                # 向后兼容：如果是小说上传任务，保留 novel_id 字段
+                # 向后兼容：如果是小说上传任务，保留 novel_id 和 novel_uuid 字段
                 if task_type == TaskType.NOVEL_UPLOAD and resource_info:
                     response["novel_id"] = resource_info.get("novel_id")
+                    response["novel_uuid"] = resource_info.get("novel_uuid")
                     
             except Exception as e:
                 logger.error(f"获取任务结果失败: {str(e)}")
