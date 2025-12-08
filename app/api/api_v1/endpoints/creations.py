@@ -1,4 +1,5 @@
 from typing import Optional, List
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -357,7 +358,7 @@ async def delete_creation(
     user: User = Depends(get_current_user),
 ):
     """
-    删除创作项目
+    删除创作项目（软删除）
     
     Args:
         creation_uuid: 创作项目UUID
@@ -367,26 +368,30 @@ async def delete_creation(
         
     注意：
         - 只有创建者可以删除
-        - 删除时会级联删除相关的场景、分镜等数据
-        - 即使有正在执行的任务也会直接删除
+        - 使用软删除，设置 deleted_at 字段，不会真正删除数据
+        - 已删除的创作不会在查询列表中显示
     """
     try:
-        # 查询创作项目
+        # 查询创作项目（包括已删除的，用于验证是否存在）
         creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
         
         if not creation:
             raise HTTPException(status_code=404, detail="创作项目不存在")
         
+        # 检查是否已经删除
+        if creation.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="创作项目已被删除")
+        
         # 验证权限
         if creation.owner_id != user.user_id:
             raise HTTPException(status_code=403, detail="无权限删除该创作项目")
         
-        # 删除创作项目（级联删除相关的 scenes 和 shots）
-        # scenes 关系已设置 cascade="all, delete-orphan"，会自动删除
-        db.delete(creation)
+        # 软删除：设置 deleted_at 字段
+        now = datetime.utcnow()
+        creation.deleted_at = now
         db.commit()
         
-        logger.info(f"创作项目已删除: creation_uuid={creation_uuid}, creation_id={creation.creation_id}, user_id={user.user_id}")
+        logger.info(f"创作项目已软删除: creation_uuid={creation_uuid}, creation_id={creation.creation_id}, user_id={user.user_id}, deleted_at={now}")
         
         return success_response(
             data={"creation_uuid": creation_uuid},
