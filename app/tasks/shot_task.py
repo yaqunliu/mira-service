@@ -169,7 +169,6 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             
             temp_image_url = ai_client.generate_image_by_prompt(
                 prompt=prompt_text,
-                aspectRatio="16:9"  # 16:9 比例
             )
         
         # 从临时URL下载图像并上传到US3进行持久化

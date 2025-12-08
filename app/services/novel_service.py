@@ -750,11 +750,21 @@ class NovelService:
             if creations_count > 0:
                 logger.info(f"已软删除 {creations_count} 个相关的创作")
             
-            # 2. 软删除章节
+            # 2. 先统计当前未删除的章节数（包含当前要删除的章节）
+            current_chapters_count = db.query(Chapter).filter(
+                Chapter.novel_id == novel.novel_id,
+                Chapter.deleted_at.is_(None)
+            ).count()
+            
+            # 3. 软删除章节
             chapter.deleted_at = now
+            
+            # 4. 更新小说的章节总数（当前章节数 - 1）
+            novel.chapter_count = current_chapters_count - 1
+            
             db.commit()
             
-            logger.info(f"章节已软删除: chapter_id={chapter_id}, user_id={user_id}")
+            logger.info(f"章节已软删除: chapter_id={chapter_id}, user_id={user_id}, 剩余章节数={novel.chapter_count}")
         except Exception as e:
             logger.error(f"删除章节失败: {str(e)}", exc_info=True)
             db.rollback()

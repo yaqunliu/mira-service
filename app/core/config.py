@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     API_V1_STR: str = "/api/v1"
     DEBUG: bool = False
+    ENV: str = "dev"  # 环境变量：dev 或 production，默认 dev
     
     # 安全配置
     SECRET_KEY: str = ""
