@@ -5,7 +5,17 @@
 import re
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
-from app.core.logger import logger
+
+try:
+    from app.core.logger import logger
+except ImportError:
+    # 如果logger不可用，使用简单的print作为fallback
+    class SimpleLogger:
+        def info(self, msg):
+            pass
+        def error(self, msg):
+            pass
+    logger = SimpleLogger()
 
 
 def clean_chapter_title(title: str, max_length: int = 200) -> str:
@@ -126,28 +136,40 @@ def parse_novel_metadata(content: str, filename: str) -> Dict[str, str]:
     title = None
     author = None
     
+    # 章节关键字模式，用于判断是否是章节标题
+    chapter_keyword_pattern = r'第\s*[零一二三四五六七八九十百千万\d]+\s*[章回话卷]|Chapter\s+\d+|CHAPTER\s+\d+'
+    
     # 检查前10行
     for i, line in enumerate(lines[:10]):
         line = line.strip()
         if not line:
             continue
             
-        # 尝试匹配标题模式（必须包含书名号）
+        # 尝试匹配标题模式
         if not title:
-            # 匹配包含书名号的行（《》、【】、『』）
+            # 1. 优先匹配包含书名号的行（《》、【】、『』）
             book_quote_pattern = r'[《》【】『』]'
             if re.search(book_quote_pattern, line):
                 # 提取书名号中的内容
-                # 匹配《》、【】、『』中的内容
                 title_match = re.search(r'[《【『]([^》】』]+)[》】』]', line)
                 if title_match:
                     title = title_match.group(1).strip()
                     # 如果同一行包含作者信息，也提取出来
-                    # 例如：《小说标题》作者：xxx
                     author_in_line = re.search(r'[》】』]\s*(?:作者|作者：|作者:|by|By)\s*[:：]?\s*(.+)', line, re.IGNORECASE)
                     if author_in_line and not author:
                         author = author_in_line.group(1).strip()
                     continue
+            
+            # 2. 如果没有书名号，但第一行较短（少于50字）且不包含章节关键字，可能是标题
+            if i == 0 and len(line) <= 50:
+                # 检查是否包含章节关键字
+                if not re.search(chapter_keyword_pattern, line, re.IGNORECASE):
+                    # 检查是否看起来像标题（不包含句号、问号、感叹号等，或者只有少量标点）
+                    # 排除明显是正文的情况（包含大量标点符号）
+                    punct_count = len(re.findall(r'[。！？，、：；]', line))
+                    if punct_count <= 2:  # 标点符号不超过2个，可能是标题
+                        title = line
+                        continue
         
         # 尝试匹配作者模式
         if not author:
@@ -218,6 +240,10 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
     # 组合所有模式
     pattern = '|'.join(f'({p})' for p in chapter_patterns)
     
+    # 书名和分隔符模式，用于过滤
+    book_title_pattern = r'^[《【『][^》】』]+[》】』]\s*$'  # 匹配单独一行的书名
+    separator_pattern = r'^[-=*_]{3,}\s*$'  # 匹配分隔符：---、===、***、___等
+    
     # 查找所有章节标题位置
     chapters = []
     lines = content.split('\n')
@@ -233,7 +259,8 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
             # 如果之前有章节，先保存
             if current_chapter_title is not None:
                 chapter_content = '\n'.join(current_chapter_content).strip()
-                if chapter_content:  # 只保存非空章节
+                # 过滤掉内容不足50字的章节
+                if chapter_content and len(chapter_content) >= 50:
                     chapters.append({
                         "title": current_chapter_title,
                         "content": chapter_content
@@ -243,6 +270,11 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
             current_chapter_title = clean_chapter_title(line_stripped)
             current_chapter_content = []
         else:
+            # 过滤掉书名和分隔符
+            if re.match(book_title_pattern, line_stripped) or re.match(separator_pattern, line_stripped):
+                # 如果是书名或分隔符，跳过这一行
+                continue
+            
             # 添加到当前章节内容
             if current_chapter_title is not None:
                 current_chapter_content.append(line)
@@ -255,7 +287,8 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
     # 保存最后一个章节
     if current_chapter_title is not None:
         chapter_content = '\n'.join(current_chapter_content).strip()
-        if chapter_content:
+        # 过滤掉内容不足50字的章节
+        if chapter_content and len(chapter_content) >= 50:
             chapters.append({
                 "title": current_chapter_title,
                 "content": chapter_content
@@ -264,10 +297,17 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
     # 如果没有找到任何章节，将整个内容作为第一章
     if not chapters:
         content_stripped = content.strip()
-        if content_stripped:
+        # 过滤掉书名和分隔符
+        filtered_lines = []
+        for line in content_stripped.split('\n'):
+            line_stripped = line.strip()
+            if not (re.match(book_title_pattern, line_stripped) or re.match(separator_pattern, line_stripped)):
+                filtered_lines.append(line)
+        filtered_content = '\n'.join(filtered_lines).strip()
+        if filtered_content and len(filtered_content) >= 20:
             chapters.append({
                 "title": clean_chapter_title("第一章"),
-                "content": content_stripped
+                "content": filtered_content
             })
     
     # 对所有章节标题进行最终清理（防止遗漏）
