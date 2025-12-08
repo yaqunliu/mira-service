@@ -149,9 +149,9 @@ def process_novel_upload_task(
                 chapter_title = chapter_data['title']
                 chapter_content = chapter_data['content']
                 
-                # 构建上传路径：环境/时间/user_uuid/【小说章节创作】/文件
-                # 文件路径规范: {env}/{time_str}/{user_uuid}/【小说章节创作】/novels/{novel_id}/chapter_{chapter_index:04d}.txt
-                put_key = f"{env}/{time_str}/{user_uuid}/【小说章节创作】/novels/{novel_id}/chapter_{index:04d}.txt"
+                # 构建上传路径：环境/时间/user_uuid/文件
+                # 文件路径规范: {env}/{time_str}/{user_uuid}/novels/{novel_id}/chapter_{chapter_index:04d}.txt
+                put_key = f"{env}/{time_str}/{user_uuid}/novels/{novel_id}/chapter_{index:04d}.txt"
                 
                 # 创建临时文件
                 tmp_file_path = None
