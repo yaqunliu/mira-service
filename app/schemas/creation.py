@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Optional, List
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from datetime import datetime
 
 
 class CreationStatus(str, Enum):
     """创作状态枚举"""
     CREATED = "created"  # 已创建
+    CHARACTER_ANALYZED = "character_analyzed"  # 角色已分析
     PLAYBOOK_GENERATED = "playbook_generated"  # 剧本已生成
     CHARACTER_GENERATED = "character_generated"  # 角色已生成
     SCENE_GENERATED = "scene_generated"  # 分镜已生成
@@ -30,6 +31,8 @@ class CreationCreate(CreationBase):
     creation_id: Optional[str] = None  # 可选的创作UUID，用于继续已存在但未成功的创作
     voice_id: Optional[str] = None  # Fish Audio 语音模型ID
     voice_speed: Optional[float] = Field(default=1.0, ge=0.0, le=10.0, description="语速设置，范围 0-10，默认 1.0")
+    narration_mode: Optional[str] = Field(default="original", description="解说词模式：original（原文模式）或 rewrite（爽文模式），默认 original")
+    extra_data: Optional[dict] = Field(default=None, description="扩展数据，存储创作配置（如模型选择等）")
 
 
 class CreationUpdate(BaseModel):
@@ -62,6 +65,22 @@ class Creation(CreationBase):
     novel: Optional["Novel"] = None
     chapter: Optional["Chapter"] = None
     owner: Optional["User"] = None
+    
+    @computed_field
+    @property
+    def novel_uuid(self) -> Optional[str]:
+        """从 novel 关系对象获取 UUID"""
+        if self.novel and hasattr(self.novel, 'uuid'):
+            return self.novel.uuid
+        return None
+    
+    @computed_field
+    @property
+    def chapter_uuid(self) -> Optional[str]:
+        """从 chapter 关系对象获取 UUID"""
+        if self.chapter and hasattr(self.chapter, 'uuid'):
+            return self.chapter.uuid
+        return None
     
     class Config:
         from_attributes = True

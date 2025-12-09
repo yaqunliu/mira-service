@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.services.points_service import PointsService
 from app.core.exceptions import InsufficientPointsError
 from app.utils.model_prices import ModelPrices
+from app.services.model_config_service import ModelConfigService
 import math
 
 
@@ -131,8 +132,19 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 if previous_shot_description:
                     logger.info(f"找到上一分镜上下文: {previous_shot.shot_id} (使用{'提示词' if previous_shot.image_prompt else '旁白'})")
         
+        # 从创作配置中获取模型配置
+        creation = shot.scene.creation
+        extra_data = creation.extra_data or {}
+        image_to_image_model = extra_data.get("image_to_image_model")
+        text_to_image_model = extra_data.get("text_to_image_model")
+        
         # 使用LLM生成英文提示词
-        ai_client = AIClient()
+        llm_model = extra_data.get("llm_model")
+        ai_client = AIClient(
+            llm_model_name=llm_model,
+            image_to_image_model=image_to_image_model,
+            text_to_image_model=text_to_image_model
+        )
         current_shot_description = shot.description or shot.image_prompt or ""
         
         if use_reference_images:
@@ -145,12 +157,12 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             )
             logger.info(f"生成的英文提示词长度: {len(english_prompt)}")
             
-            # 使用图生图API生成图片
+            # 使用图生图API生成图片（aspect_ratio 会从模型配置中自动获取）
             logger.info(f"开始为分镜 {shot_id} 进行图生图，参考图片数量: {len(character_images)}")
             temp_image_url = ai_client.generate_image_by_reference(
                 prompt=english_prompt,
                 reference_images=character_images,
-                aspect_ratio="16:9"
+                model=image_to_image_model  # 使用配置的模型
             )
         else:
             # 没有角色图片时，直接使用分镜的描述或提示词，使用文生图
@@ -169,6 +181,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             
             temp_image_url = ai_client.generate_image_by_prompt(
                 prompt=prompt_text,
+                model=text_to_image_model  # 使用配置的模型
             )
         
         # 从临时URL下载图像并上传到US3进行持久化

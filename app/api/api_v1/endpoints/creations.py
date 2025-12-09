@@ -14,6 +14,7 @@ from app.core.exceptions import BaseServiceException
 from app.utils.response import success_response
 from app.tasks.shot_task import generate_creation_shots_task, generate_shots_by_ids_task
 from app.tasks.full_generation_task import generate_full_video_task
+from app.tasks.creation_task import playbook_generation_task
 from app.core.logger import logger
 
 router = APIRouter()
@@ -80,6 +81,19 @@ async def create_creation_service(
         if creation:
             creation_id_int = creation.creation_id
 
+    # 验证 narration_mode 参数
+    narration_mode = creation_data.narration_mode or "original"
+    if narration_mode not in ["original", "rewrite"]:
+        raise HTTPException(
+            status_code=400,
+            detail="narration_mode 必须是 'original'（原文模式）或 'rewrite'（爽文模式）"
+        )
+    
+    # 构建 extra_data（包含 narration_mode 和模型配置）
+    extra_data = creation_data.extra_data or {}
+    if narration_mode:
+        extra_data["narration_mode"] = narration_mode
+    
     # 调用服务层处理业务逻辑
     try:
         creation_id = CreationService.create_creation_service(
@@ -88,6 +102,8 @@ async def create_creation_service(
             chapter_id=chapter_id_int,
             user_id=user_id,
             creation_id=creation_id_int,
+            narration_mode=narration_mode,
+            extra_data=extra_data,
         )
 
         # 获取创建的创作对象，返回UUID
@@ -297,7 +313,7 @@ async def get_creation_simple(
         if creation.owner_id != user.user_id:
             raise HTTPException(status_code=403, detail="无权限访问该创作项目")
         
-        # 只返回基本字段，不包含关联数据
+        # 返回基本字段，包含 novel_uuid 和 chapter_uuid
         response_data = {
             "creation_id": creation.creation_id,
             "uuid": creation.uuid,
@@ -305,6 +321,8 @@ async def get_creation_simple(
             "status": creation.status,
             "chapter_id": creation.chapter_id,
             "novel_id": creation.novel_id,
+            "novel_uuid": creation.novel.uuid if creation.novel else None,
+            "chapter_uuid": creation.chapter.uuid if creation.chapter else None,
             "owner_id": creation.owner_id,
             "voice_id": creation.voice_id,
             "voice_speed": creation.voice_speed,
@@ -343,8 +361,10 @@ async def get_creation(
         if creation.owner_id != user.user_id:
             raise HTTPException(status_code=403, detail="无权限访问该创作项目")
         # 将 SQLAlchemy 模型对象转换为 Pydantic schema 对象，然后转换为字典
+        # 排除 chapter 字段（不需要返回章节信息）
+        creation_data = CreationSchema.model_validate(creation).model_dump(exclude={'chapter'})
         return success_response(
-            data=CreationSchema.model_validate(creation).model_dump(),
+            data=creation_data,
             message="创作项目获取成功"
         )
     except BaseServiceException as e:
@@ -516,6 +536,114 @@ async def start_generate_shots(
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     except Exception as e:
         logger.error(f"启动分镜图片生成任务失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
+
+
+class GeneratePlaybookRequest(BaseModel):
+    narration_mode: str = "original"  # 解说词模式：original（原文模式）或 rewrite（爽文模式）
+
+
+@router.post("/{creation_uuid}/generate-playbook")
+async def start_generate_playbook(
+    creation_uuid: str,
+    request: GeneratePlaybookRequest = GeneratePlaybookRequest(),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    手动启动分镜拆分任务（第二步）
+    
+    该接口会启动一个 Celery 任务来异步生成分镜脚本。
+    前端可以通过返回的 task_id 轮询查询任务状态。
+    
+    Args:
+        creation_uuid: 创作项目UUID
+        request: 生成请求参数
+            - narration_mode: 解说词模式，可选值："original"（原文模式）或 "rewrite"（爽文模式），默认为 "original"
+    
+    Returns:
+        {
+            "task_id": "xxx",  # 任务ID，用于查询任务状态
+            "creation_uuid": "xxx",
+            "message": "分镜拆分任务已启动"
+        }
+    
+    前置条件：
+        - 创作状态必须是 CHARACTER_ANALYZED（角色已分析）
+        - 不能有正在执行的任务
+    
+    任务状态查询：
+        通过 GET /api/v1/tasks/{task_id} 查询任务状态
+    """
+    try:
+        # 验证创作项目是否存在
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+        if not creation:
+            raise HTTPException(status_code=404, detail="创作项目不存在")
+        
+        # 验证权限
+        if creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限操作该创作项目")
+        
+        # 验证状态：必须是 CHARACTER_ANALYZED
+        from app.schemas.creation import CreationStatus
+        if creation.status != CreationStatus.CHARACTER_ANALYZED:
+            raise HTTPException(
+                status_code=400,
+                detail=f"创作状态不正确，期望 {CreationStatus.CHARACTER_ANALYZED}，实际 {creation.status}。请先完成角色分析。"
+            )
+        
+        # 检查是否有正在执行的任务
+        if creation.current_task_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"创作项目正在执行其他任务，任务ID: {creation.current_task_id}"
+            )
+        
+        # 验证 narration_mode
+        if request.narration_mode not in ["original", "rewrite"]:
+            raise HTTPException(
+                status_code=400,
+                detail="narration_mode 必须是 'original'（原文模式）或 'rewrite'（爽文模式）"
+            )
+        
+        # 获取章节内容URL
+        from app.models.chapter import Chapter
+        chapter = db.query(Chapter).filter(Chapter.chapter_id == creation.chapter_id).first()
+        if not chapter or not chapter.content_url:
+            raise HTTPException(status_code=404, detail="章节内容不存在")
+        
+        # 启动分镜拆分任务
+        # 注意：当从 API 直接调用时，previous_result 参数传入 None（因为不是通过 link 调用）
+        task = playbook_generation_task.delay(
+            None,  # previous_result: 从 API 直接调用时传入 None
+            novel_id=creation.novel_id,
+            chapter_id=creation.chapter_id,
+            creation_id=creation.creation_id,
+            chapter_content_url=chapter.content_url,
+            narration_mode=request.narration_mode
+        )
+        
+        # 更新创作的当前任务ID
+        creation.current_task_id = task.id
+        db.commit()
+        
+        logger.info(f"创作 {creation_uuid} 分镜拆分任务已启动: task_id={task.id}, narration_mode={request.narration_mode}")
+        
+        return success_response(
+            data={
+                "task_id": task.id,
+                "creation_uuid": creation_uuid
+            },
+            message="分镜拆分任务已启动"
+        )
+        
+    except HTTPException:
+        raise
+    except BaseServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except Exception as e:
+        logger.error(f"启动分镜拆分任务失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
 
 

@@ -59,9 +59,16 @@ def _generate_single_character_image(character_id: int, visual_style: str) -> di
         )
         # logger.info(f"{character.name}生成图片提示词: {image_prompt}")
         
-        # 调用生图API
-        temp_image_url = AIClient().generate_image_by_prompt(
+        # 从创作配置中获取模型配置
+        creation = character.creation
+        extra_data = creation.extra_data or {} if creation else {}
+        text_to_image_model = extra_data.get("text_to_image_model")
+        
+        # 调用生图API（使用配置的模型，aspect_ratio 会从模型配置中自动获取）
+        ai_client = AIClient(text_to_image_model=text_to_image_model)
+        temp_image_url = ai_client.generate_image_by_prompt(
             prompt=image_prompt,
+            model=text_to_image_model
         )
         
         # 从临时URL下载图像并上传到US3进行持久化

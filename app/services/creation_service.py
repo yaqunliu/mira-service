@@ -4,10 +4,11 @@ from typing import Tuple, Optional, List
 from app.models.novel import Novel
 from app.models.chapter import Chapter
 from app.models.creation import Creation
+from app.models.character import Character
 from app.models.scene import Scene
 from app.models.shot import Shot
 from app.schemas.creation import CreationStatus
-from app.tasks.creation_task import process_creation_init_task
+from app.tasks.creation_task import character_analysis_task, playbook_generation_task
 from app.core.logger import logger
 from app.core.exceptions import NotFoundError, DatabaseError, PermissionError, AlreadyExistsError
 
@@ -21,7 +22,9 @@ class CreationService:
         novel_id: Optional[int],
         chapter_id: Optional[int],
         user_id: int,
-        creation_id: Optional[int] = None
+        creation_id: Optional[int] = None,
+        narration_mode: str = "original",
+        extra_data: dict = None
     ) -> int:
         """
         创建新的创作项目或继续已存在的创作
@@ -56,7 +59,7 @@ class CreationService:
             
             # 创建并启动 Celery 任务
             task_id = CreationService._create_and_start_task(
-                creation.creation_id, creation.novel_id, creation.chapter_id, chapter.content_url
+                creation.creation_id, creation.novel_id, creation.chapter_id, chapter.content_url, narration_mode
             )
             
             # 将 task_id 绑定到 creation 记录
@@ -86,14 +89,19 @@ class CreationService:
         # 检查是否已存在创作
         CreationService._check_existing_creation(db, novel_id, chapter_id)
         
+        # 构建 extra_data（如果提供了 narration_mode，添加到 extra_data 中）
+        creation_extra_data = extra_data or {}
+        if narration_mode:
+            creation_extra_data["narration_mode"] = narration_mode
+        
         # 创建创作记录
         creation = CreationService._create_creation_record(
-            db, novel, chapter, user_id
+            db, novel, chapter, user_id, creation_extra_data
         )
         
         # 创建并启动 Celery 任务
         task_id = CreationService._create_and_start_task(
-            creation.creation_id, novel_id, chapter_id, chapter.content_url
+            creation.creation_id, novel_id, chapter_id, chapter.content_url, narration_mode
         )
         
         # 将 task_id 绑定到 creation 记录
@@ -188,10 +196,8 @@ class CreationService:
         Returns:
             创作记录对象（包含预加载的关联数据）
         """
-        # 使用 selectinload 一次性加载所有关联数据，包括嵌套的关联
-        # 注意：scenes 和 shots 的排序已在模型 relationship 中通过 order_by 设置
+        # 使用 selectinload 加载关联数据
         creation = db.query(Creation).options(
-            selectinload(Creation.characters),
             selectinload(Creation.scenes).selectinload(Scene.shots).selectinload(Shot.characters),
             selectinload(Creation.novel),
             selectinload(Creation.chapter)
@@ -199,6 +205,25 @@ class CreationService:
             Creation.creation_id == creation_id,
             Creation.deleted_at.is_(None)
         ).first()
+        
+        if not creation:
+            return None
+        
+        # 根据 character_ids 字段查询角色（包括复用的角色）
+        if creation.character_ids and len(creation.character_ids) > 0:
+            characters = db.query(Character).filter(
+                Character.character_id.in_(creation.character_ids),
+                Character.deleted_at.is_(None)
+            ).all()
+            # 手动设置角色关系（因为不是通过 creation_id 关联的）
+            creation.characters = characters
+        else:
+            # 如果没有 character_ids，使用传统方式查询（向后兼容）
+            characters = db.query(Character).filter(
+                Character.creation_id == creation_id,
+                Character.deleted_at.is_(None)
+            ).all()
+            creation.characters = characters
         
         return creation
     
@@ -214,9 +239,8 @@ class CreationService:
         Returns:
             创作记录对象（包含预加载的关联数据）
         """
-        # 使用 selectinload 一次性加载所有关联数据，包括嵌套的关联
+        # 使用 selectinload 加载关联数据
         creation = db.query(Creation).options(
-            selectinload(Creation.characters),
             selectinload(Creation.scenes).selectinload(Scene.shots).selectinload(Shot.characters),
             selectinload(Creation.novel),
             selectinload(Creation.chapter)
@@ -224,6 +248,25 @@ class CreationService:
             Creation.uuid == creation_uuid,
             Creation.deleted_at.is_(None)
         ).first()
+        
+        if not creation:
+            return None
+        
+        # 根据 character_ids 字段查询角色（包括复用的角色）
+        if creation.character_ids and len(creation.character_ids) > 0:
+            characters = db.query(Character).filter(
+                Character.character_id.in_(creation.character_ids),
+                Character.deleted_at.is_(None)
+            ).all()
+            # 手动设置角色关系（因为不是通过 creation_id 关联的）
+            creation.characters = characters
+        else:
+            # 如果没有 character_ids，使用传统方式查询（向后兼容）
+            characters = db.query(Character).filter(
+                Character.creation_id == creation.creation_id,
+                Character.deleted_at.is_(None)
+            ).all()
+            creation.characters = characters
         
         return creation
 
@@ -259,17 +302,20 @@ class CreationService:
         creation_uuid: str
     ) -> Optional[Creation]:
         """
-        根据UUID获取创作记录（仅基本字段，不加载关联数据）
+        根据UUID获取创作记录（仅基本字段，但加载 novel 和 chapter 关系以获取 UUID）
         
         Args:
             db: 数据库会话
             creation_uuid: 创作UUID
             
         Returns:
-            创作记录对象（仅包含基本字段，不包含关联数据）
+            创作记录对象（包含基本字段和 novel、chapter 关系）
         """
-        # 只查询创作的基本字段，不加载任何关联数据（排除已删除的）
-        creation = db.query(Creation).filter(
+        # 查询创作的基本字段，并加载 novel 和 chapter 关系以获取 UUID（排除已删除的）
+        creation = db.query(Creation).options(
+            selectinload(Creation.novel),
+            selectinload(Creation.chapter)
+        ).filter(
             Creation.uuid == creation_uuid,
             Creation.deleted_at.is_(None)
         ).first()
@@ -454,10 +500,18 @@ class CreationService:
         db: Session,
         novel: Novel,
         chapter: Chapter,
-        user_id: int
+        user_id: int,
+        extra_data: dict = None
     ) -> Creation:
         """
         创建创作记录
+        
+        Args:
+            db: 数据库会话
+            novel: 小说对象
+            chapter: 章节对象
+            user_id: 用户ID
+            extra_data: 扩展数据（创作配置）
         
         Returns:
             创建的 Creation 对象
@@ -470,7 +524,8 @@ class CreationService:
             chapter_id=chapter.chapter_id,
             owner_id=user_id,
             title=title,
-            status=CreationStatus.CREATED
+            status=CreationStatus.CREATED,
+            extra_data=extra_data
         )
         db.add(creation)
         db.flush()  # 刷新以获取 creation_id，但不提交事务
@@ -482,28 +537,38 @@ class CreationService:
         creation_id: int,
         novel_id: int,
         chapter_id: int,
-        chapter_content_url: str
+        chapter_content_url: str,
+        narration_mode: str = "original"
     ) -> str:
         """
-        创建并启动 Celery 任务
+        创建并启动 Celery 任务（只启动角色分析任务，分镜拆分由前端手动触发）
+        
+        Args:
+            creation_id: 创作ID
+            novel_id: 小说ID
+            chapter_id: 章节ID
+            chapter_content_url: 章节内容URL
+            narration_mode: 解说词模式，可选值："original"（原文模式）或 "rewrite"（爽文模式），默认为 "original"
+                          注意：此参数在当前方法中不再使用，保留用于向后兼容
         
         Returns:
-            任务ID字符串
+            任务ID字符串（角色分析任务的ID）
             
         Raises:
             DatabaseError: 当任务创建失败时
         """
         try:
-            # 创建 Celery 任务
-            logger.info(f"准备创建创作初始化任务: novel_id={novel_id}, chapter_id={chapter_id}, creation_id={creation_id}")
+            # 只启动角色分析任务，不自动链接分镜拆分任务
+            # 角色分析完成后，前端可以查看角色，然后手动触发分镜拆分
+            logger.info(f"准备创建角色分析任务: novel_id={novel_id}, chapter_id={chapter_id}, creation_id={creation_id}")
             
-            # 使用 apply_async 可以更好地控制任务发送
-            task = process_creation_init_task.apply_async(
+            task = character_analysis_task.apply_async(
                 args=(novel_id, chapter_id, creation_id, chapter_content_url),
                 countdown=0  # 立即执行
             )
             task_id = task.id
-            logger.info(f"已创建创作初始化任务: task_id={task_id}, creation_id={creation_id}, task_state={task.state}")
+            logger.info(f"已创建角色分析任务: task_id={task_id}, creation_id={creation_id}, task_state={task.state}")
+            logger.info(f"角色分析完成后，前端可以查看角色并手动触发分镜拆分任务")
             
             # 验证任务是否成功发送到队列
             if not task_id:
@@ -512,5 +577,5 @@ class CreationService:
             return task_id
             
         except Exception as e:
-            logger.error(f"创建创作初始化任务失败: {str(e)}", exc_info=True)
+            logger.error(f"创建角色分析任务失败: {str(e)}", exc_info=True)
             raise DatabaseError(detail=f"创作初始化失败: {str(e)}") from e

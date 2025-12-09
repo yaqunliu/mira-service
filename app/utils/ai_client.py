@@ -19,6 +19,7 @@ from app.core.exceptions import (
     AIRetryExhaustedError
 )
 from app.utils.points_deduction import deduct_points_for_llm
+from app.services.model_config_service import ModelConfigService
 from app.db.session import SessionLocal
 import openai
 
@@ -140,7 +141,7 @@ class AIClient:
             )
 
     def _do_chat_completion(
-        self, messages: List[Dict[str, str]], model: str, **kwargs
+        self, messages: List[Dict[str, str]], model: str, max_tokens: int = None, **kwargs
     ) -> Dict[str, Any]:
         """
         执行 LLM 调用的内部方法（不包含重试逻辑）
@@ -148,15 +149,28 @@ class AIClient:
         Args:
             messages: 消息列表
             model: 模型名称
+            max_tokens: 最大token数，如果为None则从模型配置中获取
             **kwargs: 其他参数
             
         Returns:
             AI 响应内容
         """
+        # 如果没有指定 max_tokens，尝试从模型配置中获取
+        if max_tokens is None:
+            try:
+                model_config = ModelConfigService.get_model_config(model, "llm")
+                if model_config and "max_tokens" in model_config:
+                    max_tokens = model_config["max_tokens"]
+                else:
+                    max_tokens = 12288  # 默认值
+            except Exception as e:
+                logger.warning(f"获取模型配置失败，使用默认 max_tokens: {e}")
+                max_tokens = 12288  # 默认值
+        
         response = self.ai_client.chat.completions.create(
             model=model, 
             messages=messages, 
-            max_tokens=12288,
+            max_tokens=max_tokens,
             **kwargs
         )
         
@@ -319,6 +333,8 @@ class AIClient:
     ) -> Dict[str, Any]:
         """
         根据章节内容生成剧本（Playbook）
+        
+        注意：此方法已废弃，请使用 gen_character_analysis 和 gen_playbook_by_characters 替代
 
         Args:
             prompt: 提示词
@@ -367,6 +383,134 @@ class AIClient:
             logger.error(f"生成剧本失败: {e}")
             raise
     
+    def gen_character_analysis(
+        self,
+        prompt: str,
+        chapter_content: str,
+        historical_characters: Dict[str, Any] = None,
+        model: str = None,
+        user_id: int = None,
+        creation_id: int = None,
+        novel_id: int = None
+    ) -> Dict[str, Any]:
+        """
+        根据章节内容进行角色分析
+
+        Args:
+            prompt: 角色分析提示词
+            chapter_content: 章节内容
+            historical_characters: 历史角色库（可选），格式：{"角色名": {...特征...}}
+            model: 模型名称，默认使用初始化时的模型
+            user_id: 用户ID（用于积分扣除，可选）
+            creation_id: 创作ID（用于积分扣除，可选）
+            novel_id: 小说ID（用于积分扣除，可选）
+
+        Returns:
+            解析后的 JSON 数据，包含章节信息和人物特征库
+        """
+        # 构建历史角色库的文本描述
+        historical_characters_text = ""
+        if historical_characters:
+            historical_characters_text = "\n\n以下是之前已存在的角色特征库（如果当前章节中出现同名角色，请优先复用这些特征）：\n"
+            historical_characters_text += json.dumps(historical_characters, ensure_ascii=False, indent=2)
+        
+        messages = [
+            {
+                "role": "user",
+                "content": f"{prompt}{historical_characters_text}\n\n下面是章节内容：\n{chapter_content}",
+            }
+        ]
+
+        try:
+            response = self.chat_completion(
+                messages=messages,
+                model=model,
+                response_format={"type": "json_object"},
+                user_id=user_id,
+                creation_id=creation_id,
+                novel_id=novel_id
+            )
+            ai_content = response.get("content", "")
+            logger.info(f"角色分析 AI 返回内容: {ai_content}")
+
+            if not ai_content:
+                raise ValueError("AI 返回内容为空")
+            
+            # 将 AI 返回内容写入文件以便分析
+            self._save_ai_response(ai_content, model=model or self.llm_model_name, file_type="json")
+            
+            parsed_data = self._parse_json_response(ai_content)
+            logger.info(f"角色分析完成，识别到 {len(parsed_data.get('人物特征库', {}))} 个角色")
+            return parsed_data
+
+        except Exception as e:
+            logger.error(f"角色分析失败: {e}")
+            raise
+    
+    def gen_playbook_by_characters(
+        self,
+        prompt: str,
+        chapter_content: str,
+        characters_data: Dict[str, Any],
+        model: str = None,
+        user_id: int = None,
+        creation_id: int = None,
+        novel_id: int = None
+    ) -> Dict[str, Any]:
+        """
+        根据章节内容和角色特征库生成分镜脚本
+
+        Args:
+            prompt: 分镜拆分提示词
+            chapter_content: 章节内容
+            characters_data: 人物特征库，格式：{"角色名": {...特征...}}
+            model: 模型名称，默认使用初始化时的模型
+            user_id: 用户ID（用于积分扣除，可选）
+            creation_id: 创作ID（用于积分扣除，可选）
+            novel_id: 小说ID（用于积分扣除，可选）
+
+        Returns:
+            解析后的 JSON 数据，包含场景拆解信息
+        """
+        # 构建人物特征库的文本描述
+        characters_text = "\n\n以下是人物特征库（生成图片提示词时必须从该库中提取角色信息）：\n"
+        characters_text += json.dumps(characters_data, ensure_ascii=False, indent=2)
+        
+        messages = [
+            {
+                "role": "user",
+                "content": f"{prompt}{characters_text}\n\n下面是章节内容：\n{chapter_content}",
+            }
+        ]
+
+        try:
+            response = self.chat_completion(
+                messages=messages,
+                model=model,
+                response_format={"type": "json_object"},
+                user_id=user_id,
+                creation_id=creation_id,
+                novel_id=novel_id
+            )
+            ai_content = response.get("content", "")
+            logger.info(f"分镜拆分 AI 返回内容: {ai_content}")
+
+            if not ai_content:
+                raise ValueError("AI 返回内容为空")
+            
+            # 将 AI 返回内容写入文件以便分析
+            self._save_ai_response(ai_content, model=model or self.llm_model_name, file_type="json")
+            
+            parsed_data = self._parse_json_response(ai_content)
+            scenes_count = len(parsed_data.get('场景拆解', []))
+            total_shots = sum(len(scene.get('分镜列表', [])) for scene in parsed_data.get('场景拆解', []))
+            logger.info(f"分镜拆分完成，生成 {scenes_count} 个场景，{total_shots} 个分镜")
+            return parsed_data
+
+        except Exception as e:
+            logger.error(f"分镜拆分失败: {e}")
+            raise
+    
     def _do_generate_image_by_prompt(
         self, prompt: str, model: str, aspectRatio: str, guidance_scale: float = None
     ) -> str:
@@ -389,14 +533,14 @@ class AIClient:
         image_url = response.data[0].url
         return image_url
     
-    def generate_image_by_prompt(self, prompt: str, model: str = None, aspectRatio: str = "1024x576") -> str:
+    def generate_image_by_prompt(self, prompt: str, model: str = None, aspectRatio: str = None) -> str:
         """
         根据提示词生成图片（文生图，带重试机制）
         
         Args:
             prompt: 提示词
             model: 模型名称，默认使用初始化时的模型
-            aspectRatio: 图片尺寸
+            aspectRatio: 图片尺寸，如果为None则从模型配置中获取
             
         Returns:
             生成的图片URL
@@ -408,7 +552,20 @@ class AIClient:
         """
         # 文生图使用 text_to_image_model
         model = model or self.text_to_image_model
-        logger.info(f"生成图片开始（文生图），模型: {model}, 提示词长度: {len(prompt)}")
+        
+        # 如果没有指定 aspectRatio，从模型配置中获取
+        if aspectRatio is None:
+            try:
+                model_config = ModelConfigService.get_model_config(model, "text_to_image")
+                if model_config and "aspect_ratio" in model_config:
+                    aspectRatio = model_config["aspect_ratio"]
+                else:
+                    aspectRatio = "1024x576"  # 默认值
+            except Exception as e:
+                logger.warning(f"获取模型配置失败，使用默认 aspectRatio: {e}")
+                aspectRatio = "1024x576"  # 默认值
+        
+        logger.info(f"生成图片开始（文生图），模型: {model}, aspectRatio: {aspectRatio}, 提示词长度: {len(prompt)}")
         logger.info(f"【文生图提示词】: {prompt}")
         
         last_error = None
