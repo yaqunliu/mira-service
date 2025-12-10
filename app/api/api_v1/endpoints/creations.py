@@ -169,10 +169,98 @@ async def get_creations_service(
 
         # 转换为响应格式
         total_pages = (total + page_size - 1) // page_size if total > 0 else 0
-        items = [
-            CreationSchema.model_validate(creation).model_dump()
-            for creation in creations
-        ]
+        # 手动序列化，完全绕过 Pydantic 对关联字段的访问，避免触发 novel.chapters 查询
+        items = []
+        for creation in creations:
+            novel = creation.novel
+            chapter = creation.chapter
+            scenes = creation.scenes or []
+
+            creation_data = {
+                "creation_id": creation.creation_id,
+                "uuid": creation.uuid,
+                "title": creation.title,
+                "status": creation.status,
+                "video_url": creation.video_url,
+                "audio_url": creation.audio_url,
+                "subtitle_url": creation.subtitle_url,
+                "voice_id": creation.voice_id,
+                "voice_speed": creation.voice_speed,
+                "current_task_id": creation.current_task_id,
+                "created_at": creation.created_at,
+                "updated_at": creation.updated_at,
+                "owner_id": creation.owner_id,
+                "novel_id": creation.novel_id,
+                "chapter_id": creation.chapter_id,
+                "extra_data": creation.extra_data,
+                "character_ids": creation.character_ids,
+            }
+
+            if novel:
+                creation_data["novel"] = {
+                    "novel_id": novel.novel_id,
+                    "uuid": novel.uuid,
+                    "title": novel.title,
+                    "author": novel.author,
+                    "chapter_count": novel.chapter_count,
+                    "status": novel.status,
+                    "owner_id": novel.owner_id,
+                    "created_at": novel.created_at,
+                    "updated_at": novel.updated_at,
+                }
+                creation_data["novel_uuid"] = novel.uuid
+
+            if chapter:
+                creation_data["chapter"] = {
+                    "chapter_id": chapter.chapter_id,
+                    "uuid": chapter.uuid,
+                    "title": chapter.title,
+                    "content_url": chapter.content_url,
+                    "chapter_number": chapter.chapter_number,
+                    "word_count": chapter.word_count,
+                    "preview": chapter.preview,
+                    "novel_id": chapter.novel_id,
+                    "created_at": chapter.created_at,
+                }
+                creation_data["chapter_uuid"] = chapter.uuid
+
+            if scenes:
+                creation_data["scenes"] = []
+                for scene in scenes:
+                    shots = scene.shots or []
+                    scene_data = {
+                        "scene_id": scene.scene_id,
+                        "uuid": scene.uuid,
+                        "title": scene.title,
+                        "duration": scene.duration,
+                        "time_setting": scene.time_setting,
+                        "location": scene.location,
+                        "space_type": scene.space_type,
+                        "atmosphere": scene.atmosphere,
+                        "created_at": scene.created_at,
+                        "updated_at": scene.updated_at,
+                        "shots": [],
+                    }
+                    for shot in shots:
+                        scene_data["shots"].append({
+                            "shot_id": shot.shot_id,
+                            "uuid": shot.uuid,
+                            "title": shot.title,
+                            "shot_number": shot.shot_number,
+                            "description": shot.description,
+                            "narration": shot.narration,
+                            "image_prompt": shot.image_prompt,
+                            "image_url": shot.image_url,
+                            "audio_url": shot.audio_url,
+                            "audio_duration": shot.audio_duration,
+                            "scene_id": shot.scene_id,
+                            "created_at": shot.created_at,
+                            "updated_at": shot.updated_at,
+                            "characters": [],  # 列表接口暂不返回角色，避免额外查询
+                        })
+                    creation_data["scenes"].append(scene_data)
+
+            items.append(creation_data)
 
         return success_response(
             data={
@@ -361,8 +449,10 @@ async def get_creation(
         if creation.owner_id != user.user_id:
             raise HTTPException(status_code=403, detail="无权限访问该创作项目")
         # 将 SQLAlchemy 模型对象转换为 Pydantic schema 对象，然后转换为字典
-        # 排除 chapter 字段（不需要返回章节信息）
-        creation_data = CreationSchema.model_validate(creation).model_dump(exclude={'chapter'})
+        # 排除 chapter 和 novel.chapters，防止返回章节信息
+        creation_data = CreationSchema.model_validate(creation).model_dump(
+            exclude={"chapter": True, "novel": {"chapters": True}}
+        )
         return success_response(
             data=creation_data,
             message="创作项目获取成功"
@@ -585,12 +675,17 @@ async def start_generate_playbook(
         if creation.owner_id != user.user_id:
             raise HTTPException(status_code=403, detail="无权限操作该创作项目")
         
-        # 验证状态：必须是 CHARACTER_ANALYZED
+        # 验证状态：必须完成角色分析（包括已生成角色图片或已拆分分镜的状态）
         from app.schemas.creation import CreationStatus
-        if creation.status != CreationStatus.CHARACTER_ANALYZED:
+        allowed_statuses = [
+            CreationStatus.CHARACTER_ANALYZED,
+            CreationStatus.CHARACTER_GENERATED,
+            CreationStatus.PLAYBOOK_GENERATED,
+        ]
+        if creation.status not in allowed_statuses:
             raise HTTPException(
                 status_code=400,
-                detail=f"创作状态不正确，期望 {CreationStatus.CHARACTER_ANALYZED}，实际 {creation.status}。请先完成角色分析。"
+                detail=f"创作状态不正确，当前状态 {creation.status}。需要先完成角色分析。"
             )
         
         # 检查是否有正在执行的任务

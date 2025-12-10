@@ -20,17 +20,18 @@ import tempfile
 import os
 
 
-def _generate_single_character_image(character_id: int, visual_style: str) -> dict:
+def _generate_single_character_image(character_id: int, visual_style: str, force_regenerate: bool = True) -> dict:
     """
     生成单个角色的图片（线程安全函数）
-    
+
     Args:
         character_id: 角色ID
         visual_style: 视觉风格
-        
+        force_regenerate: 是否强制重新生成（True: 强制生成，False: 如果已有图片则跳过）
+
     Returns:
         包含角色ID和处理结果的字典
-        
+
     Raises:
         NotFoundError: 角色不存在
         Exception: 生图失败
@@ -44,6 +45,17 @@ def _generate_single_character_image(character_id: int, visual_style: str) -> di
         )
         if not character:
             raise NotFoundError(detail=f"角色不存在: character_id={character_id}")
+
+        # 如果不强制重新生成且已有图片，则跳过
+        if not force_regenerate and character.image_url:
+            logger.info(f"角色 {character.name}(ID: {character_id}) 已有图片，跳过生成")
+            return {
+                "character_id": character_id,
+                "character_name": character.name,
+                "success": True,
+                "skipped": True,
+                "image_url": character.image_url
+            }
         
         # 生成提示词
         system_prompt = read_prompt_file("character.md")
@@ -140,11 +152,11 @@ def _generate_single_character_image(character_id: int, visual_style: str) -> di
         user_id = None
         creation_id = character.creation_id
         novel_id = character.novel_id
-        
+
         if creation_id:
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
             if creation:
-                creation.status = CreationStatus.CHARACTER_GENERATED
+                # 不在这里更新状态，状态更新移到主任务函数中，所有角色生成完成后统一更新
                 user_id = creation.owner_id
                 novel_id = creation.novel_id or novel_id
         elif novel_id:
@@ -185,6 +197,7 @@ def _generate_single_character_image(character_id: int, visual_style: str) -> di
             "character_id": character_id,
             "character_name": character.name,
             "success": True,
+            "skipped": False,
             "image_url": image_url
         }
     except Exception as e:
@@ -200,14 +213,24 @@ def _generate_single_character_image(character_id: int, visual_style: str) -> di
 
 
 @celery_app.task(bind=True, name="generate_character_image_task")
-def generate_character_image_task(self, character_ids: List[int], visual_style: str):
+def generate_character_image_task(
+    self,
+    character_ids: List[int],
+    visual_style: str,
+    creation_uuid: str,
+    force_regenerate: bool = False,
+    update_creation_task: bool = True
+):
     """
     并发生成多个角色的图片
-    
+
     Args:
         character_ids: 角色ID列表
         visual_style: 视觉风格
-        
+        creation_uuid: 创作UUID，用于获取creation并更新current_task_id
+        force_regenerate: 是否强制重新生成（False: 跳过已有图片的角色，True: 强制生成所有）
+        update_creation_task: 是否更新creation的current_task_id（False: 不更新，避免触发页面跳转）
+
     Returns:
         包含所有角色处理结果的字典
     """
@@ -218,7 +241,30 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
             "message": "角色ID列表为空",
             "results": []
         }
-    
+
+    # 通过 creation_uuid 获取 creation
+    db = SessionLocal()
+    try:
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+        if not creation:
+            error_msg = f"创作不存在: creation_uuid={creation_uuid}"
+            logger.error(error_msg)
+            raise NotFoundError(detail=error_msg)
+
+        # 只有在 update_creation_task=True 时才更新 current_task_id
+        if update_creation_task:
+            creation.current_task_id = self.request.id
+            db.commit()
+            logger.info(f"创作 {creation.creation_id} 的 current_task_id 已更新为 {self.request.id}")
+        else:
+            logger.info(f"跳过更新创作 {creation.creation_id} 的 current_task_id（单个角色重新生成）")
+    except Exception as e:
+        logger.opt(exception=True).error("获取创作信息失败: {}", str(e))
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
     total_count = len(character_ids)
     logger.info(f"开始并发生成 {total_count} 个角色的图片: {character_ids}")
     
@@ -237,6 +283,7 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
     results = []
     success_count = 0
     failed_count = 0
+    skipped_count = 0
     
     try:
         ##X## Debug 模式下抛出测试异常 - 测试角色图片生成错误
@@ -248,7 +295,7 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # 提交所有任务
             future_to_character_id = {
-                executor.submit(_generate_single_character_image, cid, visual_style): cid
+                executor.submit(_generate_single_character_image, cid, visual_style, force_regenerate): cid
                 for cid in character_ids
             }
             
@@ -258,10 +305,14 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
                 try:
                     result = future.result()
                     results.append(result)
-                    
+
                     if result["success"]:
-                        success_count += 1
-                        logger.info(f"角色 {character_id} 图片生成成功")
+                        if result.get("skipped"):
+                            skipped_count += 1
+                            logger.info(f"角色 {character_id} 已有图片，跳过生成")
+                        else:
+                            success_count += 1
+                            logger.info(f"角色 {character_id} 图片生成成功")
                     else:
                         failed_count += 1
                         logger.warning(f"角色 {character_id} 图片生成失败: {result.get('error')}")
@@ -273,9 +324,10 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
                             "task_type": TaskType.CHARACTER_IMAGE_GENERATION,
                             "character_ids": character_ids,
                             "total": total_count,
-                            "completed": success_count + failed_count,
+                            "completed": success_count + failed_count + skipped_count,
                             "success": success_count,
                             "failed": failed_count,
+                            "skipped": skipped_count,
                         },
                     )
                 except Exception as e:
@@ -288,21 +340,69 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
                         "error": error_msg
                     })
         
+        # 所有角色处理完成后，根据 update_creation_task 决定是否更新 creation 状态和清除 current_task_id
+        db = SessionLocal()
+        try:
+            creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+
+            if creation:
+                # 只有 update_creation_task=True 时才更新状态和清除 current_task_id
+                if update_creation_task:
+                    # 只有状态是 CHARACTER_ANALYZED 时才更新状态
+                    if creation.status == CreationStatus.CHARACTER_ANALYZED:
+                        creation.status = CreationStatus.CHARACTER_GENERATED
+                        logger.info(f"创作 {creation.creation_id} 状态已更新为 CHARACTER_GENERATED")
+                    else:
+                        logger.info(f"创作 {creation.creation_id} 当前状态为 {creation.status}，不更新状态")
+
+                    # 清除 current_task_id
+                    creation.current_task_id = None
+                    logger.info(f"创作 {creation.creation_id} 的 current_task_id 已清除")
+                else:
+                    logger.info(f"update_creation_task=False，跳过更新创作状态和清除 current_task_id（单个角色重新生成）")
+
+                db.commit()
+            else:
+                logger.warning(f"未找到创作: creation_uuid={creation_uuid}")
+        except Exception as e:
+            logger.opt(exception=True).error("更新创作状态失败: {}", str(e))
+            db.rollback()
+        finally:
+            db.close()
+
         # 任务完成
         logger.info(
             f"角色图片生成任务完成: 总数={total_count}, "
-            f"成功={success_count}, 失败={failed_count}"
+            f"成功={success_count}, 跳过={skipped_count}, 失败={failed_count}"
         )
-        
+
         return {
             "success": failed_count == 0,  # 全部成功才算成功
             "total": total_count,
             "success_count": success_count,
             "failed_count": failed_count,
+            "skipped_count": skipped_count,
             "results": results
         }
         
     except BaseServiceException as e:
+        # 只有 update_creation_task=True 时才清除 current_task_id
+        if update_creation_task:
+            db = SessionLocal()
+            try:
+                creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+                if creation:
+                    creation.current_task_id = None
+                    db.commit()
+                    logger.info(f"任务失败，创作 {creation.creation_id} 的 current_task_id 已清除")
+            except Exception as clear_error:
+                logger.opt(exception=True).error("清除 current_task_id 失败: {}", str(clear_error))
+                db.rollback()
+            finally:
+                db.close()
+        else:
+            logger.info(f"update_creation_task=False，跳过清除 current_task_id（单个角色重新生成失败）")
+
         # BaseServiceException 直接重新抛出，不进行包装
         error_msg = str(e)
         exc_type = type(e).__name__
@@ -319,6 +419,23 @@ def generate_character_image_task(self, character_ids: List[int], visual_style: 
         )
         raise
     except Exception as e:
+        # 只有 update_creation_task=True 时才清除 current_task_id
+        if update_creation_task:
+            db = SessionLocal()
+            try:
+                creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+                if creation:
+                    creation.current_task_id = None
+                    db.commit()
+                    logger.info(f"任务失败，创作 {creation.creation_id} 的 current_task_id 已清除")
+            except Exception as clear_error:
+                logger.opt(exception=True).error("清除 current_task_id 失败: {}", str(clear_error))
+                db.rollback()
+            finally:
+                db.close()
+        else:
+            logger.info(f"update_creation_task=False，跳过清除 current_task_id（单个角色重新生成失败）")
+
         error_msg = f"角色图片生成任务失败: {str(e)}"
         logger.opt(exception=True).error("{}", error_msg)
         exc_type = type(e).__name__

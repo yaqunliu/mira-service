@@ -39,7 +39,7 @@ def character_analysis_task(self, novel_id: int, chapter_id: int, creation_id: i
         self.update_state(
             state='PROGRESS',
             meta={
-                'task_type': TaskType.CREATION_INIT,
+                'task_type': TaskType.CHARACTER_ANALYSIS,
                 'novel_id': novel_id,
                 'chapter_id': chapter_id,
                 'creation_id': creation_id,
@@ -187,7 +187,7 @@ def character_analysis_task(self, novel_id: int, chapter_id: int, creation_id: i
             "characters_data": characters_data,
             "characters_count": len(character_map),
             "success": True,
-            "task_type": TaskType.CREATION_INIT,
+            "task_type": TaskType.CHARACTER_ANALYSIS,
             "novel_id": novel_id,
             "chapter_id": chapter_id,
             "creation_id": creation_id,
@@ -270,7 +270,7 @@ def playbook_generation_task(self, previous_result, novel_id: int, chapter_id: i
         self.update_state(
             state='PROGRESS',
             meta={
-                'task_type': TaskType.CREATION_INIT,
+                'task_type': TaskType.SCENE_DESCRIPTION_GENERATION,
                 'novel_id': novel_id,
                 'chapter_id': chapter_id,
                 'creation_id': creation_id,
@@ -286,9 +286,14 @@ def playbook_generation_task(self, previous_result, novel_id: int, chapter_id: i
         if not creation:
             raise Exception(f"创作不存在: creation_id={creation_id}")
         
-        # 验证状态：必须是 CHARACTER_ANALYZED
-        if creation.status != CreationStatus.CHARACTER_ANALYZED:
-            raise Exception(f"创作状态不正确，期望 {CreationStatus.CHARACTER_ANALYZED}，实际 {creation.status}")
+        # 验证状态：必须完成角色分析（包括已生成角色图片或已拆分分镜的状态）
+        allowed_statuses = [
+            CreationStatus.CHARACTER_ANALYZED,
+            CreationStatus.CHARACTER_GENERATED,
+            CreationStatus.PLAYBOOK_GENERATED,
+        ]
+        if creation.status not in allowed_statuses:
+            raise Exception(f"创作状态不正确，当前状态 {creation.status}。需要先完成角色分析。")
         
         # 创建临时文件
         temp_fd, temp_file_path = tempfile.mkstemp(suffix='.txt')
@@ -387,7 +392,11 @@ def playbook_generation_task(self, previous_result, novel_id: int, chapter_id: i
         
         logger.info(f"获取到 {len(characters_data)} 个角色用于分镜拆分")
         
-        ai_client = AIClient()
+        # 使用创作配置的文生文模型进行分镜拆分
+        extra_data = creation.extra_data or {}
+        llm_model_name = extra_data.get("llm_model") or settings.LLM_MODEL_NAME
+        ai_client = AIClient(llm_model_name=llm_model_name)
+        logger.info(f"分镜拆分使用 LLM 模型: {llm_model_name}")
         
         # 根据模式选择不同的 prompt
         if narration_mode == "rewrite":
@@ -471,7 +480,7 @@ def playbook_generation_task(self, previous_result, novel_id: int, chapter_id: i
         return {
             "playbook": playbook,
             "success": True,
-            "task_type": TaskType.CREATION_INIT,
+            "task_type": TaskType.SCENE_DESCRIPTION_GENERATION,
             "novel_id": novel_id,
             "chapter_id": chapter_id,
             "creation_id": creation_id,

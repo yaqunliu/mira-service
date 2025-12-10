@@ -149,6 +149,13 @@ class CreationService:
             Creation.owner_id == user_id,
             Creation.deleted_at.is_(None)
         )
+
+        # 预加载必要的关联，避免 N+1，同时不加载 novel.chapters
+        query = query.options(
+            selectinload(Creation.novel),
+            selectinload(Creation.chapter),
+            selectinload(Creation.scenes).selectinload(Scene.shots),
+        )
         
         # 状态过滤
         if status_filter:

@@ -39,6 +39,16 @@ class CharacterGenerateImagesRequest(BaseModel):
     """生成角色图片请求"""
     character_ids: List[str]  # UUID列表
     visual_style: str
+    creation_uuid: str  # 创作UUID，用于在Celery任务中获取creation
+    force_regenerate: bool = False  # 是否强制重新生成（False: 跳过已有图片的角色，True: 强制生成所有）
+
+
+class CharacterRegenerateImageRequest(BaseModel):
+    """单个角色重新生成图片请求"""
+    character_uuid: str
+    visual_style: str
+    creation_uuid: str
+
 
 class Character(CharacterBase):
     character_id: int
