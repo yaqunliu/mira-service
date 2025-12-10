@@ -175,6 +175,8 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
                     user_id=user_id,
                     image_count=1,
                     model_name=settings.IMAGE_MODEL_TEXT_TO_IMAGE or settings.IMAGE_MODEL_NAME or "black-forest-labs/flux-kontext-pro/multi",
+                    reference_image_count=0,
+                    image_size="2K",
                     creation_id=creation_id,
                     novel_id=novel_id,
                     description=f"生成角色图片（{character.name}）",

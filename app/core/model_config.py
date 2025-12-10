@@ -110,7 +110,7 @@ class ModelConfigFactory:
             model_type="text_to_image",
             display_name="通义千问图像生成",
             description="阿里云通义千问图像生成模型",
-            config={"aspect_ratio": "1024x576", "languages": ["zh"]},
+            config={"aspect_ratio": "1024x576", "languages": ["zh"], "max_words": 150},
             is_enabled=True,
             is_default=True,
             sort_order=1,
@@ -130,14 +130,24 @@ class ModelConfigFactory:
     # 图生图模型配置
     _IMAGE_TO_IMAGE_MODELS = [
         ModelConfig(
+            model_name="gemini-3-pro-image-preview",
+            model_type="image_to_image",
+            display_name="Nano Banana2 (图生图)",
+            description="Gemini 3 Pro Image (Nano Banana2) 图生图模型，支持中文提示词",
+            config={"aspect_ratio": "16:9", "image_size": "2K", "languages": ["zh"], "max_words": 300},
+            is_enabled=True,
+            is_default=True,
+            sort_order=1,
+        ),
+        ModelConfig(
             model_name="black-forest-labs/flux-kontext-pro/multi",
             model_type="image_to_image",
             display_name="Flux Kontext Pro (图生图)",
             description="Black Forest Labs Flux Kontext Pro 图生图模型",
-            config={"aspect_ratio": "16:9", "guidance_scale": 3.5, "languages": ["en"]},
+            config={"aspect_ratio": "16:9", "guidance_scale": 3.5, "languages": ["en"], "max_words": 150},
             is_enabled=True,
-            is_default=True,
-            sort_order=1,
+            is_default=False,
+            sort_order=2,
         ),
     ]
     

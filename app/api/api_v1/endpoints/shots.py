@@ -14,7 +14,8 @@ from app.schemas.shot import (
     ShotUpdate,
     ShotResponse,
     ShotListResponse,
-    ShotRegenerateRequest
+    ShotRegenerateRequest,
+    ShotCharactersUpdateRequest,
 )
 from app.utils.response import success_response
 from app.tasks.shot_task import generate_single_shot_image_task
@@ -23,6 +24,7 @@ from app.services.points_service import PointsService
 from app.utils.model_prices import ModelPrices
 from app.core.config import settings
 from app.core.exceptions import InsufficientPointsError
+from app.services.model_config_service import ModelConfigService
 
 router = APIRouter()
 
@@ -240,6 +242,41 @@ async def update_shot(
     )
 
 
+@router.put("/{shot_uuid}/characters")
+async def update_shot_characters(
+    shot_uuid: str,
+    payload: ShotCharactersUpdateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    仅更新分镜关联的角色（用于前端弹窗编辑）
+    """
+    shot = db.query(Shot).options(
+        selectinload(Shot.characters),
+        selectinload(Shot.scene).selectinload(Scene.creation)
+    ).filter(Shot.uuid == shot_uuid).first()
+    
+    if not shot:
+        raise HTTPException(status_code=404, detail="分镜不存在")
+    
+    if shot.scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限修改该分镜")
+    
+    characters = db.query(Character).filter(
+        Character.character_id.in_(payload.character_ids)
+    ).all() if payload.character_ids else []
+    shot.characters = characters
+    
+    db.commit()
+    db.refresh(shot)
+    
+    shot_response = ShotResponse.from_db_model(shot)
+    return success_response(
+        data=shot_response.model_dump(by_alias=True),
+        message="分镜角色更新成功"
+    )
+
 @router.post("/{shot_uuid}/generate-image")
 async def generate_shot_image(
     shot_uuid: str,
@@ -267,7 +304,8 @@ async def generate_shot_image(
     """
     # 获取分镜
     shot = db.query(Shot).options(
-        selectinload(Shot.scene).selectinload(Scene.creation)
+        selectinload(Shot.scene).selectinload(Scene.creation),
+        selectinload(Shot.characters)
     ).filter(Shot.uuid == shot_uuid).first()
     
     if not shot:
@@ -284,9 +322,34 @@ async def generate_shot_image(
     creation_id = shot.scene.creation.creation_id
     
     # 计算需要的积分（提交任务时立即冻结，防止多设备并发超额使用）
-    # 分镜图片生成：优先使用图生图模型（因为通常有角色图片），如果没有配置则使用文生图模型
-    image_model = settings.IMAGE_MODEL_IMAGE_TO_IMAGE or settings.IMAGE_MODEL_TEXT_TO_IMAGE or settings.IMAGE_MODEL_NAME or "black-forest-labs/flux-kontext-pro/multi"
-    cost = ModelPrices.calculate_image_cost(image_model, 1)
+    # 优先使用 creation.extra_data 中的 image_to_image_model（没有则回退 text_to_image_model，再回退 settings）
+    extra_data = shot.scene.creation.extra_data or {}
+    image_model = (
+        extra_data.get("image_to_image_model")
+        or extra_data.get("text_to_image_model")
+        or settings.IMAGE_MODEL_IMAGE_TO_IMAGE
+        or settings.IMAGE_MODEL_TEXT_TO_IMAGE
+        or settings.IMAGE_MODEL_NAME
+        or "black-forest-labs/flux-kontext-pro/multi"
+    )
+    # 计算参考图数量（有图的角色）
+    reference_image_count = 0
+    if shot.characters:
+        reference_image_count = sum(1 for c in shot.characters if getattr(c, "image_url", None))
+    
+    # 从模型配置获取分辨率，默认为 2K
+    try:
+        model_config = ModelConfigService.get_model_config(image_model, "image_to_image")
+        image_size = model_config.get("image_size", "2K") if model_config else "2K"
+    except Exception:
+        image_size = "2K"
+    
+    cost = ModelPrices.calculate_image_cost(
+        image_model,
+        1,
+        reference_image_count=reference_image_count,
+        image_size=image_size
+    )
     required_points = int(math.ceil(cost * 100))  # 每1元=100积分，向上取整
     # 确保至少1积分
     if required_points <= 0:

@@ -196,6 +196,30 @@ async def get_creations_service(
                 "character_ids": creation.character_ids,
             }
 
+            # 角色列表（供前端弹框选择），返回主要字段
+            creation_data["characters"] = []
+            if hasattr(creation, "characters") and creation.characters:
+                for character in creation.characters:
+                    creation_data["characters"].append({
+                        "character_id": character.character_id,
+                        "uuid": character.uuid,
+                        "name": character.name,
+                        "status": character.status,
+                        "basic_info": character.basic_info,
+                        "appearance": character.appearance,
+                        "body": character.body,
+                        "hair": character.hair,
+                        "clothing": character.clothing,
+                        "tags": character.tags,
+                        "image_prompt": character.image_prompt,
+                        "visual_style": character.visual_style,
+                        "image_url": getattr(character, "image_url", None),
+                        "novel_id": character.novel_id,
+                        "creation_id": character.creation_id,
+                        "created_at": character.created_at,
+                        "updated_at": character.updated_at,
+                    })
+
             if novel:
                 creation_data["novel"] = {
                     "novel_id": novel.novel_id,
@@ -242,6 +266,17 @@ async def get_creations_service(
                         "shots": [],
                     }
                     for shot in shots:
+                        # 分镜角色信息
+                        shot_characters = []
+                        if hasattr(shot, "characters") and shot.characters:
+                            for character in shot.characters:
+                                shot_characters.append({
+                                    "character_id": character.character_id,
+                                    "uuid": character.uuid,
+                                    "name": character.name,
+                                    "image_url": getattr(character, "image_url", None),
+                                })
+
                         scene_data["shots"].append({
                             "shot_id": shot.shot_id,
                             "uuid": shot.uuid,
@@ -256,7 +291,7 @@ async def get_creations_service(
                             "scene_id": shot.scene_id,
                             "created_at": shot.created_at,
                             "updated_at": shot.updated_at,
-                            "characters": [],  # 列表接口暂不返回角色，避免额外查询
+                            "characters": shot_characters,
                         })
                     creation_data["scenes"].append(scene_data)
 
@@ -364,6 +399,7 @@ async def get_creation_by_chapter(
             "created_at": creation.created_at,
             "updated_at": creation.updated_at,
             "current_task_id": creation.current_task_id,
+            "extra_data": creation.extra_data,
             "characters": characters,
             "scenes": scenes,
         }
@@ -448,11 +484,98 @@ async def get_creation(
             raise HTTPException(status_code=404, detail="创作项目不存在")
         if creation.owner_id != user.user_id:
             raise HTTPException(status_code=403, detail="无权限访问该创作项目")
-        # 将 SQLAlchemy 模型对象转换为 Pydantic schema 对象，然后转换为字典
-        # 排除 chapter 和 novel.chapters，防止返回章节信息
-        creation_data = CreationSchema.model_validate(creation).model_dump(
-            exclude={"chapter": True, "novel": {"chapters": True}}
-        )
+        
+        # 手工组装，包含 scenes -> shots -> characters
+        creation_data = {
+            "creation_id": creation.creation_id,
+            "uuid": creation.uuid,
+            "title": creation.title,
+            "status": creation.status,
+            "chapter_id": creation.chapter_id,
+            "novel_id": creation.novel_id,
+            "novel_uuid": creation.novel.uuid if creation.novel else None,
+            "chapter_uuid": creation.chapter.uuid if creation.chapter else None,
+            "owner_id": creation.owner_id,
+            "voice_id": creation.voice_id,
+            "voice_speed": creation.voice_speed,
+            "video_url": creation.video_url,
+            "audio_url": creation.audio_url,
+            "subtitle_url": creation.subtitle_url,
+            "extra_data": creation.extra_data,
+            "created_at": creation.created_at,
+            "updated_at": creation.updated_at,
+            "current_task_id": creation.current_task_id,
+        }
+        
+        # 角色列表（返回主要字段）
+        creation_data["characters"] = []
+        if hasattr(creation, "characters") and creation.characters:
+            for character in creation.characters:
+                creation_data["characters"].append({
+                    "character_id": character.character_id,
+                    "uuid": character.uuid,
+                    "name": character.name,
+                    "status": character.status,
+                    "basic_info": character.basic_info,
+                    "appearance": character.appearance,
+                    "body": character.body,
+                    "hair": character.hair,
+                    "clothing": character.clothing,
+                    "tags": character.tags,
+                    "image_prompt": character.image_prompt,
+                    "visual_style": character.visual_style,
+                    "image_url": getattr(character, "image_url", None),
+                    "novel_id": character.novel_id,
+                    "creation_id": character.creation_id,
+                    "created_at": character.created_at,
+                    "updated_at": character.updated_at,
+                })
+        
+        # 场景与分镜
+        creation_data["scenes"] = []
+        if creation.scenes:
+            for scene in creation.scenes:
+                scene_data = {
+                    "scene_id": scene.scene_id,
+                    "uuid": scene.uuid,
+                    "title": scene.title,
+                    "duration": scene.duration,
+                    "time_setting": scene.time_setting,
+                    "location": scene.location,
+                    "space_type": scene.space_type,
+                    "atmosphere": scene.atmosphere,
+                    "created_at": scene.created_at,
+                    "updated_at": scene.updated_at,
+                    "shots": [],
+                }
+                if scene.shots:
+                    for shot in scene.shots:
+                        shot_characters = []
+                        if hasattr(shot, "characters") and shot.characters:
+                            for character in shot.characters:
+                                shot_characters.append({
+                                    "character_id": character.character_id,
+                                    "uuid": character.uuid,
+                                    "name": character.name,
+                                    "image_url": getattr(character, "image_url", None),
+                                })
+                        scene_data["shots"].append({
+                            "shot_id": shot.shot_id,
+                            "uuid": shot.uuid,
+                            "title": shot.title,
+                            "shot_number": shot.shot_number,
+                            "description": shot.description,
+                            "narration": shot.narration,
+                            "image_prompt": shot.image_prompt,
+                            "image_url": shot.image_url,
+                            "audio_url": shot.audio_url,
+                            "audio_duration": shot.audio_duration,
+                            "scene_id": shot.scene_id,
+                            "created_at": shot.created_at,
+                            "updated_at": shot.updated_at,
+                            "characters": shot_characters,
+                        })
+                creation_data["scenes"].append(scene_data)
         return success_response(
             data=creation_data,
             message="创作项目获取成功"

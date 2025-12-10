@@ -154,7 +154,10 @@ class CreationService:
         query = query.options(
             selectinload(Creation.novel),
             selectinload(Creation.chapter),
-            selectinload(Creation.scenes).selectinload(Scene.shots),
+            selectinload(Creation.characters),
+            selectinload(Creation.scenes)
+            .selectinload(Scene.shots)
+            .selectinload(Shot.characters),
         )
         
         # 状态过滤
