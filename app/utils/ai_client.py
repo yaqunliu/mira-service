@@ -809,11 +809,19 @@ class AIClient:
         try:
             with os.fdopen(temp_fd, 'wb') as tmp_file:
                 tmp_file.write(image_data)
-            
             # 返回本地文件标识，使用 "local://" 前缀以便调用方识别
             return f"local://{temp_file_path}"
         except Exception as e:
-            os.close(temp_fd)
+            # 确保文件描述符和临时文件被清理，防止磁盘空间不足时残留空文件
+            try:
+                os.close(temp_fd)
+            except Exception:
+                pass
+            try:
+                if temp_file_path and os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
+            except Exception:
+                pass
             raise Exception(f"保存临时图片失败: {e}")
     
     def _do_generate_image_by_reference(
