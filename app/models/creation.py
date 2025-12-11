@@ -1,5 +1,5 @@
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, Float
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func, text as sa_text
 from sqlalchemy.orm import relationship
 import uuid
@@ -31,6 +31,8 @@ class Creation(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     current_task_id = Column(String(100), nullable=True, index=True)  # Celery任务ID，用于关联当前正在执行任务的状态
     deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)  # 软删除时间戳
+    extra_data = Column(JSONB, nullable=True)  # 扩展数据，存储创作配置（如模型选择、模式选择等）
+    character_ids = Column(JSONB, nullable=True)  # 关联的角色ID列表，包括新建和复用的角色
     
     # 关系
     owner = relationship("User", back_populates="creations")

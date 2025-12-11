@@ -59,7 +59,7 @@ def _get_resource_by_task_result(
                     }
                 }
     
-    elif task_type == TaskType.CREATION_INIT:
+    elif task_type == TaskType.CREATION_INIT or task_type == TaskType.CHARACTER_ANALYSIS or task_type == TaskType.SCENE_DESCRIPTION_GENERATION or task_type == TaskType.BATCH_SHOT_IMAGE_GENERATION:
         creation_id = result.get("creation_id")
         if creation_id:
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
@@ -726,6 +726,7 @@ async def get_task_shots_progress(task_id: str, db: Session = Depends(get_db)):
                     "image_url": shot.image_url,
                     "image_prompt": shot.image_prompt,
                     "narration": shot.narration,
+                    "uuid": shot.uuid,
                     "status": shot_status,
                 })
             

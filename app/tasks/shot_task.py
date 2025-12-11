@@ -5,6 +5,7 @@
 import os
 import uuid
 import tempfile
+import time
 from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
@@ -26,6 +27,7 @@ from app.core.config import settings
 from app.services.points_service import PointsService
 from app.core.exceptions import InsufficientPointsError
 from app.utils.model_prices import ModelPrices
+from app.services.model_config_service import ModelConfigService
 import math
 
 
@@ -45,7 +47,10 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         Exception: 生图失败
     """
     db: Session = SessionLocal()
+    task_start = time.perf_counter()
     temp_file_path = None
+    start_time = time.perf_counter()
+    timings: Dict[str, float] = {}
     try:
         # 加载shot及其关联的角色和场景
         shot = (
@@ -62,24 +67,28 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         
         # 检查是否已有图片
         if shot.image_url:
-            logger.info(f"分镜 {shot_id} 已有图片，跳过生成")
+            total_sec = round(time.perf_counter() - start_time, 3)
+            logger.info(f"分镜 {shot_id} 已有图片，跳过生成 | total_sec={total_sec}s")
             return {
                 "shot_id": shot_id,
                 "shot_title": shot.title,
                 "success": True,
                 "image_url": shot.image_url,
-                "skipped": True
+                "skipped": True,
+                "duration_sec": total_sec,
             }
         
         # 检查是否有分镜描述（用于生成prompt）
         if not shot.description and not shot.image_prompt:
-            logger.warning(f"分镜 {shot_id} 没有分镜描述或图片提示词，跳过生成")
+            total_sec = round(time.perf_counter() - start_time, 3)
+            logger.warning(f"分镜 {shot_id} 没有分镜描述或图片提示词，跳过生成 | total_sec={total_sec}s")
             return {
                 "shot_id": shot_id,
                 "shot_title": shot.title,
                 "success": False,
                 "error": "没有分镜描述或图片提示词",
-                "skipped": True
+                "skipped": True,
+                "duration_sec": total_sec,
             }
         
         # 获取关联的角色及其图片URL
@@ -103,12 +112,8 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 if profile_parts:
                     character_profiles.append("，".join(profile_parts))
         
-        # 如果没有角色图片，使用文生图；如果有角色图片，使用图生图
-        use_reference_images = len(character_images) > 0
-        if use_reference_images:
-            logger.info(f"分镜 {shot_id} 关联了 {len(character_images)} 个角色的图片，使用图生图")
-        else:
-            logger.info(f"分镜 {shot_id} 没有关联角色或角色没有图片，使用文生图")
+        # 统一使用同一个模型生成图片；参考图列表可为空
+        logger.info(f"分镜 {shot_id} 参考图片数量: {len(character_images)}，统一使用图生图模型")
         
         # 获取上一分镜的描述（用于上下文连贯性）
         # 优先使用提示词，如果不存在则使用旁白，如果上一分镜不存在则留空
@@ -131,67 +136,75 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 if previous_shot_description:
                     logger.info(f"找到上一分镜上下文: {previous_shot.shot_id} (使用{'提示词' if previous_shot.image_prompt else '旁白'})")
         
+        # 从创作配置中获取模型配置
+        creation = shot.scene.creation
+        extra_data = creation.extra_data or {}
+        image_to_image_model = extra_data.get("image_to_image_model")
+        text_to_image_model = extra_data.get("text_to_image_model")  # 兼容旧字段，实际不再区分
+        
         # 使用LLM生成英文提示词
-        ai_client = AIClient()
+        llm_model = extra_data.get("llm_model")
+        ai_client = AIClient(
+            llm_model_name=llm_model,
+            image_to_image_model=image_to_image_model,
+            text_to_image_model=text_to_image_model
+        )
         current_shot_description = shot.description or shot.image_prompt or ""
         
-        if use_reference_images:
-            # 有角色图片时，使用完整的提示词生成流程（包含角色档案）
-            logger.info(f"开始为分镜 {shot_id} 生成图片提示词（包含角色档案）")
-            english_prompt = ai_client.generate_shot_image_prompt(
-                character_profiles=character_profiles,
-                previous_shot_description=previous_shot_description,
-                current_shot_description=current_shot_description
-            )
-            logger.info(f"生成的英文提示词长度: {len(english_prompt)}")
-            
-            # 使用图生图API生成图片
-            logger.info(f"开始为分镜 {shot_id} 进行图生图，参考图片数量: {len(character_images)}")
-            temp_image_url = ai_client.generate_image_by_reference(
-                prompt=english_prompt,
-                reference_images=character_images,
-                aspect_ratio="16:9"
-            )
-        else:
-            # 没有角色图片时，直接使用分镜的描述或提示词，使用文生图
-            logger.info(f"开始为分镜 {shot_id} 使用文生图")
-            # 如果有image_prompt，直接使用；否则使用description
-            prompt_text = shot.image_prompt or shot.description or ""
-            if not prompt_text:
-                logger.warning(f"分镜 {shot_id} 没有可用的提示词或描述")
-                return {
-                    "shot_id": shot_id,
-                    "shot_title": shot.title,
-                    "success": False,
-                    "error": "没有可用的提示词或描述",
-                    "skipped": True
-                }
-            
-            temp_image_url = ai_client.generate_image_by_prompt(
-                prompt=prompt_text,
-                aspectRatio="16:9"  # 16:9 比例
-            )
+        # 生成提示词（即使没有参考图也用统一流程）
+        logger.info(f"开始为分镜 {shot_id} 生成图片提示词（统一流程，参考图数量: {len(character_images)}）")
+        prompt_start = time.perf_counter()
+        english_prompt = ai_client.generate_shot_image_prompt(
+            character_profiles=character_profiles,
+            previous_shot_description=previous_shot_description,
+            current_shot_description=current_shot_description,
+            image_model=image_to_image_model  # 传入图片模型以确定输出语言
+        )
+        timings["prompt_sec"] = round(time.perf_counter() - prompt_start, 3)
+        logger.info(f"生成的英文提示词长度: {len(english_prompt)}")
         
-        # 从临时URL下载图像并上传到US3进行持久化
+        # 使用同一模型生成图片；参考图可为空
+        logger.info(f"开始为分镜 {shot_id} 调用图生图接口，参考图数量: {len(character_images)}")
+        image_start = time.perf_counter()
+        temp_image_url = ai_client.generate_image_by_reference(
+            prompt=english_prompt,
+            reference_images=character_images,  # 可为空
+            model=image_to_image_model  # 使用配置的模型
+        )
+        timings["image_api_sec"] = round(time.perf_counter() - image_start, 3)
+        
+        # 从本地/URL 获取图像并上传到US3进行持久化
         try:
-            logger.info(f"从URL下载图像: {temp_image_url}")
-            # 下载图像
-            with httpx.Client(timeout=30.0) as client:
-                response = client.get(temp_image_url)
-                response.raise_for_status()
-                image_data = response.content
-            logger.info(f"图像下载成功，大小: {len(image_data)} 字节")
-            
-            # 将图像数据保存到临时文件（US3 SDK 需要文件路径）
-            image_extension = ".png"
-            temp_fd, temp_file_path = tempfile.mkstemp(suffix=image_extension)
-            try:
-                with os.fdopen(temp_fd, 'wb') as tmp_file:
-                    tmp_file.write(image_data)
-                logger.info(f"图像已保存到临时文件: {temp_file_path}")
-            except Exception as e:
-                os.close(temp_fd)
-                raise
+            persist_start = time.perf_counter()
+            # 检查是否为本地文件标识（Nano Banana2 返回格式为 "local://..."）
+            if temp_image_url.startswith("local://"):
+                # 直接使用本地文件路径
+                temp_file_path = temp_image_url.replace("local://", "")
+                logger.info(f"使用本地文件路径: {temp_file_path}")
+                if not os.path.exists(temp_file_path):
+                    raise Exception(f"本地文件不存在: {temp_file_path}")
+                # 从文件后缀推断扩展名，兜底为 .png
+                _, ext = os.path.splitext(temp_file_path)
+                image_extension = ext or ".png"
+            else:
+                    # 从URL下载图像
+                logger.info(f"从URL下载图像: {temp_image_url}")
+                with httpx.Client(timeout=30.0) as client:
+                    response = client.get(temp_image_url)
+                    response.raise_for_status()
+                    image_data = response.content
+                logger.info(f"图像下载成功，大小: {len(image_data)} 字节")
+                
+                # 将图像数据保存到临时文件（US3 SDK 需要文件路径）
+                image_extension = ".png"
+                temp_fd, temp_file_path = tempfile.mkstemp(suffix=image_extension)
+                try:
+                    with os.fdopen(temp_fd, 'wb') as tmp_file:
+                        tmp_file.write(image_data)
+                    logger.info(f"图像已保存到临时文件: {temp_file_path}")
+                except Exception as e:
+                    os.close(temp_fd)
+                    raise
             
             # 上传到US3
             # 生成US3存储路径: creations/{creation_id}/shots/{shot_id}/image_{uuid}.png
@@ -215,12 +228,14 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             logger.info(f"图像上传US3成功，持久化URL: {persistent_image_url}")
             
             image_url = persistent_image_url
+            timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
             
         except Exception as e:
             # 如果US3上传失败，记录错误但继续使用临时URL（降级处理）
             error_msg = f"图像上传US3失败，使用临时URL: {str(e)}"
             logger.warning(error_msg, exc_info=True)
             image_url = temp_image_url
+            timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
         finally:
             # 清理临时文件
             if temp_file_path and os.path.exists(temp_file_path):
@@ -247,12 +262,19 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 logger.opt(exception=True).error("确认扣除冻结积分失败: {}", str(e))
                 # 确认失败不影响任务完成，但需要记录错误
         
-        logger.info(f"分镜 {shot.title}(ID: {shot_id}) 图片生成成功")
+        total_sec = round(time.perf_counter() - start_time, 3)
+        logger.info(
+            f"分镜 {shot.title}(ID: {shot_id}) 图片生成成功 | "
+            f"model={image_to_image_model} | refs={len(character_images)} | "
+            f"timings={timings} | total_sec={total_sec}s"
+        )
         return {
             "shot_id": shot_id,
             "shot_title": shot.title,
             "success": True,
-            "image_url": image_url
+            "image_url": image_url,
+            "duration_sec": total_sec,
+            "timings": timings,
         }
     except Exception as e:
         logger.opt(exception=True).error("分镜 {} 图片生成失败: {}", shot_id, str(e))
@@ -270,10 +292,16 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 logger.opt(exception=True).error("释放冻结积分失败: {}", str(release_error))
         
         db.rollback()
+        total_sec = round(time.perf_counter() - start_time, 3)
+        logger.warning(
+            f"分镜 {shot_id} 图片生成失败 | total_sec={total_sec}s | timings={timings} | error={str(e)}"
+        )
         return {
             "shot_id": shot_id,
             "success": False,
-            "error": str(e)
+            "error": str(e),
+            "duration_sec": total_sec,
+            "timings": timings,
         }
     finally:
         db.close()
@@ -293,6 +321,101 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze
         包含分镜ID和处理结果的字典
     """
     logger.info(f"开始执行分镜图片生成任务: shot_id={shot_id}, creation_id={creation_id}, freeze_record_id={freeze_record_id}")
+    
+    # 如未传入冻结记录，则在这里计算并冻结积分（单张生成）
+    if not freeze_record_id:
+        db: Session = SessionLocal()
+        try:
+            shot_obj = (
+                db.query(Shot)
+                .options(selectinload(Shot.characters), selectinload(Shot.scene).selectinload(Scene.creation))
+                .filter(Shot.shot_id == shot_id)
+                .first()
+            )
+            if not shot_obj:
+                return {
+                    "shot_id": shot_id,
+                    "creation_id": creation_id,
+                    "success": False,
+                    "error": "分镜不存在",
+                }
+            
+            creation = shot_obj.scene.creation
+            if not creation:
+                return {
+                    "shot_id": shot_id,
+                    "creation_id": creation_id,
+                    "success": False,
+                    "error": "创作不存在",
+                }
+            
+            extra_data = creation.extra_data or {}
+            image_model = (
+                extra_data.get("image_to_image_model")
+                or extra_data.get("text_to_image_model")
+                or settings.IMAGE_MODEL_IMAGE_TO_IMAGE
+                or settings.IMAGE_MODEL_TEXT_TO_IMAGE
+                or settings.IMAGE_MODEL_NAME
+                or "black-forest-labs/flux-kontext-pro/multi"
+            )
+            try:
+                model_config = ModelConfigService.get_model_config(image_model, "image_to_image")
+                image_size = model_config.get("image_size", "2K") if model_config else "2K"
+            except Exception:
+                image_size = "2K"
+            
+            # 参考图数量
+            ref_count = 0
+            if shot_obj.characters:
+                ref_count = sum(1 for c in shot_obj.characters if getattr(c, "image_url", None))
+            
+            cost_per_image = ModelPrices.calculate_image_cost(
+                image_model,
+                1,
+                reference_image_count=ref_count,
+                image_size=image_size
+            )
+            required_points = int(math.ceil(cost_per_image * 100))
+            if required_points <= 0:
+                required_points = 1
+            
+            freeze_record = PointsService.freeze_points(
+                db=db,
+                user_id=creation.owner_id,
+                points=required_points,
+                operation_type="generate_shot",
+                creation_id=creation_id,
+                novel_id=creation.novel_id,
+                description=f"生成分镜图片（{shot_obj.title}）",
+                extra_data={
+                    "shot_id": shot_id,
+                    "task_type": "shot_image_generation",
+                    "reference_image_count": ref_count,
+                    "image_size": image_size,
+                    "image_model": image_model,
+                }
+            )
+            freeze_record_id = freeze_record.record_id
+            logger.info(f"单张分镜 {shot_id} 积分已冻结: {required_points}，freeze_record_id={freeze_record_id}")
+        except InsufficientPointsError as e:
+            return {
+                "shot_id": shot_id,
+                "creation_id": creation_id,
+                "success": False,
+                "error": f"积分不足: {str(e)}",
+                "skipped": True
+            }
+        except Exception as e:
+            logger.opt(exception=True).error("单张分镜 {} 冻结积分失败: {}", shot_id, str(e))
+            return {
+                "shot_id": shot_id,
+                "creation_id": creation_id,
+                "success": False,
+                "error": f"冻结积分失败: {str(e)}",
+                "skipped": True
+            }
+        finally:
+            db.close()
     
     self.update_state(
         state="PROGRESS",
@@ -327,6 +450,7 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
         包含所有分镜处理结果的字典
     """
     db: Session = SessionLocal()
+    task_start = time.perf_counter()
     try:
         ##X## Debug 模式下抛出测试异常 - 测试分镜图片生成错误
         # if settings.DEBUG:
@@ -379,12 +503,20 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
         logger.info(f"开始为创作 {creation_id} 生成 {total_shots} 个分镜的图片")
         
         # 计算每个分镜需要的积分并冻结积分
-        # 分镜图片生成：优先使用图生图模型（因为通常有角色图片），如果没有配置则使用文生图模型
-        image_model = settings.IMAGE_MODEL_IMAGE_TO_IMAGE or settings.IMAGE_MODEL_TEXT_TO_IMAGE or settings.IMAGE_MODEL_NAME or "black-forest-labs/flux-kontext-pro/multi"
-        cost_per_image = ModelPrices.calculate_image_cost(image_model, 1)
-        required_points_per_shot = int(math.ceil(cost_per_image * 100))  # 每1元=100积分，向上取整
-        if required_points_per_shot <= 0:
-            required_points_per_shot = 1
+        # 优先使用 creation.extra_data 中的 image_to_image_model（如果不存在则回退到 text_to_image，再回退到 settings）
+        image_model = (
+            (creation.extra_data or {}).get("image_to_image_model")
+            or (creation.extra_data or {}).get("text_to_image_model")
+            or settings.IMAGE_MODEL_IMAGE_TO_IMAGE
+            or settings.IMAGE_MODEL_TEXT_TO_IMAGE
+            or settings.IMAGE_MODEL_NAME
+            or "black-forest-labs/flux-kontext-pro/multi"
+        )
+        try:
+            model_config = ModelConfigService.get_model_config(image_model, "image_to_image")
+            image_size = model_config.get("image_size", "2K") if model_config else "2K"
+        except Exception:
+            image_size = "2K"
         
         # 为每个分镜冻结积分
         shots_with_freeze_records = []
@@ -393,6 +525,27 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
         results = []  # 初始化结果列表，用于记录因积分不足而跳过的分镜
         
         for shot_info in all_shots:
+            shot_id = shot_info["shot_id"]
+            # 计算该分镜的参考图数量
+            ref_count = 0
+            try:
+                shot_obj = db.query(Shot).options(selectinload(Shot.characters)).filter(Shot.shot_id == shot_id).first()
+                if shot_obj and shot_obj.characters:
+                    ref_count = sum(1 for c in shot_obj.characters if getattr(c, "image_url", None))
+            except Exception:
+                ref_count = 0
+            
+            # 基于实际参考图和分辨率计算成本/积分
+            cost_per_image = ModelPrices.calculate_image_cost(
+                image_model,
+                1,
+                reference_image_count=ref_count,
+                image_size=image_size
+            )
+            required_points_per_shot = int(math.ceil(cost_per_image * 100))
+            if required_points_per_shot <= 0:
+                required_points_per_shot = 1
+            
             try:
                 freeze_record = PointsService.freeze_points(
                     db=db,
@@ -404,7 +557,9 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
                     description=f"生成分镜图片（{shot_info['shot_title']}）",
                     extra_data={
                         "shot_id": shot_info["shot_id"],
-                        "task_type": "shot_image_generation"
+                        "task_type": "shot_image_generation",
+                        "reference_image_count": ref_count,
+                        "image_size": image_size
                     }
                 )
                 shot_info["freeze_record_id"] = freeze_record.record_id
@@ -526,23 +681,48 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
         # 更新创作状态
         creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
         if creation:
-            if failed_count == 0:
+            # 生成完成后，状态统一落到 SCENE_GENERATED，若全部失败则标记为 FAILED，避免前端一直显示“生成中”
+            if success_count > 0:
                 creation.status = CreationStatus.SCENE_GENERATED
+            else:
+                creation.status = CreationStatus.FAILED
             creation.current_task_id = None
             db.commit()
+
+        # 主任务完成后推送最终进度，防止前端停留在“生成中”
+        try:
+            self.update_state(
+                state="SUCCESS",
+                meta={
+                    "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
+                    "creation_id": creation_id,
+                    "total": total_shots,
+                    "success_count": success_count,
+                    "failed_count": failed_count,
+                    "status": f"已完成 {success_count}/{total_shots}，失败 {failed_count}",
+                    "stage": "completed",
+                    "results": results
+                }
+            )
+        except Exception:
+            # 更新状态失败不影响最终返回
+            logger.warning("更新最终进度状态失败，继续返回结果")
         
+        total_sec = round(time.perf_counter() - task_start, 3)
         logger.info(
             f"创作 {creation_id} 分镜图片生成完成: "
-            f"总数={total_shots}, 成功={success_count}, 失败={failed_count}"
+            f"总数={total_shots}, 成功={success_count}, 失败={failed_count}, "
+            f"total_sec={total_sec}s"
         )
         
         return {
-            "success": failed_count == 0,
+            "success": success_count > 0,
             "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
             "creation_id": creation_id,
             "total": total_shots,
             "success_count": success_count,
             "failed_count": failed_count,
+            "all_success": failed_count == 0,
             "results": results
         }
         
@@ -624,6 +804,7 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
         }
     
     total_count = len(shot_ids)
+    task_start = time.perf_counter()
     logger.info(f"开始并发生成 {total_count} 个分镜的图片: {shot_ids}")
     
     db: Session = SessionLocal()
@@ -640,10 +821,11 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
         # 计算每个分镜需要的积分并冻结积分
         # 分镜图片生成：优先使用图生图模型（因为通常有角色图片），如果没有配置则使用文生图模型
         image_model = settings.IMAGE_MODEL_IMAGE_TO_IMAGE or settings.IMAGE_MODEL_TEXT_TO_IMAGE or settings.IMAGE_MODEL_NAME or "black-forest-labs/flux-kontext-pro/multi"
-        cost_per_image = ModelPrices.calculate_image_cost(image_model, 1)
-        required_points_per_shot = int(math.ceil(cost_per_image * 100))  # 每1元=100积分，向上取整
-        if required_points_per_shot <= 0:
-            required_points_per_shot = 1
+        try:
+            model_config = ModelConfigService.get_model_config(image_model, "image_to_image")
+            image_size = model_config.get("image_size", "2K") if model_config else "2K"
+        except Exception:
+            image_size = "2K"
         
         # 为每个分镜冻结积分
         shots_with_freeze_records = []
@@ -663,6 +845,25 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
                 })
                 continue
             
+            # 计算参考图数量
+            ref_count = 0
+            try:
+                shot_obj = db.query(Shot).options(selectinload(Shot.characters)).filter(Shot.shot_id == shot_id).first()
+                if shot_obj and shot_obj.characters:
+                    ref_count = sum(1 for c in shot_obj.characters if getattr(c, "image_url", None))
+            except Exception:
+                ref_count = 0
+            
+            cost_per_image = ModelPrices.calculate_image_cost(
+                image_model,
+                1,
+                reference_image_count=ref_count,
+                image_size=image_size
+            )
+            required_points_per_shot = int(math.ceil(cost_per_image * 100))
+            if required_points_per_shot <= 0:
+                required_points_per_shot = 1
+            
             try:
                 freeze_record = PointsService.freeze_points(
                     db=db,
@@ -674,7 +875,9 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
                     description=f"生成分镜图片（{shot.title}）",
                     extra_data={
                         "shot_id": shot_id,
-                        "task_type": "shot_image_generation"
+                        "task_type": "shot_image_generation",
+                        "reference_image_count": ref_count,
+                        "image_size": image_size
                     }
                 )
                 shots_with_freeze_records.append({
@@ -786,9 +989,10 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
                     })
         
         # 任务完成
+        total_sec = round(time.perf_counter() - task_start, 3)
         logger.info(
             f"分镜图片生成任务完成: 总数={total_count}, "
-            f"成功={success_count}, 失败={failed_count}"
+            f"成功={success_count}, 失败={failed_count}, total_sec={total_sec}s"
         )
         
         return {

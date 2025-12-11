@@ -151,6 +151,8 @@ def deduct_points_for_image(
     user_id: int,
     image_count: int,
     model_name: str,
+    reference_image_count: int = 0,
+    image_size: str = "2K",
     creation_id: Optional[int] = None,
     novel_id: Optional[int] = None,
     description: Optional[str] = None,
@@ -176,7 +178,12 @@ def deduct_points_for_image(
     """
     try:
         # 计算实际成本（元）
-        cost = ModelPrices.calculate_image_cost(model_name, image_count)
+        cost = ModelPrices.calculate_image_cost(
+            model_name,
+            image_count,
+            reference_image_count=reference_image_count,
+            image_size=image_size
+        )
         
         # 转换为积分：每1元=100积分，每1分钱=1积分
         # 使用向上取整，确保小数部分也扣除（如1.1积分扣2积分）

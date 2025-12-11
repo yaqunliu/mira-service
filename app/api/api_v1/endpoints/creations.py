@@ -1,4 +1,5 @@
 from typing import Optional, List
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from app.core.exceptions import BaseServiceException
 from app.utils.response import success_response
 from app.tasks.shot_task import generate_creation_shots_task, generate_shots_by_ids_task
 from app.tasks.full_generation_task import generate_full_video_task
+from app.tasks.creation_task import playbook_generation_task
 from app.core.logger import logger
 
 router = APIRouter()
@@ -79,6 +81,19 @@ async def create_creation_service(
         if creation:
             creation_id_int = creation.creation_id
 
+    # 验证 narration_mode 参数
+    narration_mode = creation_data.narration_mode or "original"
+    if narration_mode not in ["original", "rewrite"]:
+        raise HTTPException(
+            status_code=400,
+            detail="narration_mode 必须是 'original'（原文模式）或 'rewrite'（爽文模式）"
+        )
+    
+    # 构建 extra_data（包含 narration_mode 和模型配置）
+    extra_data = creation_data.extra_data or {}
+    if narration_mode:
+        extra_data["narration_mode"] = narration_mode
+    
     # 调用服务层处理业务逻辑
     try:
         creation_id = CreationService.create_creation_service(
@@ -87,6 +102,8 @@ async def create_creation_service(
             chapter_id=chapter_id_int,
             user_id=user_id,
             creation_id=creation_id_int,
+            narration_mode=narration_mode,
+            extra_data=extra_data,
         )
 
         # 获取创建的创作对象，返回UUID
@@ -152,10 +169,133 @@ async def get_creations_service(
 
         # 转换为响应格式
         total_pages = (total + page_size - 1) // page_size if total > 0 else 0
-        items = [
-            CreationSchema.model_validate(creation).model_dump()
-            for creation in creations
-        ]
+        # 手动序列化，完全绕过 Pydantic 对关联字段的访问，避免触发 novel.chapters 查询
+        items = []
+        for creation in creations:
+            novel = creation.novel
+            chapter = creation.chapter
+            scenes = creation.scenes or []
+
+            creation_data = {
+                "creation_id": creation.creation_id,
+                "uuid": creation.uuid,
+                "title": creation.title,
+                "status": creation.status,
+                "video_url": creation.video_url,
+                "audio_url": creation.audio_url,
+                "subtitle_url": creation.subtitle_url,
+                "voice_id": creation.voice_id,
+                "voice_speed": creation.voice_speed,
+                "current_task_id": creation.current_task_id,
+                "created_at": creation.created_at,
+                "updated_at": creation.updated_at,
+                "owner_id": creation.owner_id,
+                "novel_id": creation.novel_id,
+                "chapter_id": creation.chapter_id,
+                "extra_data": creation.extra_data,
+                "character_ids": creation.character_ids,
+            }
+
+            # 角色列表（供前端弹框选择），返回主要字段
+            creation_data["characters"] = []
+            if hasattr(creation, "characters") and creation.characters:
+                for character in creation.characters:
+                    creation_data["characters"].append({
+                        "character_id": character.character_id,
+                        "uuid": character.uuid,
+                        "name": character.name,
+                        "status": character.status,
+                        "basic_info": character.basic_info,
+                        "appearance": character.appearance,
+                        "body": character.body,
+                        "hair": character.hair,
+                        "clothing": character.clothing,
+                        "tags": character.tags,
+                        "image_prompt": character.image_prompt,
+                        "visual_style": character.visual_style,
+                        "image_url": getattr(character, "image_url", None),
+                        "novel_id": character.novel_id,
+                        "creation_id": character.creation_id,
+                        "created_at": character.created_at,
+                        "updated_at": character.updated_at,
+                    })
+
+            if novel:
+                creation_data["novel"] = {
+                    "novel_id": novel.novel_id,
+                    "uuid": novel.uuid,
+                    "title": novel.title,
+                    "author": novel.author,
+                    "chapter_count": novel.chapter_count,
+                    "status": novel.status,
+                    "owner_id": novel.owner_id,
+                    "created_at": novel.created_at,
+                    "updated_at": novel.updated_at,
+                }
+                creation_data["novel_uuid"] = novel.uuid
+
+            if chapter:
+                creation_data["chapter"] = {
+                    "chapter_id": chapter.chapter_id,
+                    "uuid": chapter.uuid,
+                    "title": chapter.title,
+                    "content_url": chapter.content_url,
+                    "chapter_number": chapter.chapter_number,
+                    "word_count": chapter.word_count,
+                    "preview": chapter.preview,
+                    "novel_id": chapter.novel_id,
+                    "created_at": chapter.created_at,
+                }
+                creation_data["chapter_uuid"] = chapter.uuid
+
+            if scenes:
+                creation_data["scenes"] = []
+                for scene in scenes:
+                    shots = scene.shots or []
+                    scene_data = {
+                        "scene_id": scene.scene_id,
+                        "uuid": scene.uuid,
+                        "title": scene.title,
+                        "duration": scene.duration,
+                        "time_setting": scene.time_setting,
+                        "location": scene.location,
+                        "space_type": scene.space_type,
+                        "atmosphere": scene.atmosphere,
+                        "created_at": scene.created_at,
+                        "updated_at": scene.updated_at,
+                        "shots": [],
+                    }
+                    for shot in shots:
+                        # 分镜角色信息
+                        shot_characters = []
+                        if hasattr(shot, "characters") and shot.characters:
+                            for character in shot.characters:
+                                shot_characters.append({
+                                    "character_id": character.character_id,
+                                    "uuid": character.uuid,
+                                    "name": character.name,
+                                    "image_url": getattr(character, "image_url", None),
+                                })
+
+                        scene_data["shots"].append({
+                            "shot_id": shot.shot_id,
+                            "uuid": shot.uuid,
+                            "title": shot.title,
+                            "shot_number": shot.shot_number,
+                            "description": shot.description,
+                            "narration": shot.narration,
+                            "image_prompt": shot.image_prompt,
+                            "image_url": shot.image_url,
+                            "audio_url": shot.audio_url,
+                            "audio_duration": shot.audio_duration,
+                            "scene_id": shot.scene_id,
+                            "created_at": shot.created_at,
+                            "updated_at": shot.updated_at,
+                            "characters": shot_characters,
+                        })
+                    creation_data["scenes"].append(scene_data)
+
+            items.append(creation_data)
 
         return success_response(
             data={
@@ -259,6 +399,7 @@ async def get_creation_by_chapter(
             "created_at": creation.created_at,
             "updated_at": creation.updated_at,
             "current_task_id": creation.current_task_id,
+            "extra_data": creation.extra_data,
             "characters": characters,
             "scenes": scenes,
         }
@@ -296,7 +437,7 @@ async def get_creation_simple(
         if creation.owner_id != user.user_id:
             raise HTTPException(status_code=403, detail="无权限访问该创作项目")
         
-        # 只返回基本字段，不包含关联数据
+        # 返回基本字段，包含 novel_uuid 和 chapter_uuid
         response_data = {
             "creation_id": creation.creation_id,
             "uuid": creation.uuid,
@@ -304,6 +445,8 @@ async def get_creation_simple(
             "status": creation.status,
             "chapter_id": creation.chapter_id,
             "novel_id": creation.novel_id,
+            "novel_uuid": creation.novel.uuid if creation.novel else None,
+            "chapter_uuid": creation.chapter.uuid if creation.chapter else None,
             "owner_id": creation.owner_id,
             "voice_id": creation.voice_id,
             "voice_speed": creation.voice_speed,
@@ -341,9 +484,100 @@ async def get_creation(
             raise HTTPException(status_code=404, detail="创作项目不存在")
         if creation.owner_id != user.user_id:
             raise HTTPException(status_code=403, detail="无权限访问该创作项目")
-        # 将 SQLAlchemy 模型对象转换为 Pydantic schema 对象，然后转换为字典
+        
+        # 手工组装，包含 scenes -> shots -> characters
+        creation_data = {
+            "creation_id": creation.creation_id,
+            "uuid": creation.uuid,
+            "title": creation.title,
+            "status": creation.status,
+            "chapter_id": creation.chapter_id,
+            "novel_id": creation.novel_id,
+            "novel_uuid": creation.novel.uuid if creation.novel else None,
+            "chapter_uuid": creation.chapter.uuid if creation.chapter else None,
+            "owner_id": creation.owner_id,
+            "voice_id": creation.voice_id,
+            "voice_speed": creation.voice_speed,
+            "video_url": creation.video_url,
+            "audio_url": creation.audio_url,
+            "subtitle_url": creation.subtitle_url,
+            "extra_data": creation.extra_data,
+            "created_at": creation.created_at,
+            "updated_at": creation.updated_at,
+            "current_task_id": creation.current_task_id,
+        }
+        
+        # 角色列表（返回主要字段）
+        creation_data["characters"] = []
+        if hasattr(creation, "characters") and creation.characters:
+            for character in creation.characters:
+                creation_data["characters"].append({
+                    "character_id": character.character_id,
+                    "uuid": character.uuid,
+                    "name": character.name,
+                    "status": character.status,
+                    "basic_info": character.basic_info,
+                    "appearance": character.appearance,
+                    "body": character.body,
+                    "hair": character.hair,
+                    "clothing": character.clothing,
+                    "tags": character.tags,
+                    "image_prompt": character.image_prompt,
+                    "visual_style": character.visual_style,
+                    "image_url": getattr(character, "image_url", None),
+                    "novel_id": character.novel_id,
+                    "creation_id": character.creation_id,
+                    "created_at": character.created_at,
+                    "updated_at": character.updated_at,
+                })
+        
+        # 场景与分镜
+        creation_data["scenes"] = []
+        if creation.scenes:
+            for scene in creation.scenes:
+                scene_data = {
+                    "scene_id": scene.scene_id,
+                    "uuid": scene.uuid,
+                    "title": scene.title,
+                    "duration": scene.duration,
+                    "time_setting": scene.time_setting,
+                    "location": scene.location,
+                    "space_type": scene.space_type,
+                    "atmosphere": scene.atmosphere,
+                    "created_at": scene.created_at,
+                    "updated_at": scene.updated_at,
+                    "shots": [],
+                }
+                if scene.shots:
+                    for shot in scene.shots:
+                        shot_characters = []
+                        if hasattr(shot, "characters") and shot.characters:
+                            for character in shot.characters:
+                                shot_characters.append({
+                                    "character_id": character.character_id,
+                                    "uuid": character.uuid,
+                                    "name": character.name,
+                                    "image_url": getattr(character, "image_url", None),
+                                })
+                        scene_data["shots"].append({
+                            "shot_id": shot.shot_id,
+                            "uuid": shot.uuid,
+                            "title": shot.title,
+                            "shot_number": shot.shot_number,
+                            "description": shot.description,
+                            "narration": shot.narration,
+                            "image_prompt": shot.image_prompt,
+                            "image_url": shot.image_url,
+                            "audio_url": shot.audio_url,
+                            "audio_duration": shot.audio_duration,
+                            "scene_id": shot.scene_id,
+                            "created_at": shot.created_at,
+                            "updated_at": shot.updated_at,
+                            "characters": shot_characters,
+                        })
+                creation_data["scenes"].append(scene_data)
         return success_response(
-            data=CreationSchema.model_validate(creation).model_dump(),
+            data=creation_data,
             message="创作项目获取成功"
         )
     except BaseServiceException as e:
@@ -357,7 +591,7 @@ async def delete_creation(
     user: User = Depends(get_current_user),
 ):
     """
-    删除创作项目
+    删除创作项目（软删除）
     
     Args:
         creation_uuid: 创作项目UUID
@@ -367,26 +601,30 @@ async def delete_creation(
         
     注意：
         - 只有创建者可以删除
-        - 删除时会级联删除相关的场景、分镜等数据
-        - 即使有正在执行的任务也会直接删除
+        - 使用软删除，设置 deleted_at 字段，不会真正删除数据
+        - 已删除的创作不会在查询列表中显示
     """
     try:
-        # 查询创作项目
+        # 查询创作项目（包括已删除的，用于验证是否存在）
         creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
         
         if not creation:
             raise HTTPException(status_code=404, detail="创作项目不存在")
         
+        # 检查是否已经删除
+        if creation.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="创作项目已被删除")
+        
         # 验证权限
         if creation.owner_id != user.user_id:
             raise HTTPException(status_code=403, detail="无权限删除该创作项目")
         
-        # 删除创作项目（级联删除相关的 scenes 和 shots）
-        # scenes 关系已设置 cascade="all, delete-orphan"，会自动删除
-        db.delete(creation)
+        # 软删除：设置 deleted_at 字段
+        now = datetime.utcnow()
+        creation.deleted_at = now
         db.commit()
         
-        logger.info(f"创作项目已删除: creation_uuid={creation_uuid}, creation_id={creation.creation_id}, user_id={user.user_id}")
+        logger.info(f"创作项目已软删除: creation_uuid={creation_uuid}, creation_id={creation.creation_id}, user_id={user.user_id}, deleted_at={now}")
         
         return success_response(
             data={"creation_uuid": creation_uuid},
@@ -511,6 +749,119 @@ async def start_generate_shots(
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     except Exception as e:
         logger.error(f"启动分镜图片生成任务失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
+
+
+class GeneratePlaybookRequest(BaseModel):
+    narration_mode: str = "original"  # 解说词模式：original（原文模式）或 rewrite（爽文模式）
+
+
+@router.post("/{creation_uuid}/generate-playbook")
+async def start_generate_playbook(
+    creation_uuid: str,
+    request: GeneratePlaybookRequest = GeneratePlaybookRequest(),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    手动启动分镜拆分任务（第二步）
+    
+    该接口会启动一个 Celery 任务来异步生成分镜脚本。
+    前端可以通过返回的 task_id 轮询查询任务状态。
+    
+    Args:
+        creation_uuid: 创作项目UUID
+        request: 生成请求参数
+            - narration_mode: 解说词模式，可选值："original"（原文模式）或 "rewrite"（爽文模式），默认为 "original"
+    
+    Returns:
+        {
+            "task_id": "xxx",  # 任务ID，用于查询任务状态
+            "creation_uuid": "xxx",
+            "message": "分镜拆分任务已启动"
+        }
+    
+    前置条件：
+        - 创作状态必须是 CHARACTER_ANALYZED（角色已分析）
+        - 不能有正在执行的任务
+    
+    任务状态查询：
+        通过 GET /api/v1/tasks/{task_id} 查询任务状态
+    """
+    try:
+        # 验证创作项目是否存在
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+        if not creation:
+            raise HTTPException(status_code=404, detail="创作项目不存在")
+        
+        # 验证权限
+        if creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限操作该创作项目")
+        
+        # 验证状态：必须完成角色分析（包括已生成角色图片或已拆分分镜的状态）
+        from app.schemas.creation import CreationStatus
+        allowed_statuses = [
+            CreationStatus.CHARACTER_ANALYZED,
+            CreationStatus.CHARACTER_GENERATED,
+            CreationStatus.PLAYBOOK_GENERATED,
+        ]
+        if creation.status not in allowed_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"创作状态不正确，当前状态 {creation.status}。需要先完成角色分析。"
+            )
+        
+        # 检查是否有正在执行的任务
+        if creation.current_task_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"创作项目正在执行其他任务，任务ID: {creation.current_task_id}"
+            )
+        
+        # 验证 narration_mode
+        if request.narration_mode not in ["original", "rewrite"]:
+            raise HTTPException(
+                status_code=400,
+                detail="narration_mode 必须是 'original'（原文模式）或 'rewrite'（爽文模式）"
+            )
+        
+        # 获取章节内容URL
+        from app.models.chapter import Chapter
+        chapter = db.query(Chapter).filter(Chapter.chapter_id == creation.chapter_id).first()
+        if not chapter or not chapter.content_url:
+            raise HTTPException(status_code=404, detail="章节内容不存在")
+        
+        # 启动分镜拆分任务
+        # 注意：当从 API 直接调用时，previous_result 参数传入 None（因为不是通过 link 调用）
+        task = playbook_generation_task.delay(
+            None,  # previous_result: 从 API 直接调用时传入 None
+            novel_id=creation.novel_id,
+            chapter_id=creation.chapter_id,
+            creation_id=creation.creation_id,
+            chapter_content_url=chapter.content_url,
+            narration_mode=request.narration_mode
+        )
+        
+        # 更新创作的当前任务ID
+        creation.current_task_id = task.id
+        db.commit()
+        
+        logger.info(f"创作 {creation_uuid} 分镜拆分任务已启动: task_id={task.id}, narration_mode={request.narration_mode}")
+        
+        return success_response(
+            data={
+                "task_id": task.id,
+                "creation_uuid": creation_uuid
+            },
+            message="分镜拆分任务已启动"
+        )
+        
+    except HTTPException:
+        raise
+    except BaseServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except Exception as e:
+        logger.error(f"启动分镜拆分任务失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
 
 

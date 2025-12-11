@@ -102,3 +102,8 @@ class ShotListResponse(BaseModel):
 class ShotRegenerateRequest(BaseModel):
     """重新生成分镜图片的请求体"""
     image_prompt: Optional[str] = None  # 新的图片提示词（可选，不传则使用现有提示词）
+
+
+class ShotCharactersUpdateRequest(BaseModel):
+    """更新分镜关联角色的请求体"""
+    character_ids: List[int]

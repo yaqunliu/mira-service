@@ -3,12 +3,15 @@
 """
 import os
 import tempfile
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.models.novel import Novel
 from app.models.chapter import Chapter
+from app.models.user import User
 from app.utils.novel_parser import read_novel_file, parse_novel_metadata, split_chapters
 from app.utils.us3 import US3Client
 from app.core.config import settings
@@ -104,8 +107,18 @@ def process_novel_upload_task(
         novel_id = novel.novel_id
         logger.info(f"创建小说记录成功: novel_id={novel_id}, task_id={task_id}")
         
-        # 步骤4: US3存储与数据库写入循环
-        us3_client = US3Client()
+        # 获取用户UUID用于构建上传路径
+        user = db.query(User).filter(User.user_id == user_id).first()
+        if not user:
+            raise ValueError(f"用户不存在: user_id={user_id}")
+        user_uuid = user.uuid
+        
+        # 获取环境变量（默认dev）
+        env = getattr(settings, 'ENV', 'dev')
+        # 生成时间戳（格式：YYYYMMDD）
+        time_str = datetime.now().strftime('%Y%m%d')
+        
+        # 步骤4: US3存储与数据库写入（并发上传）
         success_count = 0
         error_count = 0
         total_chapters = len(chapters_data)
@@ -122,89 +135,153 @@ def process_novel_upload_task(
             }
         )
         
-        for index, chapter_data in enumerate(chapters_data, start=1):
+        # 定义上传单个章节的函数
+        def upload_single_chapter(index: int, chapter_data: Dict[str, str]) -> Tuple[int, bool, str, Dict[str, Any]]:
+            """
+            上传单个章节
+            
+            Returns:
+                (index, success, content_url, chapter_info)
+            """
+            # 每个线程创建自己的US3Client实例，确保线程安全
+            us3_client = US3Client()
             try:
                 chapter_title = chapter_data['title']
                 chapter_content = chapter_data['content']
                 
-                # 4.1 将章节内容保存为临时文件并上传到US3
-                # 文件路径规范: novels/{novel_id}/chapter_{chapter_index:04d}.txt
-                put_key = f"novels/{novel_id}/chapter_{index:04d}.txt"
+                # 构建上传路径：环境/时间/user_uuid/文件
+                # 文件路径规范: {env}/{time_str}/{user_uuid}/novels/{novel_id}/chapter_{chapter_index:04d}.txt
+                put_key = f"{env}/{time_str}/{user_uuid}/novels/{novel_id}/chapter_{index:04d}.txt"
                 
                 # 创建临时文件
-                with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.txt', delete=False) as tmp_file:
-                    tmp_file.write(chapter_content)
-                    tmp_file_path = tmp_file.name
-                
+                tmp_file_path = None
                 try:
-                    # 上传到US3
-                    # 使用默认bucket（从配置中读取）
+                    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.txt', delete=False) as tmp_file:
+                        tmp_file.write(chapter_content)
+                        tmp_file_path = tmp_file.name
+                    
+                    # 上传到US3（关闭哈希验证以提高速度）
                     upload_result = us3_client.upload_file(
                         local_file=tmp_file_path,
                         bucket=None,  # 使用默认bucket
-                        put_key=put_key
+                        put_key=put_key,
+                        verify_hash=False  # 关闭哈希验证以提高上传速度
                     )
                     
                     if not upload_result['success']:
                         logger.error(f"章节 {index} 上传US3失败: {upload_result.get('message')}")
-                        error_count += 1
-                        continue
+                        return (index, False, "", {
+                            'title': chapter_title,
+                            'content': chapter_content,
+                            'error': upload_result.get('message', '上传失败')
+                        })
                     
                     content_url = put_key  # 使用put_key作为content_url
                     logger.info(f"章节 {index} 上传US3成功: {content_url}")
                     
+                    # 生成章节内容预览（前30个字）
+                    cleaned_content = ' '.join(chapter_content.strip().split())
+                    preview_text = cleaned_content[:30]
+                    if len(cleaned_content) > 30:
+                        preview_text += '...'
+                    
+                    return (index, True, content_url, {
+                        'title': chapter_title,
+                        'content': chapter_content,
+                        'preview': preview_text,
+                        'word_count': len(chapter_content)
+                    })
+                    
                 finally:
                     # 清理临时文件
-                    if os.path.exists(tmp_file_path):
-                        os.remove(tmp_file_path)
-                
-                # 4.2 创建章节数据库记录
-                # 生成章节内容预览（前30个字）
-                # 去除首尾空白，将换行和多个空格替换为单个空格，然后取前30个字符
-                cleaned_content = ' '.join(chapter_content.strip().split())
-                preview_text = cleaned_content[:30]
-                if len(cleaned_content) > 30:
-                    preview_text += '...'
-                
+                    if tmp_file_path and os.path.exists(tmp_file_path):
+                        try:
+                            os.remove(tmp_file_path)
+                        except Exception as e:
+                            logger.warning(f"删除临时文件失败: {tmp_file_path}, {str(e)}")
+                            
+            except Exception as e:
+                logger.error(f"处理章节 {index} 时出错: {str(e)}", exc_info=True)
+                return (index, False, "", {
+                    'title': chapter_data.get('title', ''),
+                    'content': chapter_data.get('content', ''),
+                    'error': str(e)
+                })
+        
+        # 使用线程池并发上传（5个并发）
+        chapter_results: List[Tuple[int, bool, str, Dict[str, Any]]] = []
+        completed_count = 0
+        
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            # 提交所有上传任务
+            future_to_index = {
+                executor.submit(upload_single_chapter, index, chapter_data): index
+                for index, chapter_data in enumerate(chapters_data, start=1)
+            }
+            
+            # 处理完成的任务
+            for future in as_completed(future_to_index):
+                try:
+                    result = future.result()
+                    chapter_results.append(result)
+                    completed_count += 1
+                    
+                    index, success, content_url, chapter_info = result
+                    if success:
+                        success_count += 1
+                    else:
+                        error_count += 1
+                    
+                    # 更新进度
+                    progress_percent = int((completed_count / total_chapters) * 100)
+                    self.update_state(
+                        state='PROGRESS',
+                        meta={
+                            'task_type': TaskType.NOVEL_UPLOAD,
+                            'current': completed_count,
+                            'total': total_chapters,
+                            'percent': progress_percent,
+                            'status': f'正在处理第 {completed_count}/{total_chapters} 章',
+                            'stage': 'uploading_chapters',
+                            'success_count': success_count,
+                            'error_count': error_count
+                        }
+                    )
+                    
+                    if completed_count % 10 == 0:
+                        logger.info(f"已处理 {completed_count}/{total_chapters} 个章节 ({progress_percent}%)")
+                        
+                except Exception as e:
+                    index = future_to_index[future]
+                    logger.error(f"章节 {index} 处理异常: {str(e)}", exc_info=True)
+                    error_count += 1
+                    chapter_results.append((index, False, "", {'error': str(e)}))
+        
+        # 按章节序号排序结果
+        chapter_results.sort(key=lambda x: x[0])
+        
+        # 批量创建数据库记录
+        chapters_to_add = []
+        for index, success, content_url, chapter_info in chapter_results:
+            if success:
                 chapter = Chapter(
                     novel_id=novel_id,
-                    title=chapter_title,
+                    title=chapter_info['title'],
                     content_url=content_url,
                     chapter_number=index,
-                    word_count=len(chapter_content),
-                    preview=preview_text  # 章节内容预览
+                    word_count=chapter_info['word_count'],
+                    preview=chapter_info['preview']
                 )
-                db.add(chapter)
-                success_count += 1
-                
-                # 更新进度：每处理一个章节更新一次
-                progress_percent = int((index / total_chapters) * 100)
-                self.update_state(
-                    state='PROGRESS',
-                    meta={
-                        'task_type': TaskType.NOVEL_UPLOAD,
-                        'current': index,
-                        'total': total_chapters,
-                        'percent': progress_percent,
-                        'status': f'正在处理第 {index}/{total_chapters} 章',
-                        'stage': 'uploading_chapters',
-                        'success_count': success_count,
-                        'error_count': error_count
-                    }
-                )
-                
-                # 每10个章节提交一次事务
-                if index % 10 == 0:
-                    db.commit()
-                    logger.info(f"已处理 {index}/{total_chapters} 个章节 ({progress_percent}%)")
-                    
-            except Exception as e:
-                logger.error(f"处理章节 {index} 时出错: {str(e)}")
-                error_count += 1
-                continue
+                chapters_to_add.append(chapter)
         
-        # 提交剩余的章节
-        db.commit()
+        # 批量添加章节记录（每10个提交一次）
+        batch_size = 10
+        for i in range(0, len(chapters_to_add), batch_size):
+            batch = chapters_to_add[i:i + batch_size]
+            for chapter in batch:
+                db.add(chapter)
+            db.commit()
+            logger.info(f"已提交 {min(i + batch_size, len(chapters_to_add))}/{len(chapters_to_add)} 个章节到数据库")
         
         # 更新进度：处理完成
         self.update_state(

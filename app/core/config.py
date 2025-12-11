@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     API_V1_STR: str = "/api/v1"
     DEBUG: bool = False
+    ENV: str = "dev"  # 环境变量：dev 或 production，默认 dev
     
     # 安全配置
     SECRET_KEY: str = ""
@@ -125,7 +126,7 @@ class Settings(BaseSettings):
     
     # 模型价格配置（JSON格式字符串）
     MODEL_PRICES_LLM: str = '{"Qwen/Qwen-Plus": {"input": 0.8, "output": 2.0}}'  # LLM模型价格：输入/输出价格（元/百万tokens）
-    MODEL_PRICES_IMAGE: str = '{"black-forest-labs/flux-kontext-pro/multi": 0.35}'  # 图片模型价格：元/张
+    MODEL_PRICES_IMAGE: str = '{"gemini-3-pro-image-preview": 0.97, "black-forest-labs/flux-kontext-pro/multi": 0.35}'  # 图片模型价格：元/张（Nano Banana2: 0.97元/张，基于1张参考图+2K输出）
     MODEL_PRICES_AUDIO: str = '{"s1": 120}'  # 音频模型价格：元/兆字节
     
     ENABLE_TEST_EXCEPTION: str = "false"

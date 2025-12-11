@@ -10,6 +10,7 @@ from app.api.api_v1.endpoints import (
     tasks,
     voices,
     points,
+    model_configs,
 )
 
 api_router = APIRouter()
@@ -43,4 +44,7 @@ api_router.include_router(voices.router, prefix="/voices", tags=["语音管理"]
 
 # 积分管理路由
 api_router.include_router(points.router, prefix="/points", tags=["积分管理"])
+
+# 模型配置路由
+api_router.include_router(model_configs.router, prefix="/model-configs", tags=["模型配置"])
 

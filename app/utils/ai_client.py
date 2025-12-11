@@ -7,6 +7,8 @@ import os
 import json
 import re
 import time
+import base64
+import httpx
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -19,6 +21,7 @@ from app.core.exceptions import (
     AIRetryExhaustedError
 )
 from app.utils.points_deduction import deduct_points_for_llm
+from app.services.model_config_service import ModelConfigService
 from app.db.session import SessionLocal
 import openai
 
@@ -74,13 +77,20 @@ class AIClient:
 
         logger.info(f"AIGC客户端初始化成功，BaseURL: {self.base_url}")
 
-    def _save_ai_response(self, content: str, model: str = None, file_type: str = "txt") -> str:
+    def _save_ai_response(
+        self,
+        content: Any,
+        model: str = None,
+        file_type: str = "txt",
+        metadata: Dict[str, Any] = None
+    ) -> str:
         """
-        将 AI 返回内容保存到文件
+        将 AI 调用的请求/响应保存到文件，便于排查
         
         Args:
-            content: AI 返回的内容
+            content: AI 返回的内容（字符串或可JSON序列化对象）
             model: 使用的模型名称
+            metadata: 额外要记录的上下文（如 prompt、请求参数、用户/创作ID 等）
             
         Returns:
             保存的文件路径
@@ -97,9 +107,17 @@ class AIClient:
             filename = f"{timestamp}_{llm_model_name}.{file_type}"
             file_path = ai_res_dir / filename
             
+            # 组合保存内容：始终以 JSON 结构落盘，便于后续排查
+            payload = {
+                "timestamp": datetime.now().isoformat(),
+                "model": model or self.llm_model_name,
+                "metadata": metadata or {},
+                "response": content,
+            }
+            
             # 写入文件
             with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
+                json.dump(payload, f, ensure_ascii=False, indent=2)
             
             logger.debug(f"AI 响应已保存到: {file_path}")
             return str(file_path)
@@ -140,7 +158,7 @@ class AIClient:
             )
 
     def _do_chat_completion(
-        self, messages: List[Dict[str, str]], model: str, **kwargs
+        self, messages: List[Dict[str, str]], model: str, max_tokens: int = None, **kwargs
     ) -> Dict[str, Any]:
         """
         执行 LLM 调用的内部方法（不包含重试逻辑）
@@ -148,15 +166,28 @@ class AIClient:
         Args:
             messages: 消息列表
             model: 模型名称
+            max_tokens: 最大token数，如果为None则从模型配置中获取
             **kwargs: 其他参数
             
         Returns:
             AI 响应内容
         """
+        # 如果没有指定 max_tokens，尝试从模型配置中获取
+        if max_tokens is None:
+            try:
+                model_config = ModelConfigService.get_model_config(model, "llm")
+                if model_config and "max_tokens" in model_config:
+                    max_tokens = model_config["max_tokens"]
+                else:
+                    max_tokens = 12288  # 默认值
+            except Exception as e:
+                logger.warning(f"获取模型配置失败，使用默认 max_tokens: {e}")
+                max_tokens = 12288  # 默认值
+        
         response = self.ai_client.chat.completions.create(
             model=model, 
             messages=messages, 
-            max_tokens=12288,
+            max_tokens=max_tokens,
             **kwargs
         )
         
@@ -319,6 +350,8 @@ class AIClient:
     ) -> Dict[str, Any]:
         """
         根据章节内容生成剧本（Playbook）
+        
+        注意：此方法已废弃，请使用 gen_character_analysis 和 gen_playbook_by_characters 替代
 
         Args:
             prompt: 提示词
@@ -358,13 +391,176 @@ class AIClient:
                 raise ValueError("AI 返回内容为空")
             
             # 将 AI 返回内容写入文件以便分析
-            self._save_ai_response(ai_content, model=model or self.llm_model_name, file_type="json")
+            self._save_ai_response(
+                ai_content,
+                model=model or self.llm_model_name,
+                file_type="json",
+                metadata={
+                    "prompt": prompt,
+                    "messages": messages,
+                    "user_id": user_id,
+                    "creation_id": creation_id,
+                    "novel_id": novel_id
+                }
+            )
             
             logger.info(f"AI 返回内容解析: {self._parse_json_response(ai_content)}")
             return self._parse_json_response(ai_content)
 
         except Exception as e:
             logger.error(f"生成剧本失败: {e}")
+            raise
+    
+    def gen_character_analysis(
+        self,
+        prompt: str,
+        chapter_content: str,
+        historical_characters: Dict[str, Any] = None,
+        model: str = None,
+        user_id: int = None,
+        creation_id: int = None,
+        novel_id: int = None
+    ) -> Dict[str, Any]:
+        """
+        根据章节内容进行角色分析
+
+        Args:
+            prompt: 角色分析提示词
+            chapter_content: 章节内容
+            historical_characters: 历史角色库（可选），格式：{"角色名": {...特征...}}
+            model: 模型名称，默认使用初始化时的模型
+            user_id: 用户ID（用于积分扣除，可选）
+            creation_id: 创作ID（用于积分扣除，可选）
+            novel_id: 小说ID（用于积分扣除，可选）
+
+        Returns:
+            解析后的 JSON 数据，包含章节信息和人物特征库
+        """
+        # 构建历史角色库的文本描述
+        historical_characters_text = ""
+        if historical_characters:
+            historical_characters_text = "\n\n以下是之前已存在的角色特征库（如果当前章节中出现同名角色，请优先复用这些特征）：\n"
+            historical_characters_text += json.dumps(historical_characters, ensure_ascii=False, indent=2)
+        
+        messages = [
+            {
+                "role": "user",
+                "content": f"{prompt}{historical_characters_text}\n\n下面是章节内容：\n{chapter_content}",
+            }
+        ]
+
+        try:
+            response = self.chat_completion(
+                messages=messages,
+                model=model,
+                response_format={"type": "json_object"},
+                user_id=user_id,
+                creation_id=creation_id,
+                novel_id=novel_id
+            )
+            ai_content = response.get("content", "")
+            logger.info(f"角色分析 AI 返回内容: {ai_content}")
+
+            if not ai_content:
+                raise ValueError("AI 返回内容为空")
+            
+            # 将 AI 返回内容写入文件以便分析
+            self._save_ai_response(
+                ai_content,
+                model=model or self.llm_model_name,
+                file_type="json",
+                metadata={
+                    "prompt": prompt,
+                    "messages": messages,
+                    "user_id": user_id,
+                    "creation_id": creation_id,
+                    "novel_id": novel_id,
+                    "historical_characters": historical_characters,
+                }
+            )
+            
+            parsed_data = self._parse_json_response(ai_content)
+            logger.info(f"角色分析完成，识别到 {len(parsed_data.get('人物特征库', {}))} 个角色")
+            return parsed_data
+
+        except Exception as e:
+            logger.error(f"角色分析失败: {e}")
+            raise
+    
+    def gen_playbook_by_characters(
+        self,
+        prompt: str,
+        chapter_content: str,
+        characters_data: Dict[str, Any],
+        model: str = None,
+        user_id: int = None,
+        creation_id: int = None,
+        novel_id: int = None
+    ) -> Dict[str, Any]:
+        """
+        根据章节内容和角色特征库生成分镜脚本
+
+        Args:
+            prompt: 分镜拆分提示词
+            chapter_content: 章节内容
+            characters_data: 人物特征库，格式：{"角色名": {...特征...}}
+            model: 模型名称，默认使用初始化时的模型
+            user_id: 用户ID（用于积分扣除，可选）
+            creation_id: 创作ID（用于积分扣除，可选）
+            novel_id: 小说ID（用于积分扣除，可选）
+
+        Returns:
+            解析后的 JSON 数据，包含场景拆解信息
+        """
+        # 构建人物特征库的文本描述
+        characters_text = "\n\n以下是人物特征库（生成图片提示词时必须从该库中提取角色信息）：\n"
+        characters_text += json.dumps(characters_data, ensure_ascii=False, indent=2)
+        
+        messages = [
+            {
+                "role": "user",
+                "content": f"{prompt}{characters_text}\n\n下面是章节内容：\n{chapter_content}",
+            }
+        ]
+
+        try:
+            response = self.chat_completion(
+                messages=messages,
+                model=model,
+                response_format={"type": "json_object"},
+                user_id=user_id,
+                creation_id=creation_id,
+                novel_id=novel_id
+            )
+            ai_content = response.get("content", "")
+            logger.info(f"分镜拆分 AI 返回内容: {ai_content}")
+
+            if not ai_content:
+                raise ValueError("AI 返回内容为空")
+            
+            # 将 AI 返回内容写入文件以便分析
+            self._save_ai_response(
+                ai_content,
+                model=model or self.llm_model_name,
+                file_type="json",
+                metadata={
+                    "prompt": prompt,
+                    "messages": messages,
+                    "user_id": user_id,
+                    "creation_id": creation_id,
+                    "novel_id": novel_id,
+                    "characters_data": characters_data,
+                }
+            )
+            
+            parsed_data = self._parse_json_response(ai_content)
+            scenes_count = len(parsed_data.get('场景拆解', []))
+            total_shots = sum(len(scene.get('分镜列表', [])) for scene in parsed_data.get('场景拆解', []))
+            logger.info(f"分镜拆分完成，生成 {scenes_count} 个场景，{total_shots} 个分镜")
+            return parsed_data
+
+        except Exception as e:
+            logger.error(f"分镜拆分失败: {e}")
             raise
     
     def _do_generate_image_by_prompt(
@@ -389,14 +585,14 @@ class AIClient:
         image_url = response.data[0].url
         return image_url
     
-    def generate_image_by_prompt(self, prompt: str, model: str = None, aspectRatio: str = "1024x576") -> str:
+    def generate_image_by_prompt(self, prompt: str, model: str = None, aspectRatio: str = None) -> str:
         """
         根据提示词生成图片（文生图，带重试机制）
         
         Args:
             prompt: 提示词
             model: 模型名称，默认使用初始化时的模型
-            aspectRatio: 图片尺寸
+            aspectRatio: 图片尺寸，如果为None则从模型配置中获取
             
         Returns:
             生成的图片URL
@@ -408,7 +604,20 @@ class AIClient:
         """
         # 文生图使用 text_to_image_model
         model = model or self.text_to_image_model
-        logger.info(f"生成图片开始（文生图），模型: {model}, 提示词长度: {len(prompt)}")
+        
+        # 如果没有指定 aspectRatio，从模型配置中获取
+        if aspectRatio is None:
+            try:
+                model_config = ModelConfigService.get_model_config(model, "text_to_image")
+                if model_config and "aspect_ratio" in model_config:
+                    aspectRatio = model_config["aspect_ratio"]
+                else:
+                    aspectRatio = "1024x576"  # 默认值
+            except Exception as e:
+                logger.warning(f"获取模型配置失败，使用默认 aspectRatio: {e}")
+                aspectRatio = "1024x576"  # 默认值
+        
+        logger.info(f"生成图片开始（文生图），模型: {model}, aspectRatio: {aspectRatio}, 提示词长度: {len(prompt)}")
         logger.info(f"【文生图提示词】: {prompt}")
         
         last_error = None
@@ -479,6 +688,134 @@ class AIClient:
             logger.error(error_msg)
             raise AIRetryExhaustedError(error_msg) from last_error
     
+    def _download_image_to_base64(self, image_url: str) -> str:
+        """
+        下载图片并转换为 Base64 编码
+        
+        Args:
+            image_url: 图片URL
+            
+        Returns:
+            Base64 编码的图片数据
+        """
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.get(image_url)
+                response.raise_for_status()
+                image_data = response.content
+                # 转换为 Base64
+                base64_data = base64.b64encode(image_data).decode('utf-8')
+                return base64_data
+        except Exception as e:
+            logger.error(f"下载图片并转换为 Base64 失败: {e}")
+            raise
+    
+    def _call_gemini_image_api(
+        self,
+        prompt: str,
+        reference_images_base64: List[str],
+        aspect_ratio: str = "16:9",
+        image_size: str = "2K"
+    ) -> str:
+        """
+        调用 Gemini 3 Pro Image API（Nano Banana2）
+        
+        Args:
+            prompt: 图片生成提示词（中文）
+            reference_images_base64: 参考图片的 Base64 编码列表
+            aspect_ratio: 图片宽高比，默认 "16:9"
+            image_size: 图片分辨率，默认 "2K"
+            
+        Returns:
+            生成的图片 Base64 编码
+        """
+        # 构建请求体
+        contents_parts = [{"text": prompt}]
+        
+        # 添加参考图片（输入图像）
+        for img_base64 in reference_images_base64:
+            contents_parts.append({
+                "inlineData": {
+                    "mimeType": "image/png",
+                    "data": img_base64
+                }
+            })
+        
+        request_body = {
+            "contents": [{
+                "role": "user",
+                "parts": contents_parts
+            }],
+            "generationConfig": {
+                "responseModalities": ["TEXT", "IMAGE"],
+                "imageConfig": {
+                    "aspectRatio": aspect_ratio,
+                    "imageSize": image_size
+                }
+            }
+        }
+        
+        # 构建 API URL
+        api_url = "https://api.modelverse.cn/v1beta/models/gemini-3-pro-image-preview:generateContent"
+        
+        # 发送请求
+        headers = {
+            "x-goog-api-key": self.api_key,
+            "Content-Type": "application/json"
+        }
+        
+        with httpx.Client(timeout=self.timeout) as client:
+            response = client.post(api_url, json=request_body, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+        
+        # 解析响应
+        if "error" in result:
+            error_msg = result["error"].get("message", "未知错误")
+            raise Exception(f"Gemini API 错误: {error_msg}")
+        
+        # 从响应中提取图片数据
+        candidates = result.get("candidates", [])
+        if not candidates:
+            raise Exception("Gemini API 返回空结果")
+        
+        content = candidates[0].get("content", {})
+        parts = content.get("parts", [])
+        
+        # 查找图片数据
+        for part in parts:
+            if "inlineData" in part:
+                image_base64 = part["inlineData"]["data"]
+                return image_base64
+        
+        raise Exception("Gemini API 响应中未找到图片数据")
+    
+    def _save_base64_image_to_temp_url(self, image_base64: str) -> str:
+        """
+        将 Base64 编码的图片保存为临时文件并返回本地标识
+        
+        Args:
+            image_base64: Base64 编码的图片数据
+            
+        Returns:
+            本地文件标识（格式为 "local://<abs_path>"，调用方可直接上传）
+        """
+        # 解码 Base64 图片
+        image_data = base64.b64decode(image_base64)
+        
+        # 保存到临时文件
+        import tempfile
+        temp_fd, temp_file_path = tempfile.mkstemp(suffix='.png')
+        try:
+            with os.fdopen(temp_fd, 'wb') as tmp_file:
+                tmp_file.write(image_data)
+            
+            # 返回本地文件标识，使用 "local://" 前缀以便调用方识别
+            return f"local://{temp_file_path}"
+        except Exception as e:
+            os.close(temp_fd)
+            raise Exception(f"保存临时图片失败: {e}")
+    
     def _do_generate_image_by_reference(
         self,
         prompt: str,
@@ -491,50 +828,91 @@ class AIClient:
         执行图生图调用的内部方法（不包含重试逻辑）
         
         Args:
-            prompt: 图片生成提示词（英文）
+            prompt: 图片生成提示词（英文或中文，根据模型决定）
             reference_images: 参考图片URL列表
             model: 模型名称
             aspect_ratio: 图片宽高比
-            guidance_scale: 引导尺度
+            guidance_scale: 引导尺度（Nano Banana2 不支持此参数）
         Returns:
             生成的图片URL
         """
-        # 构建extra_body参数
-        extra_body = {
-            "images": reference_images,
-            "aspect_ratio": aspect_ratio,
-            "guidance_scale": guidance_scale if guidance_scale else 3.5,
-            "negative_prompt": "bad hand, extra fingers, too dark, overexposed, color shift, monochromatic, ugly"
-        }
-        
-        response = self.ai_client.images.generate(
-            model=model,
-            prompt=prompt,
-            extra_body=extra_body,
-        )
-        
-        image_url = response.data[0].url
-
-        return image_url
+        # 检查是否为 Nano Banana2 模型
+        if model == "gemini-3-pro-image-preview":
+            # 使用 Gemini API
+            logger.info(f"使用 Nano Banana2 (Gemini) API 进行图生图")
+            
+            # 从模型配置中获取 image_size（默认 2K）
+            try:
+                model_config = ModelConfigService.get_model_config(model, "image_to_image")
+                image_size = model_config.get("image_size", "2K") if model_config else "2K"
+            except Exception as e:
+                logger.warning(f"获取模型配置失败，使用默认 image_size: {e}")
+                image_size = "2K"
+            
+            # 下载参考图片并转换为 Base64
+            reference_images_base64 = []
+            for img_url in reference_images:
+                try:
+                    base64_data = self._download_image_to_base64(img_url)
+                    reference_images_base64.append(base64_data)
+                    logger.info(f"成功下载并转换参考图片: {img_url}")
+                except Exception as e:
+                    logger.warning(f"下载参考图片失败，跳过: {e}")
+            
+            # if not reference_images_base64:
+            #     raise Exception("Nano Banana2 图生图需要至少一张参考图片，但所有参考图片下载失败")
+            
+            # 调用 Gemini API
+            image_base64 = self._call_gemini_image_api(
+                prompt=prompt,
+                reference_images_base64=reference_images_base64,
+                aspect_ratio=aspect_ratio,
+                image_size=image_size
+            )
+            
+            # 将 Base64 图片转换为临时文件并返回 URL
+            # 注意：这里返回的是临时文件路径，实际使用时需要上传到US3
+            # 为了保持接口一致性，我们创建一个临时URL
+            # 实际的上传逻辑在调用方（shot_task.py）中处理
+            temp_url = self._save_base64_image_to_temp_url(image_base64)
+            return temp_url
+        else:
+            # 使用原有的 OpenAI 兼容 API
+            # 构建extra_body参数
+            extra_body = {
+                "images": reference_images,
+                "aspect_ratio": aspect_ratio,
+                "guidance_scale": guidance_scale if guidance_scale else 3.5,
+                "negative_prompt": "bad hand, extra fingers, too dark, overexposed, color shift, monochromatic, ugly"
+            }
+            
+            response = self.ai_client.images.generate(
+                model=model,
+                prompt=prompt,
+                extra_body=extra_body,
+            )
+            
+            image_url = response.data[0].url
+            return image_url
     
     def generate_image_by_reference(
         self, 
         prompt: str, 
         reference_images: List[str], 
         model: str = None,
-        aspect_ratio: str = "16:9"
+        aspect_ratio: str = None
     ) -> str:
         """
         根据提示词和参考图片生成图片（图生图，带重试机制）
         
         Args:
-            prompt: 图片生成提示词（英文）
+            prompt: 图片生成提示词（英文或中文，根据模型决定）
             reference_images: 参考图片URL列表（shot关联的角色图片）
             model: 模型名称，默认使用 image_to_image_model（图生图模型）
-            aspect_ratio: 图片宽高比，格式为 "宽度:高度"，默认 "16:9"
+            aspect_ratio: 图片宽高比，格式为 "宽度:高度"，如果为None则从模型配置中获取
             
         Returns:
-            生成的图片URL
+            生成的图片URL（对于 Nano Banana2，返回临时文件路径，格式为 "temp://..."）
             
         Raises:
             AIContentModerationError: 内容审核失败（如涉及暴恐等敏感内容）
@@ -543,7 +921,20 @@ class AIClient:
         """
         # 图生图使用 image_to_image_model
         model = model or self.image_to_image_model
-        logger.info(f"图生图开始，模型: {model}, 提示词长度: {len(prompt)}, 参考图片数量: {len(reference_images)}")
+        
+        # 如果没有指定 aspect_ratio，从模型配置中获取
+        if aspect_ratio is None:
+            try:
+                model_config = ModelConfigService.get_model_config(model, "image_to_image")
+                if model_config and "aspect_ratio" in model_config:
+                    aspect_ratio = model_config["aspect_ratio"]
+                else:
+                    aspect_ratio = "16:9"  # 默认值
+            except Exception as e:
+                logger.warning(f"获取模型配置失败，使用默认 aspect_ratio: {e}")
+                aspect_ratio = "16:9"  # 默认值
+        
+        logger.info(f"图生图开始，模型: {model}, aspect_ratio: {aspect_ratio}, 提示词长度: {len(prompt)}, 参考图片数量: {len(reference_images)}")
         logger.info(f"【图生图提示词】: {prompt}")
         logger.info(f"【图生图参考图片】: {reference_images}")
         
@@ -807,22 +1198,43 @@ class AIClient:
         character_profiles: List[str],
         previous_shot_description: Optional[str],
         current_shot_description: str,
-        model: str = None
+        model: str = None,
+        image_model: str = None
     ) -> str:
         """
-        生成分镜图片的英文提示词
+        生成分镜图片的提示词（支持英文/中文输出）
         
         Args:
             character_profiles: 角色档案列表（1-4个角色的外貌特征描述，中文）
             previous_shot_description: 上一分镜描述（中文，可选）
             current_shot_description: 当前分镜描述（中文）
-            model: 模型名称，默认使用初始化时的模型
+            model: LLM模型名称，默认使用初始化时的模型
+            image_model: 图片模型名称（用于确定输出语言），默认使用 image_to_image_model
             
         Returns:
-            英文提示词（200词以内，末尾包含 "strictly preserve reference face and hairstyle"）
+            提示词（英文或中文，根据图片模型配置决定）
         """
         # 从文件加载prompt模板
         prompt_template = self._load_prompt_template("shot_image")
+        
+        # 确定输出语言：从图片模型配置中获取支持的语言
+        image_model = image_model or self.image_to_image_model
+        output_language = "英文"  # 默认英文
+        word_unit = "单词"  # 默认单词
+        max_words = 150  # 默认字数上限
+        
+        try:
+            model_config = ModelConfigService.get_model_config(image_model, "image_to_image")
+            if model_config and "languages" in model_config:
+                languages = model_config["languages"]
+                # 如果模型支持中文，使用中文输出
+                if "zh" in languages or "chinese" in [lang.lower() for lang in languages]:
+                    output_language = "中文"
+                    word_unit = "字"
+            if model_config and "max_words" in model_config:
+                max_words = model_config.get("max_words", max_words)
+        except Exception as e:
+            logger.warning(f"获取图片模型配置失败，使用默认英文输出: {e}")
         
         # 格式化角色档案
         character_profiles_text = "\n".join([f"- {profile}" for profile in character_profiles]) if character_profiles else "无"
@@ -830,11 +1242,14 @@ class AIClient:
         # 格式化上一分镜（如果为空则使用"无"）
         previous_shot_text = previous_shot_description if previous_shot_description else "无"
         
-        # 格式化prompt
+        # 格式化prompt（包含语言参数）
         formatted_prompt = prompt_template.format(
             character_profiles=character_profiles_text,
             previous_shot=previous_shot_text,
-            current_shot=current_shot_description
+            current_shot=current_shot_description,
+            output_language=output_language,
+            word_unit=word_unit,
+            max_words=max_words
         )
         
         messages = [

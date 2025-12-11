@@ -100,17 +100,47 @@ class ModelPrices:
         return round(cost, 6)  # 保留6位小数
     
     @classmethod
-    def calculate_image_cost(cls, model_name: str, image_count: int = 1) -> float:
+    def calculate_image_cost(
+        cls, 
+        model_name: str, 
+        image_count: int = 1,
+        reference_image_count: int = 0,
+        image_size: str = "2K"
+    ) -> float:
         """
         计算图片生成成本
         
         Args:
             model_name: 模型名称
-            image_count: 图片数量
+            image_count: 输出图片数量
+            reference_image_count: 参考图片数量（用于图生图，Nano Banana2 需要）
+            image_size: 图片分辨率（1K/2K/4K，Nano Banana2 需要）
             
         Returns:
             成本（元）
         """
+        # Nano Banana2 特殊计费逻辑
+        if model_name == "gemini-3-pro-image-preview":
+            # 输入图像：560 Tokens（$2.00/M Tokens 约 $0.0011 /张）
+            # 输出图像（1K/2K）：1120 Tokens（$120 /M Tokens 约 $0.134/张）
+            # 输出图像（4K）：2000 Tokens（$120 /M Tokens 约 $0.24/张）
+            # 汇率：1美元 ≈ 7.2人民币
+            
+            input_cost_per_image = 0.0011 * 7.2  # 约 0.008 元/张
+            
+            if image_size == "4K":
+                output_cost_per_image = 0.24 * 7.2  # 约 1.728 元/张
+            else:  # 1K 或 2K
+                output_cost_per_image = 0.134 * 7.2  # 约 0.965 元/张
+            
+            # 总成本 = 输入成本（参考图片） + 输出成本（生成的图片）
+            total_cost = (reference_image_count * input_cost_per_image) + (image_count * output_cost_per_image)
+            logger.info(f"Nano Banana2 特殊计费逻辑，总成本: {total_cost}")
+            logger.info(f"Nano Banana2 特殊计费逻辑，输入成本: {reference_image_count * input_cost_per_image}")
+            logger.info(f"Nano Banana2 特殊计费逻辑，输出成本: {image_count * output_cost_per_image}")
+            return round(total_cost, 6)
+        
+        # 其他模型使用配置的价格
         prices = cls._load_image_prices()
         price_per_image = prices.get(model_name, 0.35)  # 默认0.35元/张
         

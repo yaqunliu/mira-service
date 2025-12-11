@@ -12,6 +12,7 @@ class TaskType(str, Enum):
     
     # AI 生成任务
     CREATION_INIT = "creation_init"  # 创作初始化
+    CHARACTER_ANALYSIS = "character_analysis"  # 角色分析
     CHARACTER_IMAGE_GENERATION = "character_image_generation"  # 角色图片生成
     SCENE_DESCRIPTION_GENERATION = "scene_description_generation"  # 场景描述生成
     SHOT_IMAGE_GENERATION = "shot_image_generation"  # 分镜图片生成
