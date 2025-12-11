@@ -28,12 +28,14 @@ app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(BaseServiceException, service_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
 
-# 设置CORS
 if settings.BACKEND_CORS_ORIGINS:
     # 如果配置了允许的源，使用配置的源
+    cors_origins = [str(origin) for origin in settings.BACKEND_CORS_ORIGINS]
+    # 去除结尾的/
+    cors_origins = [origin.rstrip('/') for origin in cors_origins]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
