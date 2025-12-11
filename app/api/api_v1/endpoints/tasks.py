@@ -726,6 +726,7 @@ async def get_task_shots_progress(task_id: str, db: Session = Depends(get_db)):
                     "image_url": shot.image_url,
                     "image_prompt": shot.image_prompt,
                     "narration": shot.narration,
+                    "uuid": shot.uuid,
                     "status": shot_status,
                 })
             

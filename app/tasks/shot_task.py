@@ -5,6 +5,7 @@
 import os
 import uuid
 import tempfile
+import time
 from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
@@ -46,7 +47,10 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         Exception: 生图失败
     """
     db: Session = SessionLocal()
+    task_start = time.perf_counter()
     temp_file_path = None
+    start_time = time.perf_counter()
+    timings: Dict[str, float] = {}
     try:
         # 加载shot及其关联的角色和场景
         shot = (
@@ -63,24 +67,28 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         
         # 检查是否已有图片
         if shot.image_url:
-            logger.info(f"分镜 {shot_id} 已有图片，跳过生成")
+            total_sec = round(time.perf_counter() - start_time, 3)
+            logger.info(f"分镜 {shot_id} 已有图片，跳过生成 | total_sec={total_sec}s")
             return {
                 "shot_id": shot_id,
                 "shot_title": shot.title,
                 "success": True,
                 "image_url": shot.image_url,
-                "skipped": True
+                "skipped": True,
+                "duration_sec": total_sec,
             }
         
         # 检查是否有分镜描述（用于生成prompt）
         if not shot.description and not shot.image_prompt:
-            logger.warning(f"分镜 {shot_id} 没有分镜描述或图片提示词，跳过生成")
+            total_sec = round(time.perf_counter() - start_time, 3)
+            logger.warning(f"分镜 {shot_id} 没有分镜描述或图片提示词，跳过生成 | total_sec={total_sec}s")
             return {
                 "shot_id": shot_id,
                 "shot_title": shot.title,
                 "success": False,
                 "error": "没有分镜描述或图片提示词",
-                "skipped": True
+                "skipped": True,
+                "duration_sec": total_sec,
             }
         
         # 获取关联的角色及其图片URL
@@ -145,24 +153,29 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         
         # 生成提示词（即使没有参考图也用统一流程）
         logger.info(f"开始为分镜 {shot_id} 生成图片提示词（统一流程，参考图数量: {len(character_images)}）")
+        prompt_start = time.perf_counter()
         english_prompt = ai_client.generate_shot_image_prompt(
             character_profiles=character_profiles,
             previous_shot_description=previous_shot_description,
             current_shot_description=current_shot_description,
             image_model=image_to_image_model  # 传入图片模型以确定输出语言
         )
+        timings["prompt_sec"] = round(time.perf_counter() - prompt_start, 3)
         logger.info(f"生成的英文提示词长度: {len(english_prompt)}")
         
         # 使用同一模型生成图片；参考图可为空
         logger.info(f"开始为分镜 {shot_id} 调用图生图接口，参考图数量: {len(character_images)}")
+        image_start = time.perf_counter()
         temp_image_url = ai_client.generate_image_by_reference(
             prompt=english_prompt,
             reference_images=character_images,  # 可为空
             model=image_to_image_model  # 使用配置的模型
         )
+        timings["image_api_sec"] = round(time.perf_counter() - image_start, 3)
         
         # 从本地/URL 获取图像并上传到US3进行持久化
         try:
+            persist_start = time.perf_counter()
             # 检查是否为本地文件标识（Nano Banana2 返回格式为 "local://..."）
             if temp_image_url.startswith("local://"):
                 # 直接使用本地文件路径
@@ -215,12 +228,14 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             logger.info(f"图像上传US3成功，持久化URL: {persistent_image_url}")
             
             image_url = persistent_image_url
+            timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
             
         except Exception as e:
             # 如果US3上传失败，记录错误但继续使用临时URL（降级处理）
             error_msg = f"图像上传US3失败，使用临时URL: {str(e)}"
             logger.warning(error_msg, exc_info=True)
             image_url = temp_image_url
+            timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
         finally:
             # 清理临时文件
             if temp_file_path and os.path.exists(temp_file_path):
@@ -247,12 +262,19 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 logger.opt(exception=True).error("确认扣除冻结积分失败: {}", str(e))
                 # 确认失败不影响任务完成，但需要记录错误
         
-        logger.info(f"分镜 {shot.title}(ID: {shot_id}) 图片生成成功")
+        total_sec = round(time.perf_counter() - start_time, 3)
+        logger.info(
+            f"分镜 {shot.title}(ID: {shot_id}) 图片生成成功 | "
+            f"model={image_to_image_model} | refs={len(character_images)} | "
+            f"timings={timings} | total_sec={total_sec}s"
+        )
         return {
             "shot_id": shot_id,
             "shot_title": shot.title,
             "success": True,
-            "image_url": image_url
+            "image_url": image_url,
+            "duration_sec": total_sec,
+            "timings": timings,
         }
     except Exception as e:
         logger.opt(exception=True).error("分镜 {} 图片生成失败: {}", shot_id, str(e))
@@ -270,10 +292,16 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 logger.opt(exception=True).error("释放冻结积分失败: {}", str(release_error))
         
         db.rollback()
+        total_sec = round(time.perf_counter() - start_time, 3)
+        logger.warning(
+            f"分镜 {shot_id} 图片生成失败 | total_sec={total_sec}s | timings={timings} | error={str(e)}"
+        )
         return {
             "shot_id": shot_id,
             "success": False,
-            "error": str(e)
+            "error": str(e),
+            "duration_sec": total_sec,
+            "timings": timings,
         }
     finally:
         db.close()
@@ -422,6 +450,7 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
         包含所有分镜处理结果的字典
     """
     db: Session = SessionLocal()
+    task_start = time.perf_counter()
     try:
         ##X## Debug 模式下抛出测试异常 - 测试分镜图片生成错误
         # if settings.DEBUG:
@@ -679,9 +708,11 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
             # 更新状态失败不影响最终返回
             logger.warning("更新最终进度状态失败，继续返回结果")
         
+        total_sec = round(time.perf_counter() - task_start, 3)
         logger.info(
             f"创作 {creation_id} 分镜图片生成完成: "
-            f"总数={total_shots}, 成功={success_count}, 失败={failed_count}"
+            f"总数={total_shots}, 成功={success_count}, 失败={failed_count}, "
+            f"total_sec={total_sec}s"
         )
         
         return {
@@ -773,6 +804,7 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
         }
     
     total_count = len(shot_ids)
+    task_start = time.perf_counter()
     logger.info(f"开始并发生成 {total_count} 个分镜的图片: {shot_ids}")
     
     db: Session = SessionLocal()
@@ -957,9 +989,10 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
                     })
         
         # 任务完成
+        total_sec = round(time.perf_counter() - task_start, 3)
         logger.info(
             f"分镜图片生成任务完成: 总数={total_count}, "
-            f"成功={success_count}, 失败={failed_count}"
+            f"成功={success_count}, 失败={failed_count}, total_sec={total_sec}s"
         )
         
         return {

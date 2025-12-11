@@ -18,6 +18,7 @@ import httpx
 import uuid
 import tempfile
 import os
+import time
 
 
 def _generate_single_character_image(character_id: int, visual_style: str, force_regenerate: bool = True) -> dict:
@@ -37,6 +38,8 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         Exception: 生图失败
     """
     db: Session = SessionLocal()
+    start_time = time.perf_counter()
+    timings = {}
     try:
         character = (
             db.query(Character)
@@ -78,13 +81,16 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         
         # 调用生图API（使用配置的模型，aspect_ratio 会从模型配置中自动获取）
         ai_client = AIClient(text_to_image_model=text_to_image_model)
+        image_start = time.perf_counter()
         temp_image_url = ai_client.generate_image_by_prompt(
             prompt=image_prompt,
             model=text_to_image_model
         )
+        timings["image_api_sec"] = round(time.perf_counter() - image_start, 3)
         
         # 从临时URL下载图像并上传到US3进行持久化
         temp_file_path = None
+        persist_start = time.perf_counter()
         try:
             logger.info(f"从URL下载图像: {temp_image_url}")
             # 下载图像
@@ -128,12 +134,14 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
             
             # 使用US3持久化URL
             image_url = persistent_image_url
+            timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
             
         except Exception as e:
             # 如果US3上传失败，记录错误但继续使用临时URL（降级处理）
             error_msg = f"图像上传US3失败，使用临时URL: {str(e)}"
             logger.warning(error_msg, exc_info=True)
             image_url = temp_image_url  # 降级使用临时URL
+            timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
         finally:
             # 清理临时文件
             if temp_file_path and os.path.exists(temp_file_path):
@@ -194,21 +202,33 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         if creation_id:
             db.refresh(creation)
         
-        logger.info(f"角色 {character.name}(ID: {character_id}) 图片生成成功")
+        total_sec = round(time.perf_counter() - start_time, 3)
+        logger.info(
+            f"角色 {character.name}(ID: {character_id}) 图片生成成功 | "
+            f"timings={timings} | total_sec={total_sec}s"
+        )
         return {
             "character_id": character_id,
             "character_name": character.name,
             "success": True,
             "skipped": False,
-            "image_url": image_url
+            "image_url": image_url,
+            "duration_sec": total_sec,
+            "timings": timings,
         }
     except Exception as e:
         logger.opt(exception=True).error("角色 {} 图片生成失败: {}", character_id, str(e))
         db.rollback()
+        total_sec = round(time.perf_counter() - start_time, 3)
+        logger.warning(
+            f"角色 {character_id} 图片生成失败 | total_sec={total_sec}s | timings={timings} | error={str(e)}"
+        )
         return {
             "character_id": character_id,
             "success": False,
-            "error": str(e)
+            "error": str(e),
+            "duration_sec": total_sec,
+            "timings": timings,
         }
     finally:
         db.close()
@@ -268,6 +288,7 @@ def generate_character_image_task(
         db.close()
 
     total_count = len(character_ids)
+    task_start = time.perf_counter()
     logger.info(f"开始并发生成 {total_count} 个角色的图片: {character_ids}")
     
     # 更新任务状态
@@ -373,9 +394,11 @@ def generate_character_image_task(
             db.close()
 
         # 任务完成
+        total_sec = round(time.perf_counter() - task_start, 3)
         logger.info(
             f"角色图片生成任务完成: 总数={total_count}, "
-            f"成功={success_count}, 跳过={skipped_count}, 失败={failed_count}"
+            f"成功={success_count}, 跳过={skipped_count}, 失败={failed_count}, "
+            f"total_sec={total_sec}s"
         )
 
         return {
