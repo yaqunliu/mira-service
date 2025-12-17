@@ -39,7 +39,9 @@ class WebhookService:
 
     @staticmethod
     def process_event(db: Session, payload: Dict[str, Any]):
-        event_type = payload.get("type") or payload.get("event")
+        # 支持多种事件类型字段名：eventType, type, event
+        event_type = payload.get("eventType") or payload.get("type") or payload.get("event")
+        # 支持多种事件ID字段名：id, event_id
         creem_event_id = payload.get("id") or payload.get("event_id")
         if not event_type:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="缺少事件类型")
@@ -168,13 +170,20 @@ class WebhookService:
 
     @staticmethod
     def _handle_subscription_update(db: Session, payload: Dict[str, Any]):
-        data = payload.get("data") or payload.get("object") or {}
-        subscription_id = WebhookService._get(data, ["id", "subscription_id"])
+        # 支持 payload.object 格式（Creem 实际格式）
+        data = payload.get("object") or payload.get("data") or {}
+        subscription_id = data.get("id") or WebhookService._get(data, ["subscription_id"])
         order_uuid = WebhookService._get(data, ["metadata", "order_uuid"])
-        status_value = WebhookService._get(data, ["status"])
-        period_start = WebhookService._parse_datetime(WebhookService._get(data, ["current_period_start"]))
-        period_end = WebhookService._parse_datetime(WebhookService._get(data, ["current_period_end"]))
-        next_billing = WebhookService._parse_datetime(WebhookService._get(data, ["next_billing_date"]))
+        status_value = data.get("status")
+        period_start = WebhookService._parse_datetime(
+            data.get("current_period_start_date") or WebhookService._get(data, ["current_period_start"])
+        )
+        period_end = WebhookService._parse_datetime(
+            data.get("current_period_end_date") or WebhookService._get(data, ["current_period_end"])
+        )
+        next_billing = WebhookService._parse_datetime(
+            data.get("next_transaction_date") or WebhookService._get(data, ["next_billing_date"])
+        )
 
         subscription = (
             db.query(Subscription)
@@ -205,12 +214,15 @@ class WebhookService:
 
     @staticmethod
     def _handle_subscription_cancelled(db: Session, payload: Dict[str, Any]):
-        data = payload.get("data") or payload.get("object") or {}
-        subscription_id = WebhookService._get(data, ["id", "subscription_id"])
+        # 支持 payload.object 格式（Creem 实际格式）
+        data = payload.get("object") or payload.get("data") or {}
+        subscription_id = data.get("id") or WebhookService._get(data, ["subscription_id"])
         subscription = db.query(Subscription).filter(Subscription.creem_subscription_id == subscription_id).first()
         if subscription:
             subscription.status = "cancelled"
-            subscription.cancelled_at = datetime.utcnow()
+            # 如果 webhook 中有 canceled_at，使用它；否则使用当前时间
+            canceled_at = WebhookService._parse_datetime(data.get("canceled_at"))
+            subscription.cancelled_at = canceled_at or datetime.utcnow()
             db.commit()
 
     @staticmethod
@@ -225,11 +237,34 @@ class WebhookService:
 
     @staticmethod
     def _handle_invoice_paid(db: Session, payload: Dict[str, Any]):
-        data = payload.get("data") or payload.get("object") or {}
-        subscription_id = WebhookService._get(data, ["subscription_id", "subscription"])
-        invoice_id = WebhookService._get(data, ["id", "invoice_id"])
-        period_start = WebhookService._parse_datetime(WebhookService._get(data, ["period_start", "current_period_start"]))
-        period_end = WebhookService._parse_datetime(WebhookService._get(data, ["period_end", "current_period_end"]))
+        # 支持 payload.object 格式（Creem 实际格式）
+        data = payload.get("object") or payload.get("data") or {}
+        
+        # 订阅ID：可能在 object.id 或 object.subscription 或 last_transaction.subscription
+        subscription_id = (
+            data.get("id") or  # object.id (订阅ID)
+            WebhookService._get(data, ["subscription_id", "subscription"]) or
+            WebhookService._get(data, ["last_transaction", "subscription"])
+        )
+        
+        # 发票/交易ID：可能在 object.last_transaction.id 或 object.last_transaction_id
+        invoice_id = (
+            WebhookService._get(data, ["last_transaction", "id"]) or
+            data.get("last_transaction_id") or
+            WebhookService._get(data, ["id", "invoice_id"])
+        )
+        
+        # 周期信息：优先从 last_transaction 获取，其次从 object 直接获取
+        period_start = (
+            WebhookService._parse_datetime(WebhookService._get(data, ["last_transaction", "period_start"])) or
+            WebhookService._parse_datetime(WebhookService._get(data, ["current_period_start_date"])) or
+            WebhookService._parse_datetime(WebhookService._get(data, ["period_start", "current_period_start"]))
+        )
+        period_end = (
+            WebhookService._parse_datetime(WebhookService._get(data, ["last_transaction", "period_end"])) or
+            WebhookService._parse_datetime(WebhookService._get(data, ["current_period_end_date"])) or
+            WebhookService._parse_datetime(WebhookService._get(data, ["period_end", "current_period_end"]))
+        )
 
         subscription = db.query(Subscription).filter(Subscription.creem_subscription_id == subscription_id).first()
         if not subscription:
@@ -246,7 +281,7 @@ class WebhookService:
         subscription.current_period_start = period_start or subscription.current_period_start
         subscription.current_period_end = period_end or subscription.current_period_end
         subscription.next_billing_date = WebhookService._parse_datetime(
-            WebhookService._get(data, ["next_billing_date", "next_transaction_date"])
+            data.get("next_transaction_date") or WebhookService._get(data, ["next_billing_date"])
         ) or subscription.next_billing_date
         # 更新 metadata（如果 webhook 中有）
         if data.get("metadata"):
@@ -279,11 +314,20 @@ class WebhookService:
         if isinstance(value, datetime):
             return value
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            # 尝试解析 ISO 格式字符串
+            if isinstance(value, str):
+                # 处理 ISO 格式：2025-12-17T07:21:51.538Z
+                iso_str = value.replace("Z", "+00:00")
+                return datetime.fromisoformat(iso_str)
         except Exception:
-            try:
-                # epoch seconds
-                return datetime.utcfromtimestamp(float(value))
-            except Exception:
-                return None
+            pass
+        try:
+            # 尝试解析时间戳（支持秒和毫秒）
+            timestamp = float(value)
+            # 如果时间戳大于 1e10，认为是毫秒时间戳，需要除以 1000
+            if timestamp > 1e10:
+                timestamp = timestamp / 1000.0
+            return datetime.utcfromtimestamp(timestamp)
+        except Exception:
+            return None
 
