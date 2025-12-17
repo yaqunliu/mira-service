@@ -263,11 +263,23 @@ class UploadHelper:
                 download_suffix=self.internal_download_suffix
             )
             
+            # 根据文件扩展名推断 Content-Type
+            content_type = None
+            if filename.lower().endswith('.png'):
+                content_type = 'image/png'
+            elif filename.lower().endswith(('.jpg', '.jpeg')):
+                content_type = 'image/jpeg'
+            elif filename.lower().endswith('.gif'):
+                content_type = 'image/gif'
+            elif filename.lower().endswith('.webp'):
+                content_type = 'image/webp'
+            
             # 使用流式上传
             upload_result = us3_client.upload_file_stream(
                 file_stream=file_data,
                 bucket=bucket or self.bucket,
-                put_key=put_key
+                put_key=put_key,
+                content_type=content_type
             )
             
             if not upload_result.get('success'):

@@ -10,6 +10,7 @@ import time
 import hashlib
 from typing import Dict, Any, Optional, List, Union
 from pathlib import Path
+from io import BytesIO
 from app.core.config import settings
 from app.core.logger import logger
 
@@ -304,6 +305,7 @@ class US3Client:
         bucket: str = None,
         put_key: str = None,
         header: Dict[str, str] = None,
+        content_type: str = None,
     ) -> Dict[str, Any]:
         """
         上传文件流到US3
@@ -313,6 +315,7 @@ class US3Client:
             bucket: 存储空间名称
             put_key: 上传文件在空间中的名称
             header: 请求头
+            content_type: 内容类型（如 'image/png', 'image/jpeg'）
 
         Returns:
             包含上传结果的字典
@@ -323,12 +326,58 @@ class US3Client:
             if not put_key:
                 raise ValueError("上传文件流时必须指定put_key")
 
-            logger.info(f"开始上传文件流: {bucket}/{put_key}")
+            logger.info(f"开始上传文件流: {bucket}/{put_key}, 大小: {len(file_stream)} 字节")
 
-            # 上传文件流
-            ret, resp = self.file_manager.putfile(
-                bucket, put_key, file_stream, header=header
-            )
+            # 确保 put_key 是字符串类型（UTF-8编码）
+            if isinstance(put_key, bytes):
+                put_key = put_key.decode('utf-8')
+            
+            # 确保 file_stream 是 bytes 类型
+            if not isinstance(file_stream, bytes):
+                if hasattr(file_stream, 'read'):
+                    # 如果是文件对象，读取为 bytes
+                    file_stream = file_stream.read()
+                else:
+                    raise ValueError(f"file_stream 必须是 bytes 类型，当前类型: {type(file_stream)}")
+            
+            # 设置请求头，确保正确处理二进制数据
+            if header is None:
+                header = {}
+            
+            # 如果指定了 content_type，添加到 header 中
+            if content_type and 'Content-Type' not in header:
+                header['Content-Type'] = content_type
+            
+            # 使用临时文件方式上传，避免编码问题
+            # US3 SDK 的 putfile 可能对 BytesIO 支持不好，使用临时文件更可靠
+            import tempfile
+            temp_file_path = None
+            try:
+                # 创建临时文件
+                temp_fd, temp_file_path = tempfile.mkstemp()
+                try:
+                    with os.fdopen(temp_fd, 'wb') as tmp_file:
+                        tmp_file.write(file_stream)
+                    
+                    # 使用临时文件路径上传
+                    ret, resp = self.file_manager.putfile(
+                        bucket, put_key, temp_file_path, header=header
+                    )
+                finally:
+                    # 清理临时文件
+                    if temp_file_path and os.path.exists(temp_file_path):
+                        try:
+                            os.remove(temp_file_path)
+                        except Exception as e:
+                            logger.warning(f"删除临时文件失败: {temp_file_path}, {str(e)}")
+            except Exception as e:
+                # 如果临时文件方式失败，清理并重新抛出异常
+                if temp_file_path and os.path.exists(temp_file_path):
+                    try:
+                        os.remove(temp_file_path)
+                    except:
+                        pass
+                raise
 
             if resp.status_code == 200:
                 logger.info(f"文件流上传成功: {bucket}/{put_key}")
