@@ -18,6 +18,11 @@ app = Celery(
         "app.tasks.shot_task",
         "app.tasks.full_generation_task",
         "app.tasks.points_task",
+        "app.tasks.subscription_task",
+        "app.tasks.order_poll_task",
+        "app.tasks.subscription_poll_task",
+        "app.tasks.product_sync_task",
+        "app.tasks.subscription_sync_task",
     ]
 )
 
@@ -38,6 +43,9 @@ app.conf.update(
     broker_connection_retry=True,  # 启用连接重试
     broker_connection_max_retries=10,  # 最大重试次数
     broker_connection_retry_delay=1.0,  # 重试延迟（秒）
+    # Beat 调度器配置
+    # 默认使用 PersistentScheduler，调度状态存储在 celerybeat-schedule 文件中
+    # 如果需要使用 Redis 存储，可以安装 redbeat 并使用: beat_scheduler="redbeat.RedBeatScheduler"
 )
 
 # 定时任务配置
@@ -45,6 +53,26 @@ app.conf.beat_schedule = {
     'expire-daily-points': {
         'task': 'expire_daily_points_task',
         'schedule': crontab(hour=0, minute=0),  # 每天 00:00 执行
+    },
+    'issue-subscription-points-monthly': {
+        'task': 'issue_subscription_points_monthly',
+        'schedule': crontab(hour=0, minute=10),  # 每天 00:10 兜底月度发放
+    },
+    'poll-pending-orders': {
+        'task': 'poll_pending_orders',
+        'schedule': crontab(minute='*/3'),  # 每5分钟兜底查询一次未支付订单
+    },
+    'poll-subscriptions-billing': {
+        'task': 'poll_subscriptions_billing',
+        'schedule': crontab(minute='*/10'),  # 每10分钟兜底查询计费日内订阅
+    },
+    'sync-products-hourly': {
+        'task': 'sync_products',
+        'schedule': crontab(minute=0),  # 每小时的第0分钟执行
+    },
+    'sync-subscriptions-daily': {
+        'task': 'sync_subscriptions',
+        'schedule': crontab(hour=2, minute=0),  # 每天 02:00 执行
     },
 }
 

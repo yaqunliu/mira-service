@@ -11,6 +11,10 @@ from app.api.api_v1.endpoints import (
     voices,
     points,
     model_configs,
+    products,
+    orders,
+    subscriptions,
+    webhooks,
 )
 
 api_router = APIRouter()
@@ -47,4 +51,10 @@ api_router.include_router(points.router, prefix="/points", tags=["积分管理"]
 
 # 模型配置路由
 api_router.include_router(model_configs.router, prefix="/model-configs", tags=["模型配置"])
+
+# 产品 / 订单 / 订阅 / Webhook
+api_router.include_router(products.router, prefix="/products", tags=["产品"])
+api_router.include_router(orders.router, prefix="/orders", tags=["订单"])
+api_router.include_router(subscriptions.router, prefix="/subscriptions", tags=["订阅"])
+api_router.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 

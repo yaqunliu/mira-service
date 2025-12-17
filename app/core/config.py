@@ -56,9 +56,34 @@ class Settings(BaseSettings):
     # - /1: 数据库1
     # - Redis 默认有 16 个数据库（0-15）
     # - 不同数据库之间数据完全隔离
+    # Redis 密码（可选，如果设置了密码，URL 格式为：redis://:password@host:port/db）
+    REDIS_PASSWORD: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"  # 通用 Redis URL（向后兼容）
     REDIS_BROKER_URL: str = "redis://localhost:6379/0"  # Celery Broker（任务队列）
     REDIS_BACKEND_URL: str = "redis://localhost:6379/1"  # Celery Backend（结果存储）
+    
+    @model_validator(mode="after")
+    def assemble_redis_urls(self) -> "Settings":
+        """根据 REDIS_PASSWORD 自动构建 Redis URL"""
+        # 如果设置了密码，更新 Redis URL
+        if self.REDIS_PASSWORD:
+            # Redis URL 格式：redis://:password@host:port/db
+            # 解析现有 URL 以获取 host、port 和 db
+            import re
+            url_pattern = re.compile(r"redis://(?:([^:@]+):([^@]+)@)?([^:/]+):(\d+)/(\d+)")
+            
+            def build_redis_url_with_password(url: str) -> str:
+                match = url_pattern.match(url)
+                if match:
+                    _, _, host, port, db = match.groups()
+                    return f"redis://:{self.REDIS_PASSWORD}@{host}:{port}/{db}"
+                return url
+            
+            self.REDIS_URL = build_redis_url_with_password(self.REDIS_URL)
+            self.REDIS_BROKER_URL = build_redis_url_with_password(self.REDIS_BROKER_URL)
+            self.REDIS_BACKEND_URL = build_redis_url_with_password(self.REDIS_BACKEND_URL)
+        
+        return self
     
     # 文件上传配置
     UPLOAD_DIR: str = "./uploads"
@@ -128,6 +153,14 @@ class Settings(BaseSettings):
     MODEL_PRICES_LLM: str = '{"Qwen/Qwen-Plus": {"input": 0.8, "output": 2.0}}'  # LLM模型价格：输入/输出价格（元/百万tokens）
     MODEL_PRICES_IMAGE: str = '{"gemini-3-pro-image-preview": 0.97, "black-forest-labs/flux-kontext-pro/multi": 0.35}'  # 图片模型价格：元/张（Nano Banana2: 0.97元/张，基于1张参考图+2K输出）
     MODEL_PRICES_AUDIO: str = '{"s1": 120}'  # 音频模型价格：元/兆字节
+    
+    # Creem 支付配置
+    CREEM_API_KEY: str = ""
+    CREEM_API_URL: AnyHttpUrl | str = "https://api.creem.io"
+    CREEM_TIMEOUT: int = 15  # 秒
+    CREEM_WEBHOOK_SECRET: str = ""  # 如果 Creem 支持签名校验
+    CREEM_CHECKOUT_SUCCESS_URL: str = ""  # 默认支付成功回调
+    CREEM_CHECKOUT_CANCEL_URL: str = ""  # 默认支付取消回调
     
     ENABLE_TEST_EXCEPTION: str = "false"
     class Config:
