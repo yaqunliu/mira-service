@@ -43,6 +43,24 @@ class OrderService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择订阅类产品")
         if order_type == "onetime" and product.billing_type != "onetime":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择一次性产品")
+        
+        # 检查订阅产品是否已存在活跃订阅（防止重复购买）
+        if order_type == "subscription":
+            existing_subscription = (
+                db.query(Subscription)
+                .join(Order, Subscription.order_id == Order.order_id)
+                .filter(
+                    Subscription.user_id == user.user_id,
+                    Order.product_id == product.product_id,
+                    Subscription.status.in_(["active", "past_due"]),  # 活跃或逾期状态都算作已有订阅
+                )
+                .first()
+            )
+            if existing_subscription:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"您已拥有该产品的活跃订阅，无法重复购买。订阅状态：{existing_subscription.status}"
+                )
 
         order_number = OrderService._generate_order_number()
         order = Order(

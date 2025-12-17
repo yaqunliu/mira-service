@@ -29,7 +29,12 @@ class SubscriptionService:
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[Subscription], int]:
-        query = db.query(Subscription).filter(Subscription.user_id == user_id)
+        from sqlalchemy.orm import joinedload
+        query = (
+            db.query(Subscription)
+            .options(joinedload(Subscription.order).joinedload(Order.product))
+            .filter(Subscription.user_id == user_id)
+        )
         total = query.count()
         items = (
             query.order_by(Subscription.created_at.desc().nullslast())
@@ -38,6 +43,99 @@ class SubscriptionService:
             .all()
         )
         return items, total
+
+    @staticmethod
+    def get_active_subscriptions_by_product(
+        db: Session,
+        user_id: int,
+    ) -> List[Subscription]:
+        """
+        获取用户当前活跃的订阅，按产品分组（每个产品只返回最新的活跃订阅）
+        用于检查用户是否已拥有某个产品的订阅
+        """
+        from app.models.order import Order
+        from sqlalchemy.orm import joinedload
+        
+        # 查询所有活跃订阅（包括 past_due，因为用户可能还在使用）
+        active_subscriptions = (
+            db.query(Subscription)
+            .options(joinedload(Subscription.order).joinedload(Order.product))
+            .join(Order, Subscription.order_id == Order.order_id)
+            .filter(
+                Subscription.user_id == user_id,
+                Subscription.status.in_(["active", "past_due"]),
+            )
+            .order_by(Subscription.created_at.desc())
+            .all()
+        )
+        
+        # 按产品分组，每个产品只保留最新的订阅
+        product_subscription_map = {}
+        for sub in active_subscriptions:
+            product_id = sub.order.product_id
+            if product_id not in product_subscription_map:
+                product_subscription_map[product_id] = sub
+        
+        return list(product_subscription_map.values())
+
+    @staticmethod
+    def get_active_subscription_by_product_id(
+        db: Session,
+        user_id: int,
+        product_id: int,
+    ) -> Subscription | None:
+        """
+        获取用户对指定产品的活跃订阅
+        """
+        from app.models.order import Order
+        from sqlalchemy.orm import joinedload
+        
+        subscription = (
+            db.query(Subscription)
+            .options(joinedload(Subscription.order).joinedload(Order.product))
+            .join(Order, Subscription.order_id == Order.order_id)
+            .filter(
+                Subscription.user_id == user_id,
+                Order.product_id == product_id,
+                Subscription.status.in_(["active", "past_due"]),
+            )
+            .order_by(Subscription.created_at.desc())
+            .first()
+        )
+        return subscription
+
+    @staticmethod
+    def get_customer_portal_url(db: Session, user_id: int, subscription_uuid: str) -> str:
+        """
+        获取订阅的客户门户 URL（用于在 Creem 客户门户管理订阅）
+        如果 Creem 提供了客户门户 URL，则返回；否则返回基于订阅 ID 的 URL
+        """
+        subscription = SubscriptionService.get_by_uuid(db, user_id, subscription_uuid)
+        if not subscription:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="订阅不存在")
+        
+        # 尝试从 Creem API 获取订阅详情，看是否包含客户门户 URL
+        try:
+            creem_sub = creem_client.get_subscription(subscription.creem_subscription_id)
+            # 检查 Creem 返回的数据中是否包含客户门户 URL
+            portal_url = creem_sub.get("customer_portal_url") or creem_sub.get("portal_url") or creem_sub.get("manage_url")
+            if portal_url:
+                return portal_url
+        except Exception as e:
+            logger.warning(f"获取 Creem 订阅详情失败，使用默认 URL: {e}")
+        
+        # 如果没有客户门户 URL，构建默认的客户门户 URL
+        # 基于 Creem API URL 构建：api.creem.io -> creem.io
+        from app.core.config import settings
+        creem_base_url = str(settings.CREEM_API_URL).replace("api.", "")
+        # 如果还是 api.creem.io，则使用 creem.io
+        if "api.creem.io" in creem_base_url:
+            creem_base_url = "https://creem.io"
+        
+        # 构建客户门户 URL（常见的支付平台客户门户 URL 格式）
+        # 注意：这需要根据 Creem 的实际客户门户 URL 格式调整
+        portal_url = f"{creem_base_url}/customer-portal?subscription_id={subscription.creem_subscription_id}"
+        return portal_url
 
     @staticmethod
     def cancel_subscription(
