@@ -134,65 +134,52 @@ class WebhookService:
             logger.warning(f"checkout.completed 找不到订单: checkout_id={checkout_id}, creem_order_id={creem_order_id}, order_uuid={order_uuid}")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="订单不存在")
 
+        # 标记订单为已支付（如果是订阅订单，mark_paid 内部会创建订阅记录并发放首期积分）
         OrderService.mark_paid(db, order, creem_transaction_id=creem_transaction_id, paid_at=paid_at)
 
-        # 若为订阅，创建订阅记录并发放首期积分
+        # 若为订阅，更新订阅信息（mark_paid 已创建订阅记录，这里只需要更新周期信息）
         if order.order_type == "subscription":
-            subscription = SubscriptionService.upsert_from_webhook(
-                db=db,
-                user_id=order.user_id,
-                order=order,
-                creem_subscription_id=subscription_id or checkout_id or order.creem_checkout_id,
-                status="active" if status == "paid" else status,
-                billing_period=order.product.billing_period,
-                current_period_start=paid_at or datetime.utcnow(),
-                current_period_end=None,
-                next_billing_date=None,
-                points_per_period=order.points_amount,
-                metadata=data.get("metadata"),
+            subscription = (
+                db.query(Subscription)
+                .filter(Subscription.order_id == order.order_id)
+                .first()
             )
             
-            # 如果订阅ID存在，尝试从 webhook payload 或 Creem API 获取完整订阅信息
-            subscription_obj = data.get("subscription")
-            if isinstance(subscription_obj, dict):
-                # 从 webhook payload 中获取订阅信息
-                subscription.current_period_start = WebhookService._parse_datetime(
-                    subscription_obj.get("current_period_start_date")
-                ) or subscription.current_period_start
-                subscription.current_period_end = WebhookService._parse_datetime(
-                    subscription_obj.get("current_period_end_date")
-                ) or subscription.current_period_end
-                subscription.next_billing_date = WebhookService._parse_datetime(
-                    subscription_obj.get("next_transaction_date")
-                ) or subscription.next_billing_date
-                db.commit()
-                logger.info(f"从 webhook payload 同步订阅信息成功: {subscription.creem_subscription_id}")
-            elif subscription.creem_subscription_id and not subscription.current_period_end:
-                # 如果 webhook 中没有订阅信息，尝试从 Creem API 获取
-                try:
-                    from app.services.creem_client import creem_client
-                    creem_sub = creem_client.get_subscription(subscription.creem_subscription_id)
+            if subscription:
+                # 如果订阅ID存在，尝试从 webhook payload 或 Creem API 获取完整订阅信息
+                subscription_obj = data.get("subscription")
+                if isinstance(subscription_obj, dict):
+                    # 从 webhook payload 中获取订阅信息
+                    subscription.current_period_start = WebhookService._parse_datetime(
+                        subscription_obj.get("current_period_start_date")
+                    ) or subscription.current_period_start
                     subscription.current_period_end = WebhookService._parse_datetime(
-                        creem_sub.get("current_period_end_date")
-                    )
+                        subscription_obj.get("current_period_end_date")
+                    ) or subscription.current_period_end
                     subscription.next_billing_date = WebhookService._parse_datetime(
-                        creem_sub.get("next_transaction_date")
-                    )
-                    if not subscription.subscription_metadata:
-                        subscription.subscription_metadata = creem_sub.get("metadata")
+                        subscription_obj.get("next_transaction_date")
+                    ) or subscription.next_billing_date
                     db.commit()
-                    logger.info(f"从 Creem API 同步订阅信息成功: {subscription.creem_subscription_id}")
-                except Exception as e:
-                    logger.warning(f"从 Creem API 获取订阅详情失败: {e}")
-            
-            SubscriptionService.issue_cycle_points(
-                db=db,
-                subscription=subscription,
-                order=order,
-                period_start=subscription.current_period_start or paid_at or datetime.utcnow(),
-                period_end=subscription.current_period_end or datetime.utcnow(),
-                creem_invoice_id=None,
-            )
+                    logger.info(f"从 webhook payload 同步订阅信息成功: {subscription.creem_subscription_id}")
+                elif subscription.creem_subscription_id and not subscription.current_period_end:
+                    # 如果 webhook 中没有订阅信息，尝试从 Creem API 获取
+                    try:
+                        from app.services.creem_client import creem_client
+                        creem_sub = creem_client.get_subscription(subscription.creem_subscription_id)
+                        subscription.current_period_end = WebhookService._parse_datetime(
+                            creem_sub.get("current_period_end_date")
+                        )
+                        subscription.next_billing_date = WebhookService._parse_datetime(
+                            creem_sub.get("next_transaction_date")
+                        )
+                        if not subscription.subscription_metadata:
+                            subscription.subscription_metadata = creem_sub.get("metadata")
+                        db.commit()
+                        logger.info(f"从 Creem API 同步订阅信息成功: {subscription.creem_subscription_id}")
+                    except Exception as e:
+                        logger.warning(f"从 Creem API 获取订阅详情失败: {e}")
+                
+                # 注意：首期积分已在 OrderService.mark_paid 中发放，这里不需要再次发放
 
     @staticmethod
     def _handle_checkout_failed(db: Session, payload: Dict[str, Any]):

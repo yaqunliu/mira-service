@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import calendar
 from typing import Optional, Tuple, List
 from sqlalchemy.orm import Session
@@ -115,6 +115,20 @@ class SubscriptionService:
         return subscription
 
     @staticmethod
+    def _normalize_period_date(dt: datetime) -> datetime:
+        """
+        规范化周期日期：只保留日期部分，时间设为 00:00:00
+        确保同一周期的 period_start 格式一致，避免幂等性检查失败
+        """
+        if not dt:
+            return dt
+        # 转换为 UTC 时区（如果有时区信息）
+        if dt.tzinfo:
+            dt = dt.astimezone(timezone.utc)
+        # 只保留日期部分，时间设为 00:00:00
+        return datetime.combine(dt.date(), datetime.min.time()).replace(tzinfo=timezone.utc)
+
+    @staticmethod
     def issue_cycle_points(
         db: Session,
         subscription: Subscription,
@@ -123,19 +137,24 @@ class SubscriptionService:
         period_end: datetime,
         creem_invoice_id: Optional[str] = None,
     ) -> SubscriptionPointsHistory:
-        # 幂等检查：先查询是否已存在
+        # 规范化周期日期：统一格式为日期精度（时间设为 00:00:00）
+        # 这确保同一周期的 period_start 格式一致，避免幂等性检查失败
+        normalized_period_start = SubscriptionService._normalize_period_date(period_start)
+        normalized_period_end = SubscriptionService._normalize_period_date(period_end)
+        
+        # 幂等检查：先查询是否已存在（使用规范化后的日期）
         exists = (
             db.query(SubscriptionPointsHistory)
             .filter(
                 SubscriptionPointsHistory.subscription_id == subscription.subscription_id,
-                SubscriptionPointsHistory.period_start == period_start,
+                SubscriptionPointsHistory.period_start == normalized_period_start,
             )
             .first()
         )
         if exists:
             logger.info(
                 f"订阅积分已发放，跳过: subscription_id={subscription.subscription_id}, "
-                f"period_start={period_start}, history_id={exists.history_id}"
+                f"period_start={normalized_period_start}, history_id={exists.history_id}"
             )
             return exists
 
@@ -155,14 +174,14 @@ class SubscriptionService:
             db.query(SubscriptionPointsHistory)
             .filter(
                 SubscriptionPointsHistory.subscription_id == locked_subscription.subscription_id,
-                SubscriptionPointsHistory.period_start == period_start,
+                SubscriptionPointsHistory.period_start == normalized_period_start,
             )
             .first()
         )
         if exists:
             logger.info(
                 f"订阅积分已发放（锁定后检查），跳过: subscription_id={locked_subscription.subscription_id}, "
-                f"period_start={period_start}, history_id={exists.history_id}"
+                f"period_start={normalized_period_start}, history_id={exists.history_id}"
             )
             return exists
 
@@ -178,14 +197,14 @@ class SubscriptionService:
             extra_data={"subscription_uuid": str(locked_subscription.uuid), "order_uuid": str(order.uuid)},
         )
 
-        # 创建历史记录
+        # 创建历史记录（使用规范化后的日期）
         history = SubscriptionPointsHistory(
             subscription_id=locked_subscription.subscription_id,
             order_id=order.order_id,
             user_id=locked_subscription.user_id,
             points_record_id=points_record.record_id,
-            period_start=period_start,
-            period_end=period_end,
+            period_start=normalized_period_start,
+            period_end=normalized_period_end,
             points_amount=locked_subscription.points_per_period,
             creem_invoice_id=creem_invoice_id,
         )
@@ -197,7 +216,7 @@ class SubscriptionService:
             db.refresh(history)
             logger.info(
                 f"订阅积分发放成功: subscription_id={locked_subscription.subscription_id}, "
-                f"period_start={period_start}, history_id={history.history_id}, points={locked_subscription.points_per_period}"
+                f"period_start={normalized_period_start}, history_id={history.history_id}, points={locked_subscription.points_per_period}"
             )
             return history
         except IntegrityError as e:
@@ -205,30 +224,30 @@ class SubscriptionService:
             db.rollback()
             logger.warning(
                 f"订阅积分发放唯一约束冲突: subscription_id={locked_subscription.subscription_id}, "
-                f"period_start={period_start}, error={e}"
+                f"period_start={normalized_period_start}, error={e}"
             )
             # 再次查询，可能另一个线程已经插入
             exists = (
                 db.query(SubscriptionPointsHistory)
                 .filter(
                     SubscriptionPointsHistory.subscription_id == locked_subscription.subscription_id,
-                    SubscriptionPointsHistory.period_start == period_start,
+                    SubscriptionPointsHistory.period_start == normalized_period_start,
                 )
                 .first()
             )
             if exists:
                 logger.info(
                     f"订阅积分已由其他线程发放，返回已存在记录: subscription_id={locked_subscription.subscription_id}, "
-                    f"period_start={period_start}, history_id={exists.history_id}"
+                    f"period_start={normalized_period_start}, history_id={exists.history_id}"
                 )
                 return exists
             # 如果查询不到，说明是其他唯一约束冲突，重新抛出
-            logger.error(f"订阅积分发放唯一约束冲突但查询不到记录: subscription_id={locked_subscription.subscription_id}, period_start={period_start}")
+            logger.error(f"订阅积分发放唯一约束冲突但查询不到记录: subscription_id={locked_subscription.subscription_id}, period_start={normalized_period_start}")
             raise
         except Exception as e:
             # 其他错误
             db.rollback()
-            logger.exception(f"订阅积分发放失败: subscription_id={locked_subscription.subscription_id}, period_start={period_start}")
+            logger.exception(f"订阅积分发放失败: subscription_id={locked_subscription.subscription_id}, period_start={normalized_period_start}")
             raise
 
     # ========== 月度兜底发放（含年付的月度发放） ==========
@@ -414,11 +433,18 @@ class SubscriptionService:
     def _period_for_month(anchor_day: int, ref: datetime) -> tuple[datetime, datetime]:
         """
         根据锚定日计算当月周期 [period_start, period_end)，period_end 为下月锚定日。
+        返回的日期已规范化：时间设为 00:00:00，时区为 UTC。
         """
+        # 确保 ref 是 UTC 时区
+        if ref.tzinfo:
+            ref = ref.astimezone(timezone.utc)
+        else:
+            ref = ref.replace(tzinfo=timezone.utc)
+        
         year, month = ref.year, ref.month
         last_day = calendar.monthrange(year, month)[1]
         start_day = min(anchor_day, last_day)
-        period_start = datetime(year, month, start_day)
+        period_start = datetime(year, month, start_day, tzinfo=timezone.utc)
 
         next_month = month + 1
         next_year = year
@@ -427,6 +453,6 @@ class SubscriptionService:
             next_year += 1
         next_last_day = calendar.monthrange(next_year, next_month)[1]
         next_start_day = min(anchor_day, next_last_day)
-        period_end = datetime(next_year, next_month, next_start_day)
+        period_end = datetime(next_year, next_month, next_start_day, tzinfo=timezone.utc)
         return period_start, period_end
 
