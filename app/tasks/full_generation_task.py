@@ -26,8 +26,11 @@ from app.utils.fish_audio import get_fish_audio_client
 from app.utils.font_utils import ensure_font_exists
 from app.core.logger import logger
 from app.utils.us3 import US3Client
+from app.utils.upload_helper import upload_helper
 from app.utils.points_deduction import deduct_points_for_video, deduct_points_for_audio
 from app.core.config import settings
+from app.models.user import User
+from datetime import datetime
 
 
 # ============== 音频相关函数 ==============
@@ -106,16 +109,37 @@ def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str, v
         with os.fdopen(temp_fd, 'wb') as tmp_file:
             tmp_file.write(audio_bytes)
         
+        # 获取用户UUID用于构建上传路径
+        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        if not creation:
+            raise NotFoundError(detail=f"创作不存在: creation_id={creation_id}")
+        
+        user = db.query(User).filter(User.user_id == creation.owner_id).first()
+        if not user:
+            raise ValueError(f"用户不存在: user_id={creation.owner_id}")
+        user_uuid = user.uuid
+        
+        # 获取环境变量和时间戳
+        env = getattr(settings, 'ENV', 'dev')
+        time_str = datetime.now().strftime('%Y%m%d')
+        
+        # 使用统一的上传工具上传文件
         audio_uuid = str(uuid.uuid4())
-        put_key = f"creations/{creation_id}/shots/{shot_id}/audio_{audio_uuid}.mp3"
+        filename = f"audio/{creation_id}/{shot_id}/audio_{audio_uuid}.mp3"
         
-        us3_client = US3Client()
-        upload_result = us3_client.upload_file(local_file=temp_file_path, bucket=None, put_key=put_key)
+        upload_result = upload_helper.upload_file(
+            local_file=temp_file_path,
+            user_uuid=user_uuid,
+            file_type="audio",  # 文件类型
+            filename=filename,
+            time_str=time_str
+        )
         
-        if not upload_result['success']:
+        if not upload_result.get('success'):
             raise Exception(f"音频上传失败: {upload_result.get('message')}")
         
-        audio_url = us3_client.get_file_url(put_key)
+        # 使用外网URL保存到数据库
+        audio_url = upload_result.get('external_url', upload_result.get('put_key'))
         
         shot.audio_url = audio_url
         shot.audio_duration = duration_ms
@@ -151,7 +175,7 @@ def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str, v
         db.close()
 
 
-def _merge_audio_files(audio_results: List[Dict], creation_id: int) -> Optional[str]:
+def _merge_audio_files(audio_results: List[Dict], creation_id: int, user_uuid: str, time_str: str) -> Optional[str]:
     """合并多个音频文件"""
     temp_files = []
     merged_path = None
@@ -182,16 +206,23 @@ def _merge_audio_files(audio_results: List[Dict], creation_id: int) -> Optional[
         os.close(merged_fd)
         combined.export(merged_path, format="mp3", bitrate="128k")
         
+        # 使用统一的上传工具上传文件
         audio_uuid = str(uuid.uuid4())
-        put_key = f"creations/{creation_id}/merged_audio_{audio_uuid}.mp3"
+        filename = f"audio/{creation_id}/merged_audio_{audio_uuid}.mp3"
         
-        us3_client = US3Client()
-        upload_result = us3_client.upload_file(local_file=merged_path, bucket=None, put_key=put_key)
+        upload_result = upload_helper.upload_file(
+            local_file=merged_path,
+            user_uuid=user_uuid,
+            file_type="audio",  # 文件类型
+            filename=filename,
+            time_str=time_str
+        )
         
-        if not upload_result['success']:
-            raise Exception(f"合并音频上传失败")
+        if not upload_result.get('success'):
+            raise Exception(f"合并音频上传失败: {upload_result.get('message')}")
         
-        return us3_client.get_file_url(put_key)
+        # 返回外网URL
+        return upload_result.get('external_url', upload_result.get('put_key'))
         
     except Exception as e:
         logger.error(f"音频合并失败: {e}")
@@ -210,7 +241,7 @@ def _merge_audio_files(audio_results: List[Dict], creation_id: int) -> Optional[
                 pass
 
 
-def _generate_srt(audio_results: List[Dict], creation_id: int) -> Optional[str]:
+def _generate_srt(audio_results: List[Dict], creation_id: int, user_uuid: str, time_str: str) -> Optional[str]:
     """生成 SRT 字幕文件"""
     temp_path = None
     try:
@@ -243,16 +274,23 @@ def _generate_srt(audio_results: List[Dict], creation_id: int) -> Optional[str]:
         with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
             f.write(srt_content)
         
+        # 使用统一的上传工具上传文件
         srt_uuid = str(uuid.uuid4())
-        put_key = f"creations/{creation_id}/subtitle_{srt_uuid}.srt"
+        filename = f"subtitles/{creation_id}/subtitle_{srt_uuid}.srt"
         
-        us3_client = US3Client()
-        upload_result = us3_client.upload_file(local_file=temp_path, bucket=None, put_key=put_key)
+        upload_result = upload_helper.upload_file(
+            local_file=temp_path,
+            user_uuid=user_uuid,
+            file_type="subtitles",  # 文件类型
+            filename=filename,
+            time_str=time_str
+        )
         
-        if not upload_result['success']:
-            raise Exception("字幕上传失败")
+        if not upload_result.get('success'):
+            raise Exception(f"字幕上传失败: {upload_result.get('message')}")
         
-        return us3_client.get_file_url(put_key)
+        # 返回外网URL
+        return upload_result.get('external_url', upload_result.get('put_key'))
         
     except Exception as e:
         logger.error(f"字幕生成失败: {e}")
@@ -622,8 +660,15 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
                 "status": "正在合并音频..."
             })
             
-            merged_audio_url = _merge_audio_files(audio_results, creation_id)
-            subtitle_url = _generate_srt(audio_results, creation_id)
+            # 获取用户UUID和时间戳
+            user = db.query(User).filter(User.user_id == creation.owner_id).first()
+            if not user:
+                raise ValueError(f"用户不存在: user_id={creation.owner_id}")
+            user_uuid = user.uuid
+            time_str = datetime.now().strftime('%Y%m%d')
+            
+            merged_audio_url = _merge_audio_files(audio_results, creation_id, user_uuid, time_str)
+            subtitle_url = _generate_srt(audio_results, creation_id, user_uuid, time_str)
             
             # 更新创作
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
@@ -824,16 +869,30 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
             "status": "正在上传最终视频..."
         })
         
+        # 获取用户UUID和时间戳
+        user = db.query(User).filter(User.user_id == creation.owner_id).first()
+        if not user:
+            raise ValueError(f"用户不存在: user_id={creation.owner_id}")
+        user_uuid = user.uuid
+        time_str = datetime.now().strftime('%Y%m%d')
+        
+        # 使用统一的上传工具上传文件
         video_uuid = str(uuid.uuid4())
-        put_key = f"creations/{creation_id}/final_video_{video_uuid}.mp4"
+        filename = f"videos/{creation_id}/final_video_{video_uuid}.mp4"
         
-        us3_client = US3Client()
-        upload_result = us3_client.upload_file(local_file=final_path, bucket=None, put_key=put_key)
+        upload_result = upload_helper.upload_file(
+            local_file=final_path,
+            user_uuid=user_uuid,
+            file_type="videos",  # 文件类型
+            filename=filename,
+            time_str=time_str
+        )
         
-        if not upload_result['success']:
+        if not upload_result.get('success'):
             raise Exception(f"视频上传失败: {upload_result.get('message')}")
         
-        video_url = us3_client.get_file_url(put_key)
+        # 使用外网URL保存到数据库
+        video_url = upload_result.get('external_url', upload_result.get('put_key'))
         
         # 更新创作状态
         creation.video_url = video_url

@@ -22,8 +22,11 @@ from app.utils.task_types import TaskType
 from app.utils.ai_client import AIClient
 from app.core.logger import logger
 from app.utils.us3 import US3Client
+from app.utils.upload_helper import upload_helper
 from app.utils.points_deduction import deduct_points_for_image
 from app.core.config import settings
+from app.models.user import User
+from datetime import datetime
 from app.services.points_service import PointsService
 from app.core.exceptions import InsufficientPointsError
 from app.utils.model_prices import ModelPrices
@@ -206,28 +209,40 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                     os.close(temp_fd)
                     raise
             
-            # 上传到US3
-            # 生成US3存储路径: creations/{creation_id}/shots/{shot_id}/image_{uuid}.png
-            image_uuid = str(uuid.uuid4())
-            put_key = f"creations/{creation_id}/shots/{shot_id}/image_{image_uuid}{image_extension}"
+            # 获取用户UUID用于构建上传路径
+            creation = shot.scene.creation
+            user_id = creation.owner_id
+            user = db.query(User).filter(User.user_id == user_id).first()
+            if not user:
+                raise ValueError(f"用户不存在: user_id={user_id}")
+            user_uuid = user.uuid
             
-            us3_client = US3Client()
-            upload_result = us3_client.upload_file(
+            # 获取环境变量和时间戳
+            env = getattr(settings, 'ENV', 'dev')
+            time_str = datetime.now().strftime('%Y%m%d')
+            
+            # 使用统一的上传工具上传文件
+            # 文件名格式: shots/{creation_id}/{shot_id}/image_{uuid}{extension}
+            image_uuid = str(uuid.uuid4())
+            filename = f"shots/{creation_id}/{shot_id}/image_{image_uuid}{image_extension}"
+            
+            upload_result = upload_helper.upload_file(
                 local_file=temp_file_path,
-                bucket=None,
-                put_key=put_key
+                user_uuid=user_uuid,
+                file_type="shots",  # 文件类型
+                filename=filename,
+                time_str=time_str
             )
             
-            if not upload_result['success']:
+            if not upload_result.get('success'):
                 error_msg = f"图像上传US3失败: {upload_result.get('message')}"
                 logger.error(error_msg)
                 raise Exception(error_msg)
             
-            # 生成US3持久化URL
-            persistent_image_url = us3_client.get_file_url(put_key)
-            logger.info(f"图像上传US3成功，持久化URL: {persistent_image_url}")
+            # 使用外网URL保存到数据库
+            image_url = upload_result.get('external_url', upload_result.get('put_key'))
+            logger.info(f"图像上传US3成功，持久化URL: {image_url}")
             
-            image_url = persistent_image_url
             timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
             
         except Exception as e:

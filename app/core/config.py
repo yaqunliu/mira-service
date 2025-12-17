@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional, Union
-from pydantic import AnyHttpUrl, PostgresDsn, field_validator, model_validator
+from pydantic import AnyHttpUrl, PostgresDsn, ConfigDict, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -109,9 +109,11 @@ class Settings(BaseSettings):
     US3_PRIVATE_KEY: str = ""
     US3_BUCKET: str = ""  # US3 存储桶名称
     US3_REGION: str = ""  # US3 区域
-    DOWNLOAD_SUFFIX: str = ""
-    UPLOAD_SUFFIX: str = ""
+    DOWNLOAD_SUFFIX: str = ""  # 外网下载后缀（用于保存到数据库）
+    UPLOAD_SUFFIX: str = ""  # 外网上传后缀（用于保存到数据库）
     DEFAULT_BUCKET: str = ""
+    INTERNAL_DOWNLOAD_SUFFIX: str = ""  # 内网下载后缀（用于实际下载）
+    INTERNAL_UPLOAD_SUFFIX: str = ""  # 内网上传后缀（用于实际上传）
     
     # Fish Audio 配置
     FISH_AUDIO_API_KEY: str = ""
@@ -163,9 +165,12 @@ class Settings(BaseSettings):
     CREEM_CHECKOUT_CANCEL_URL: str = ""  # 默认支付取消回调
     
     ENABLE_TEST_EXCEPTION: str = "false"
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    
+    model_config = ConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="ignore",  # 忽略额外的环境变量，避免验证错误
+    )
 
 
 settings = Settings()

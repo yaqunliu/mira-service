@@ -11,8 +11,11 @@ from app.utils.ai_client import AIClient
 from app.core.logger import logger
 from app.utils.file_utils import read_prompt_file
 from app.utils.us3 import US3Client
+from app.utils.upload_helper import upload_helper
 from app.utils.points_deduction import deduct_points_for_image
 from app.core.config import settings
+from app.models.user import User
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 import uuid
@@ -111,29 +114,56 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
                 os.close(temp_fd)  # 如果写入失败，关闭文件描述符
                 raise
             
-            # 上传到US3
-            # 生成US3存储路径: characters/{character_id}/image_{uuid}.png
-            image_uuid = str(uuid.uuid4())
-            put_key = f"characters/{character_id}/image_{image_uuid}{image_extension}"
+            # 获取用户UUID用于构建上传路径
+            user_id = None
+            creation_id = character.creation_id
+            novel_id = character.novel_id
             
-            us3_client = US3Client()
-            upload_result = us3_client.upload_file(
+            if creation_id:
+                creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+                if creation:
+                    user_id = creation.owner_id
+                    novel_id = creation.novel_id or novel_id
+            elif novel_id:
+                from app.models.novel import Novel
+                novel = db.query(Novel).filter(Novel.novel_id == novel_id).first()
+                if novel:
+                    user_id = novel.owner_id
+            
+            if not user_id:
+                raise ValueError(f"无法获取用户ID（character_id={character_id}, creation_id={creation_id}, novel_id={novel_id}）")
+            
+            user = db.query(User).filter(User.user_id == user_id).first()
+            if not user:
+                raise ValueError(f"用户不存在: user_id={user_id}")
+            user_uuid = user.uuid
+            
+            # 获取环境变量和时间戳
+            env = getattr(settings, 'ENV', 'dev')
+            time_str = datetime.now().strftime('%Y%m%d')
+            
+            # 使用统一的上传工具上传文件
+            # 文件名格式: characters/{character_id}/image_{uuid}{extension}
+            image_uuid = str(uuid.uuid4())
+            filename = f"characters/{character_id}/image_{image_uuid}{image_extension}"
+            
+            upload_result = upload_helper.upload_file(
                 local_file=temp_file_path,
-                bucket=None,  # 使用默认bucket
-                put_key=put_key
+                user_uuid=user_uuid,
+                file_type="characters",  # 文件类型
+                filename=filename,
+                time_str=time_str
             )
             
-            if not upload_result['success']:
+            if not upload_result.get('success'):
                 error_msg = f"图像上传US3失败: {upload_result.get('message')}"
                 logger.error(error_msg)
                 raise Exception(error_msg)
             
-            # 生成US3持久化URL
-            persistent_image_url = us3_client.get_file_url(put_key)
-            logger.info(f"图像上传US3成功，持久化URL: {persistent_image_url}")
+            # 使用外网URL保存到数据库
+            image_url = upload_result.get('external_url', upload_result.get('put_key'))
+            logger.info(f"图像上传US3成功，持久化URL: {image_url}")
             
-            # 使用US3持久化URL
-            image_url = persistent_image_url
             timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
             
         except Exception as e:
@@ -156,23 +186,7 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         character.image_prompt = image_prompt
         # character.image_base64 = image_base64
 
-        # 获取用户ID和相关信息用于积分扣除
-        user_id = None
-        creation_id = character.creation_id
-        novel_id = character.novel_id
-
-        if creation_id:
-            creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
-            if creation:
-                # 不在这里更新状态，状态更新移到主任务函数中，所有角色生成完成后统一更新
-                user_id = creation.owner_id
-                novel_id = creation.novel_id or novel_id
-        elif novel_id:
-            # 如果没有 creation_id，通过 novel_id 获取用户ID
-            from app.models.novel import Novel
-            novel = db.query(Novel).filter(Novel.novel_id == novel_id).first()
-            if novel:
-                user_id = novel.owner_id
+        # 用户ID和相关信息已在上面获取，这里不需要重复获取
         
         # 扣除积分（按实际成本，带幂等性检查）
         # 角色生成使用文生图模型

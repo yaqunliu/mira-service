@@ -14,6 +14,7 @@ from app.models.chapter import Chapter
 from app.models.user import User
 from app.utils.novel_parser import read_novel_file, parse_novel_metadata, split_chapters
 from app.utils.us3 import US3Client
+from app.utils.upload_helper import upload_helper
 from app.core.config import settings
 from app.core.logger import logger
 from app.utils.task_types import TaskType
@@ -143,15 +144,9 @@ def process_novel_upload_task(
             Returns:
                 (index, success, content_url, chapter_info)
             """
-            # 每个线程创建自己的US3Client实例，确保线程安全
-            us3_client = US3Client()
             try:
                 chapter_title = chapter_data['title']
                 chapter_content = chapter_data['content']
-                
-                # 构建上传路径：环境/时间/user_uuid/文件
-                # 文件路径规范: {env}/{time_str}/{user_uuid}/novels/{novel_id}/chapter_{chapter_index:04d}.txt
-                put_key = f"{env}/{time_str}/{user_uuid}/novels/{novel_id}/chapter_{index:04d}.txt"
                 
                 # 创建临时文件
                 tmp_file_path = None
@@ -160,15 +155,19 @@ def process_novel_upload_task(
                         tmp_file.write(chapter_content)
                         tmp_file_path = tmp_file.name
                     
-                    # 上传到US3（关闭哈希验证以提高速度）
-                    upload_result = us3_client.upload_file(
+                    # 使用统一的上传工具上传文件
+                    # 文件名格式: novels/{novel_id}/chapter_{chapter_index:04d}.txt
+                    filename = f"novels/{novel_id}/chapter_{index:04d}.txt"
+                    
+                    upload_result = upload_helper.upload_file(
                         local_file=tmp_file_path,
-                        bucket=None,  # 使用默认bucket
-                        put_key=put_key,
-                        verify_hash=False  # 关闭哈希验证以提高上传速度
+                        user_uuid=user_uuid,
+                        file_type="chapters",  # 文件类型
+                        filename=filename,
+                        time_str=time_str
                     )
                     
-                    if not upload_result['success']:
+                    if not upload_result.get('success'):
                         logger.error(f"章节 {index} 上传US3失败: {upload_result.get('message')}")
                         return (index, False, "", {
                             'title': chapter_title,
@@ -176,7 +175,8 @@ def process_novel_upload_task(
                             'error': upload_result.get('message', '上传失败')
                         })
                     
-                    content_url = put_key  # 使用put_key作为content_url
+                    # 使用外网URL保存到数据库
+                    content_url = upload_result.get('external_url', upload_result.get('put_key'))
                     logger.info(f"章节 {index} 上传US3成功: {content_url}")
                     
                     # 生成章节内容预览（前30个字）
