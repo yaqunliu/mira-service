@@ -74,7 +74,9 @@ class WebhookService:
                 WebhookService._handle_subscription_cancelled(db, payload)
             elif event_type == "subscription.scheduled_cancel":
                 WebhookService._handle_subscription_scheduled_cancel(db, payload)
-            elif event_type in ("refund.created", "dispute.created"):
+            elif event_type == "refund.created":
+                WebhookService._handle_refund_created(db, payload)
+            elif event_type == "dispute.created":
                 logger.info(f"收到事件 {event_type}，目前仅记录事件，不做业务处理")
             else:
                 logger.warning(f"未处理的事件类型: {event_type}")
@@ -89,23 +91,47 @@ class WebhookService:
 
     @staticmethod
     def _handle_checkout_completed(db: Session, payload: Dict[str, Any]):
-        data = payload.get("data") or payload.get("object") or {}
-        checkout_id = WebhookService._get(data, ["id", "checkout_id", "checkout_session_id"])
+        # 支持 payload.object 格式（Creem 实际格式）
+        data = payload.get("object") or payload.get("data") or {}
+        
+        # checkout_id: object.id
+        checkout_id = data.get("id") or WebhookService._get(data, ["checkout_id", "checkout_session_id"])
+        
+        # order_uuid: 可能在 metadata 中，也可能需要通过 order.id 查找
         order_uuid = WebhookService._get(data, ["metadata", "order_uuid"])
-        creem_transaction_id = WebhookService._get(data, ["transaction_id"])
-        subscription_id = WebhookService._get(data, ["subscription_id", "subscription", "subscriptionId"])
-        status = WebhookService._get(data, ["status"]) or "paid"
-        paid_at = WebhookService._parse_datetime(WebhookService._get(data, ["paid_at", "created_at", "created"]))
+        
+        # order_id: object.order.id (Creem 订单ID)
+        creem_order_id = WebhookService._get(data, ["order", "id"])
+        
+        # transaction_id: object.order.transaction
+        creem_transaction_id = (
+            WebhookService._get(data, ["order", "transaction"]) or
+            data.get("transaction_id") or
+            WebhookService._get(data, ["transaction"])
+        )
+        
+        # subscription_id: object.subscription.id (可能是对象或字符串)
+        subscription_obj = data.get("subscription")
+        if isinstance(subscription_obj, dict):
+            subscription_id = subscription_obj.get("id")
+        else:
+            subscription_id = subscription_obj or WebhookService._get(data, ["subscription_id", "subscriptionId"])
+        
+        status = data.get("status") or "completed"
+        paid_at = WebhookService._parse_datetime(
+            WebhookService._get(data, ["order", "updated_at"]) or
+            WebhookService._get(data, ["paid_at", "created_at", "created"])
+        )
 
-        if not checkout_id and not order_uuid:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="缺少订单标识")
-
+        # 查找订单：优先通过 order_uuid，其次通过 checkout_id
+        # 注意：Order 模型中没有 creem_order_id 字段，只有 creem_checkout_id
         order = None
         if order_uuid:
             order = db.query(Order).filter(Order.uuid == order_uuid).first()
         if not order and checkout_id:
             order = db.query(Order).filter(Order.creem_checkout_id == checkout_id).first()
         if not order:
+            logger.warning(f"checkout.completed 找不到订单: checkout_id={checkout_id}, creem_order_id={creem_order_id}, order_uuid={order_uuid}")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="订单不存在")
 
         OrderService.mark_paid(db, order, creem_transaction_id=creem_transaction_id, paid_at=paid_at)
@@ -126,8 +152,23 @@ class WebhookService:
                 metadata=data.get("metadata"),
             )
             
-            # 如果订阅ID存在，尝试从 Creem API 获取完整订阅信息
-            if subscription.creem_subscription_id and not subscription.current_period_end:
+            # 如果订阅ID存在，尝试从 webhook payload 或 Creem API 获取完整订阅信息
+            subscription_obj = data.get("subscription")
+            if isinstance(subscription_obj, dict):
+                # 从 webhook payload 中获取订阅信息
+                subscription.current_period_start = WebhookService._parse_datetime(
+                    subscription_obj.get("current_period_start_date")
+                ) or subscription.current_period_start
+                subscription.current_period_end = WebhookService._parse_datetime(
+                    subscription_obj.get("current_period_end_date")
+                ) or subscription.current_period_end
+                subscription.next_billing_date = WebhookService._parse_datetime(
+                    subscription_obj.get("next_transaction_date")
+                ) or subscription.next_billing_date
+                db.commit()
+                logger.info(f"从 webhook payload 同步订阅信息成功: {subscription.creem_subscription_id}")
+            elif subscription.creem_subscription_id and not subscription.current_period_end:
+                # 如果 webhook 中没有订阅信息，尝试从 Creem API 获取
                 try:
                     from app.services.creem_client import creem_client
                     creem_sub = creem_client.get_subscription(subscription.creem_subscription_id)
@@ -193,24 +234,55 @@ class WebhookService:
         order = subscription.order if subscription else None
         if not order and order_uuid:
             order = db.query(Order).filter(Order.uuid == order_uuid).first()
+        
+        # 如果找不到订阅和订单，尝试通过订阅ID查找订单（订阅可能已存在）
+        if not order and subscription:
+            order = subscription.order
+        
         if not order and subscription is None:
-            # 无法找到关联订单，跳过
+            # 无法找到关联订单，跳过（可能是首次创建，等待 checkout.completed 事件）
+            logger.warning(f"subscription.update 找不到订阅和订单: subscription_id={subscription_id}, order_uuid={order_uuid}")
             return
 
+        # 如果订阅不存在，需要订单来创建；如果订阅存在，使用现有订阅的订单
+        if not subscription and not order:
+            logger.warning(f"subscription.update 无法创建订阅，缺少订单信息: subscription_id={subscription_id}")
+            return
+
+        # 处理状态映射：将 Creem 的状态映射到本地状态
+        status_mapping = {
+            "trialing": "active",  # 试用期视为活跃
+            "active": "active",
+            "past_due": "past_due",
+            "unpaid": "unpaid",
+            "paused": "paused",
+            "expired": "expired",
+            "canceled": "cancelled",  # 统一使用 cancelled
+            "cancelled": "cancelled",
+        }
+        mapped_status = status_mapping.get(status_value, status_value or (subscription.status if subscription else "active"))
+        
         subscription = SubscriptionService.upsert_from_webhook(
             db=db,
             user_id=order.user_id,
             order=order,
             creem_subscription_id=subscription_id,
-            status=status_value or "active",
-            billing_period=order.product.billing_period if order else subscription.billing_period,
+            status=mapped_status,
+            billing_period=order.product.billing_period if order else (subscription.billing_period if subscription else None),
             current_period_start=period_start,
             current_period_end=period_end,
             next_billing_date=next_billing,
-            points_per_period=order.points_amount if order else subscription.points_per_period,
+            points_per_period=order.points_amount if order else (subscription.points_per_period if subscription else 0),
             metadata=data.get("metadata"),
         )
+        
+        # 如果状态是 expired 或 cancelled，更新 cancelled_at
+        if mapped_status in ("expired", "cancelled") and not subscription.cancelled_at:
+            canceled_at = WebhookService._parse_datetime(data.get("canceled_at"))
+            subscription.cancelled_at = canceled_at or datetime.utcnow()
+        
         db.commit()
+        logger.info(f"订阅更新: subscription_id={subscription_id}, status={mapped_status}")
 
     @staticmethod
     def _handle_subscription_cancelled(db: Session, payload: Dict[str, Any]):
@@ -219,21 +291,35 @@ class WebhookService:
         subscription_id = data.get("id") or WebhookService._get(data, ["subscription_id"])
         subscription = db.query(Subscription).filter(Subscription.creem_subscription_id == subscription_id).first()
         if subscription:
-            subscription.status = "cancelled"
+            # 使用 webhook 中的状态（可能是 canceled 或 cancelled）
+            status_value = data.get("status")
+            if status_value in ("canceled", "cancelled"):
+                subscription.status = "cancelled"
+            else:
+                subscription.status = "cancelled"  # 默认设为 cancelled
+            
             # 如果 webhook 中有 canceled_at，使用它；否则使用当前时间
             canceled_at = WebhookService._parse_datetime(data.get("canceled_at"))
             subscription.cancelled_at = canceled_at or datetime.utcnow()
+            subscription.cancel_at_period_end = False  # 已取消，不是计划取消
             db.commit()
+            logger.info(f"订阅已取消: subscription_id={subscription_id}, canceled_at={subscription.cancelled_at}")
 
     @staticmethod
     def _handle_subscription_scheduled_cancel(db: Session, payload: Dict[str, Any]):
-        data = payload.get("data") or payload.get("object") or {}
-        subscription_id = WebhookService._get(data, ["id", "subscription_id"])
+        # 支持 payload.object 格式（Creem 实际格式）
+        data = payload.get("object") or payload.get("data") or {}
+        subscription_id = data.get("id") or WebhookService._get(data, ["subscription_id"])
         subscription = db.query(Subscription).filter(Subscription.creem_subscription_id == subscription_id).first()
         if subscription:
             subscription.cancel_at_period_end = True
-            subscription.status = subscription.status or "active"
+            # 如果状态是 scheduled_cancel，保持 active 状态（在周期结束时取消）
+            if data.get("status") == "scheduled_cancel":
+                subscription.status = "active"
+            else:
+                subscription.status = subscription.status or "active"
             db.commit()
+            logger.info(f"订阅计划取消: subscription_id={subscription_id}, cancel_at_period_end=True")
 
     @staticmethod
     def _handle_invoice_paid(db: Session, payload: Dict[str, Any]):
@@ -306,6 +392,51 @@ class WebhookService:
             else:
                 return None
         return cur
+
+    @staticmethod
+    def _handle_refund_created(db: Session, payload: Dict[str, Any]):
+        """
+        处理退款事件
+        根据退款金额和订单信息，扣除相应积分并更新订单状态
+        """
+        # 支持 payload.object 格式（Creem 实际格式）
+        data = payload.get("object") or payload.get("data") or {}
+        
+        # 退款ID
+        refund_id = data.get("id")
+        
+        # 订单ID：可能在 object.order.id 或 object.transaction.order
+        order_id = (
+            WebhookService._get(data, ["order", "id"]) or
+            WebhookService._get(data, ["transaction", "order"])
+        )
+        
+        # 退款金额
+        refund_amount = data.get("refund_amount") or 0
+        refund_currency = data.get("refund_currency") or "USD"
+        refund_status = data.get("status") or "succeeded"
+        
+        if not order_id:
+            logger.warning(f"refund.created 缺少订单ID: refund_id={refund_id}")
+            return
+        
+        # 查找订单（通过 Creem 订单ID，需要添加 creem_order_id 字段或通过其他方式查找）
+        # 注意：当前 Order 模型没有 creem_order_id 字段，可能需要通过其他方式关联
+        # 暂时记录日志，等待后续实现
+        logger.info(
+            f"收到退款事件: refund_id={refund_id}, order_id={order_id}, "
+            f"refund_amount={refund_amount}, status={refund_status}"
+        )
+        
+        # TODO: 实现退款逻辑
+        # 1. 通过 order_id 查找订单（需要添加 creem_order_id 字段或通过 metadata 关联）
+        # 2. 计算可扣回积分
+        # 3. 扣除积分
+        # 4. 更新订单状态为 refunded
+        # 5. 如果是订阅，取消订阅
+        
+        # 目前仅记录事件，等待订单模型支持 creem_order_id 或通过其他方式关联
+        logger.warning(f"refund.created 事件暂未实现自动处理，需要手动处理: order_id={order_id}")
 
     @staticmethod
     def _parse_datetime(value: Any) -> Optional[datetime]:
