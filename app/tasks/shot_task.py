@@ -4,7 +4,6 @@
 """
 import os
 import uuid
-import tempfile
 import time
 from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -176,12 +175,15 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         )
         timings["image_api_sec"] = round(time.perf_counter() - image_start, 3)
         
-        # 从本地/URL 获取图像并上传到US3进行持久化
+        # 从本地/URL 获取图像并上传到US3进行持久化（使用流式上传）
         try:
             persist_start = time.perf_counter()
+            image_data = None
+            image_extension = ".png"
+            
             # 检查是否为本地文件标识（Nano Banana2 返回格式为 "local://..."）
             if temp_image_url.startswith("local://"):
-                # 直接使用本地文件路径
+                # 读取本地文件为字节流
                 temp_file_path = temp_image_url.replace("local://", "")
                 logger.info(f"使用本地文件路径: {temp_file_path}")
                 if not os.path.exists(temp_file_path):
@@ -189,25 +191,18 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 # 从文件后缀推断扩展名，兜底为 .png
                 _, ext = os.path.splitext(temp_file_path)
                 image_extension = ext or ".png"
+                # 读取文件为字节流
+                with open(temp_file_path, 'rb') as f:
+                    image_data = f.read()
+                logger.info(f"本地图像读取成功，大小: {len(image_data)} 字节")
             else:
-                    # 从URL下载图像
+                # 从URL下载图像
                 logger.info(f"从URL下载图像: {temp_image_url}")
                 with httpx.Client(timeout=30.0) as client:
                     response = client.get(temp_image_url)
                     response.raise_for_status()
                     image_data = response.content
                 logger.info(f"图像下载成功，大小: {len(image_data)} 字节")
-                
-                # 将图像数据保存到临时文件（US3 SDK 需要文件路径）
-                image_extension = ".png"
-                temp_fd, temp_file_path = tempfile.mkstemp(suffix=image_extension)
-                try:
-                    with os.fdopen(temp_fd, 'wb') as tmp_file:
-                        tmp_file.write(image_data)
-                    logger.info(f"图像已保存到临时文件: {temp_file_path}")
-                except Exception as e:
-                    os.close(temp_fd)
-                    raise
             
             # 获取用户UUID用于构建上传路径
             creation = shot.scene.creation
@@ -221,13 +216,13 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             env = getattr(settings, 'ENV', 'dev')
             time_str = datetime.now().strftime('%Y%m%d')
             
-            # 使用统一的上传工具上传文件
+            # 使用流式上传
             # 文件名格式: shots/{creation_id}/{shot_id}/image_{uuid}{extension}
             image_uuid = str(uuid.uuid4())
             filename = f"shots/{creation_id}/{shot_id}/image_{image_uuid}{image_extension}"
             
-            upload_result = upload_helper.upload_file(
-                local_file=temp_file_path,
+            upload_result = upload_helper.upload_file_stream(
+                file_data=image_data,
                 user_uuid=user_uuid,
                 file_type="shots",  # 文件类型
                 filename=filename,
@@ -241,7 +236,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             
             # 使用外网URL保存到数据库
             image_url = upload_result.get('external_url', upload_result.get('put_key'))
-            logger.info(f"图像上传US3成功，持久化URL: {image_url}")
+            logger.info(f"图像流式上传US3成功，持久化URL: {image_url}")
             
             timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
             
@@ -251,14 +246,6 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             logger.warning(error_msg, exc_info=True)
             image_url = temp_image_url
             timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
-        finally:
-            # 清理临时文件
-            if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.remove(temp_file_path)
-                    logger.debug(f"已清理临时文件: {temp_file_path}")
-                except Exception as e:
-                    logger.warning(f"删除临时文件失败: {str(e)}")
         
         # 更新分镜信息
         shot.image_url = image_url

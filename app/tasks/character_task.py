@@ -19,7 +19,6 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 import uuid
-import tempfile
 import os
 import time
 
@@ -91,8 +90,7 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         )
         timings["image_api_sec"] = round(time.perf_counter() - image_start, 3)
         
-        # 从临时URL下载图像并上传到US3进行持久化
-        temp_file_path = None
+        # 从临时URL下载图像并上传到US3进行持久化（使用流式上传）
         persist_start = time.perf_counter()
         try:
             logger.info(f"从URL下载图像: {temp_image_url}")
@@ -102,17 +100,6 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
                 response.raise_for_status()
                 image_data = response.content
             logger.info(f"图像下载成功，大小: {len(image_data)} 字节")
-            
-            # 将图像数据保存到临时文件（US3 SDK 需要文件路径）
-            image_extension = ".png"  # 默认使用png，可以根据实际返回的格式调整
-            temp_fd, temp_file_path = tempfile.mkstemp(suffix=image_extension)
-            try:
-                with os.fdopen(temp_fd, 'wb') as tmp_file:
-                    tmp_file.write(image_data)
-                logger.info(f"图像已保存到临时文件: {temp_file_path}")
-            except Exception as e:
-                os.close(temp_fd)  # 如果写入失败，关闭文件描述符
-                raise
             
             # 获取用户UUID用于构建上传路径
             user_id = None
@@ -142,13 +129,14 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
             env = getattr(settings, 'ENV', 'dev')
             time_str = datetime.now().strftime('%Y%m%d')
             
-            # 使用统一的上传工具上传文件
+            # 使用流式上传
             # 文件名格式: characters/{character_id}/image_{uuid}{extension}
+            image_extension = ".png"  # 默认使用png
             image_uuid = str(uuid.uuid4())
             filename = f"characters/{character_id}/image_{image_uuid}{image_extension}"
             
-            upload_result = upload_helper.upload_file(
-                local_file=temp_file_path,
+            upload_result = upload_helper.upload_file_stream(
+                file_data=image_data,
                 user_uuid=user_uuid,
                 file_type="characters",  # 文件类型
                 filename=filename,
@@ -162,7 +150,7 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
             
             # 使用外网URL保存到数据库
             image_url = upload_result.get('external_url', upload_result.get('put_key'))
-            logger.info(f"图像上传US3成功，持久化URL: {image_url}")
+            logger.info(f"图像流式上传US3成功，持久化URL: {image_url}")
             
             timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
             
@@ -172,14 +160,6 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
             logger.warning(error_msg, exc_info=True)
             image_url = temp_image_url  # 降级使用临时URL
             timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
-        finally:
-            # 清理临时文件
-            if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.remove(temp_file_path)
-                    logger.debug(f"已清理临时文件: {temp_file_path}")
-                except Exception as e:
-                    logger.warning(f"删除临时文件失败: {str(e)}")
         
         # 更新角色信息
         character.image_url = image_url

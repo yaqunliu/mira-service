@@ -225,6 +225,75 @@ class UploadHelper:
             logger.error(error_msg, exc_info=True)
             raise US3UploadError(error_msg)
     
+    def upload_file_stream(
+        self,
+        file_data: bytes,
+        user_uuid: str,
+        file_type: str,
+        filename: str,
+        time_str: Optional[str] = None,
+        bucket: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        使用流式方式上传文件（使用内网地址上传，返回外网地址用于保存）
+        
+        Args:
+            file_data: 文件数据（bytes）
+            user_uuid: 用户UUID
+            file_type: 文件类型（如：novels, shots, characters, chapters）
+            filename: 文件名
+            time_str: 时间字符串（格式：YYYYMMDD），如果为None则自动生成
+            bucket: 存储桶名称，如果为None则使用默认bucket
+            
+        Returns:
+            包含上传结果的字典，包含：
+            - success: 是否成功
+            - put_key: 文件路径（用于后续操作）
+            - internal_url: 内网URL（用于下载）
+            - external_url: 外网URL（用于保存到数据库）
+            - 其他上传结果信息
+        """
+        try:
+            # 生成上传路径
+            put_key = self.generate_upload_path(user_uuid, file_type, filename, time_str)
+            
+            # 创建使用内网地址的US3客户端实例（线程安全）
+            us3_client = US3Client(
+                upload_suffix=self.internal_upload_suffix,
+                download_suffix=self.internal_download_suffix
+            )
+            
+            # 使用流式上传
+            upload_result = us3_client.upload_file_stream(
+                file_stream=file_data,
+                bucket=bucket or self.bucket,
+                put_key=put_key
+            )
+            
+            if not upload_result.get('success'):
+                raise US3UploadError(f"上传失败: {upload_result.get('message')}")
+            
+            # 生成内网和外网URL
+            internal_url = self.get_internal_download_url(put_key)
+            external_url = self.get_external_download_url(put_key)
+            
+            logger.info(f"文件流式上传成功: {put_key}, 大小: {len(file_data)} 字节, 内网URL: {internal_url}, 外网URL: {external_url}")
+            
+            return {
+                "success": True,
+                "put_key": put_key,
+                "internal_url": internal_url,
+                "external_url": external_url,
+                "bucket": bucket or self.bucket,
+                "file_size": len(file_data),
+                "message": "文件流式上传成功"
+            }
+                
+        except Exception as e:
+            error_msg = f"流式上传文件失败: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            raise US3UploadError(error_msg)
+    
     def download_file(
         self,
         url_or_put_key: str,
