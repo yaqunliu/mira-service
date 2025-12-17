@@ -24,7 +24,7 @@ class ProductService:
 
         total = query.count()
         items = (
-            query.order_by(Product.created_at.desc().nullslast())
+            query.order_by(Product.price.asc())
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all()
