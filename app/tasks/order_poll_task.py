@@ -17,19 +17,11 @@ def poll_pending_orders(self):
     """
     db = SessionLocal()
     try:
-        logger.info("=" * 60)
-        logger.info("开始执行订单支付轮询任务")
-        logger.info("=" * 60)
-        
         result = OrderService.poll_pending_orders(db)
-        
-        logger.info("=" * 60)
         logger.info(f"订单轮询完成: checked={result.get('checked', 0)}, paid={result.get('paid', 0)}, expired={result.get('expired', 0)}, errors={result.get('errors', 0)}")
-        logger.info("=" * 60)
-        
         return result
     except Exception as e:
-        logger.exception(f"订单轮询任务执行失败: {e}")
+        logger.info(f"订单轮询任务执行失败: {e}")
         raise
     finally:
         db.close()

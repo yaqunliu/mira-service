@@ -574,37 +574,15 @@ class OrderService:
 
         logger.info(f"开始轮询订单支付状态，找到 {len(orders)} 个待检查订单（微信: {len(wechat_orders)}, Creem: {len(creem_orders)}）")
         
-        # Debug 模式下记录轮询开始信息
-        if settings.DEBUG:
-            logger.debug(f"[DEBUG] ========== 订单轮询任务开始 ==========")
-            logger.debug(f"  当前时间: {now.isoformat()}")
-            logger.debug(f"  最小创建时间: {min_age.isoformat()}")
-            logger.debug(f"  微信订单最大创建时间: {wechat_max_age.isoformat()} (30分钟内)")
-            logger.debug(f"  Creem订单最大创建时间: {creem_max_age.isoformat()} ({max_age_hours}小时内)")
-            logger.debug(f"  待检查订单数: {len(orders)} (微信: {len(wechat_orders)}, Creem: {len(creem_orders)})")
-        
         for order in orders:
             try:
                 checked += 1
                 order_age = (now - order.created_at).total_seconds() / 60  # 订单寿命（分钟）
                 
-                logger.info(f"检查订单: order_uuid={order.uuid}, payment_method={order.payment_method}, created_at={order.created_at}, age={order_age:.1f}分钟")
-                
-                # Debug 模式下记录订单详情
-                if settings.DEBUG:
-                    logger.debug(f"[DEBUG] 检查订单详情:")
-                    logger.debug(f"  订单UUID: {order.uuid}")
-                    logger.debug(f"  订单号: {order.order_number}")
-                    logger.debug(f"  支付方式: {order.payment_method}")
-                    logger.debug(f"  订单类型: {order.order_type}")
-                    logger.debug(f"  创建时间: {order.created_at}")
-                    logger.debug(f"  订单寿命: {order_age:.1f}分钟")
-                
                 # 根据支付方式处理
                 if order.payment_method == "wechat":
                     # 微信支付：只查询30分钟内的订单
                     if order_age > 30:
-                        logger.info(f"订单 {order.uuid} 超过30分钟，不再轮询")
                         continue
                     
                     # 查询微信支付状态
@@ -626,7 +604,6 @@ class OrderService:
                                     else:
                                         paid_at = paid_at.astimezone(timezone.utc)
                                 except Exception as e:
-                                    logger.warning(f"解析支付时间失败: {e}")
                                     paid_at = now
                             else:
                                 paid_at = now
@@ -641,26 +618,18 @@ class OrderService:
                                 wechat_transaction_id=wechat_transaction_id,
                                 paid_at=paid_at,
                             )
-                            logger.info(f"订单 {order.uuid} 支付成功，已更新订单状态并发放积分")
-                        else:
-                            logger.info(f"订单 {order.uuid} 已支付，状态已更新")
                         paid += 1
                     elif result.get("status") == "cancelled":
                         # 订单已取消
                         if order.status != "cancelled":
                             order.status = "cancelled"
                             db.commit()
-                            logger.info(f"订单 {order.uuid} 已取消")
                         expired += 1
                     elif order_age > 20:
                         # 超过20分钟未支付，标记为取消
-                        logger.warning(f"订单 {order.uuid} 超过20分钟未支付，标记为取消")
                         order.status = "cancelled"
                         db.commit()
                         expired += 1
-                    else:
-                        # 订单仍为pending，继续等待
-                        logger.info(f"订单 {order.uuid} 仍在等待支付，订单寿命: {order_age:.1f}分钟")
                 
                 elif order.payment_method == "creem":
                     # Creem支付：查询24小时内的订单
@@ -670,7 +639,6 @@ class OrderService:
                         creem_checkout_id = order.creem_payment.creem_checkout_id
                     
                     if not creem_checkout_id:
-                        logger.warning(f"订单 {order.uuid} 没有 checkout_id，跳过")
                         continue
                     
                     # 重试机制：最多重试3次
@@ -680,30 +648,16 @@ class OrderService:
                     
                     for retry_count in range(max_retries):
                         try:
-                            # 通过 checkout_id 查询 checkout 详情（更直接的方法）
-                            logger.info(f"订单 {order.uuid} 查询 checkout (尝试 {retry_count + 1}/{max_retries}): checkout_id={creem_checkout_id}")
                             checkout_data = creem_client.get_checkout(creem_checkout_id)
-                            
-                            # 记录完整的响应信息
-                            logger.info(f"订单 {order.uuid} Creem API 响应 (checkout): {checkout_data}")
-                            
-                            # 如果查询成功，跳出重试循环
                             break
                         except Exception as retry_error:
                             if retry_count < max_retries - 1:
-                                logger.warning(
-                                    f"订单 {order.uuid} 查询 checkout 失败 (尝试 {retry_count + 1}/{max_retries}): {retry_error}, "
-                                    f"{retry_delay}秒后重试"
-                                )
                                 import time
                                 time.sleep(retry_delay)
                             else:
-                                # 最后一次重试失败，抛出异常
-                                logger.error(f"订单 {order.uuid} 查询 checkout 失败，已重试 {max_retries} 次: {retry_error}")
                                 raise
                     
                     if not checkout_data:
-                        logger.warning(f"订单 {order.uuid} 未获取到 checkout 数据")
                         continue
                     
                     # 解析 checkout 信息
@@ -729,14 +683,6 @@ class OrderService:
                     order.order_metadata["last_polled_at"] = now.isoformat()
                     order.order_metadata["last_checkout_status"] = checkout_status
                     
-                    logger.info(
-                        f"订单 {order.uuid} checkout 详情: "
-                        f"checkout_id={checkout_id}, "
-                        f"checkout_status={checkout_status}, "
-                        f"order={checkout_order}, "
-                        f"subscription={checkout_subscription}, "
-                        f"product={checkout_product}"
-                    )
                     
                     # 解析 order 信息（可能是字符串 ID 或完整对象）
                     order_data = None
@@ -758,18 +704,6 @@ class OrderService:
                         creem_order_type = checkout_order.get("type")  # recurring, onetime
                         creem_transaction_id = checkout_order.get("transaction")
                         
-                        logger.info(
-                            f"订单 {order.uuid} Creem Order 详情: "
-                            f"order_id={creem_order_id}, "
-                            f"order_status={creem_order_status}, "
-                            f"amount={creem_order_amount}, "
-                            f"amount_due={creem_order_amount_due}, "
-                            f"amount_paid={creem_order_amount_paid}, "
-                            f"currency={creem_order_currency}, "
-                            f"type={creem_order_type}, "
-                            f"transaction_id={creem_transaction_id}"
-                        )
-                        
                         # 判断支付状态（根据 Creem API 文档）：
                         # 1. checkout.status == "completed" 表示支付完成（主要判断）
                         # 2. order.transaction 存在（有交易ID）表示已支付
@@ -785,8 +719,6 @@ class OrderService:
                         )
                         
                         if is_paid:
-                            logger.info(f"订单 {order.uuid} 支付成功 (checkout_status={checkout_status}, order_status={creem_order_status})，开始发放积分")
-                            
                             # 记录轮询事件到 webhook_events 表
                             event_payload = {
                                 "type": "checkout.session.completed",
@@ -819,23 +751,11 @@ class OrderService:
                                 creem_subscription_id=creem_subscription_id
                             )
                             paid += 1
-                            logger.info(f"订单 {order.uuid} 积分发放完成")
                             continue
-                        else:
-                            logger.info(
-                                f"订单 {order.uuid} 尚未支付完成: "
-                                f"checkout_status={checkout_status}, "
-                                f"order_status={creem_order_status}, "
-                                f"transaction_id={creem_transaction_id}, "
-                                f"amount_paid={creem_order_amount_paid}, "
-                                f"amount_due={creem_order_amount_due}"
-                            )
                     else:
                         # checkout_order 不是对象，可能是字符串或 None
                         # 根据 checkout_status 判断
                         if checkout_status == "completed":
-                            logger.info(f"订单 {order.uuid} checkout 状态为 completed，开始发放积分")
-                            
                             # 记录轮询事件到 webhook_events 表
                             event_payload = {
                                 "type": "checkout.session.completed",
@@ -875,18 +795,10 @@ class OrderService:
                                 creem_subscription_id=creem_subscription_id
                             )
                             paid += 1
-                            logger.info(f"订单 {order.uuid} 积分发放完成")
                             continue
-                        elif checkout_status == "expired":
-                            logger.warning(f"订单 {order.uuid} checkout 已过期")
-                        else:
-                            logger.info(f"订单 {order.uuid} checkout 状态为 {checkout_status}，等待支付完成")
-                    
-                    # Creem支付：如果支付未完成，不修改状态，只是不再轮询（超过24小时会自动停止轮询）
-                    logger.info(f"订单 {order.uuid} Creem支付未完成，不修改状态，继续等待或停止轮询")
             except Exception as e:
                 errors += 1
-                logger.exception(f"轮询订单支付失败 order_uuid={order.uuid}: {e}")
+                logger.info(f"订单轮询: order_uuid={order.uuid}, status=error, error={str(e)}")
                 db.rollback()
 
         return {"checked": checked, "paid": paid, "expired": expired, "errors": errors}

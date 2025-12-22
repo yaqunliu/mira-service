@@ -27,39 +27,21 @@ class OrderQueryService:
         from app.core.config import settings
         
         try:
-            # Debug 模式下记录查询开始
-            if settings.DEBUG:
-                logger.debug(f"[DEBUG] ========== 开始查询订单支付状态 ==========")
-                logger.debug(f"  订单UUID: {order.uuid}")
-                logger.debug(f"  支付方式: {order.payment_method}")
-                logger.debug(f"  订单状态: {order.status}")
-                logger.debug(f"  订单号: {order.order_number}")
-            
             # 根据支付方式获取对应的支付服务
             payment_service = PaymentServiceFactory.get_service(order.payment_method)
-            
-            if settings.DEBUG:
-                logger.debug(f"  支付服务: {type(payment_service).__name__}")
             
             # 查询支付状态
             result = payment_service.query_payment_status(db, order)
             
-            # Debug 模式下记录查询结果
-            if settings.DEBUG:
-                logger.debug(f"[DEBUG] 订单查询结果:")
-                logger.debug(f"  订单UUID: {order.uuid}")
-                logger.debug(f"  查询结果: {result}")
-                logger.debug(f"[DEBUG] ========== 查询订单支付状态完成 ==========")
-            
-            logger.info(f"查询订单状态: order_uuid={order.uuid}, status={result.get('status')}, updated={result.get('updated')}")
+            # 简化日志：只记录一条，包含状态和是否更新
+            status = result.get('status', 'unknown')
+            updated = result.get('updated', False)
+            logger.info(f"订单轮询: order_uuid={order.uuid}, status={status}, updated={updated}")
             
             return result
             
         except Exception as e:
-            logger.error(f"查询订单状态失败: order_uuid={order.uuid}, error={e}")
-            if settings.DEBUG:
-                logger.debug(f"[DEBUG] 查询异常详情: {str(e)}")
-                import traceback
-                logger.debug(f"[DEBUG] 异常堆栈: {traceback.format_exc()}")
+            # 简化日志：只记录一条错误日志
+            logger.info(f"订单轮询: order_uuid={order.uuid}, status=error, error={str(e)}")
             return {"status": "unknown", "updated": False, "error": str(e)}
 
