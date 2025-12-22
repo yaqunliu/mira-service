@@ -130,16 +130,17 @@ class WechatWebhookService:
         logger.info(f"💰 [WECHAT WEBHOOK SERVICE] 标记订单为已支付...")
         logger.info(f"   - 订单UUID: {order.uuid}")
         logger.info(f"   - 订单号: {order.order_number}")
-        logger.info(f"   - 交易ID: {transaction_id}")
+        logger.info(f"   - 微信交易ID: {transaction_id}")
         logger.info(f"   - 支付时间: {paid_at}")
         logger.info(f"   - 订阅ID: {subscription_id}")
         
         OrderService.mark_paid(
             db=db,
             order=order,
-            transaction_id=transaction_id,
+            wechat_transaction_id=transaction_id,  # 使用正确的参数名
             paid_at=paid_at,
-            subscription_id=subscription_id,
+            # 注意：微信支付目前不支持订阅，subscription_id 参数不适用于微信支付
+            # 如果将来支持微信订阅，可能需要添加 wechat_subscription_id 参数
         )
         
         logger.info(f"✅ [WECHAT WEBHOOK SERVICE] 微信支付回调处理成功")
