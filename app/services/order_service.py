@@ -924,10 +924,13 @@ class OrderService:
                 db=db,
                 user_id=order.user_id,
                 points=can_deduct,
-                record_type="refund",
                 operation_type="refund",
                 description=f"订单退款扣回积分 {order.uuid}",
-                extra_data={"order_uuid": str(order.uuid), "refund_ratio": refund_ratio},
+                extra_data={
+                    "order_uuid": str(order.uuid),
+                    "refund_ratio": refund_ratio,
+                    "actual_record_type": "refund",  # 在 extra_data 中记录实际类型
+                },
             )
 
         # 订阅需要取消（如果存在）

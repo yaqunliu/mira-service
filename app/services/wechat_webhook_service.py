@@ -273,11 +273,12 @@ class WechatWebhookService:
                 
                 if actual_deduct > 0:
                     logger.info(f"💸 [WECHAT WEBHOOK SERVICE] 扣除积分: {actual_deduct} (可用积分: {available_points})")
+                    # 注意：deduct_points 方法不接受 record_type 参数，内部固定使用 "consume"
+                    # 但退款应该使用 record_type="refund"，所以直接调用方法，record_type 会在 extra_data 中记录
                     PointsService.deduct_points(
                         db=db,
                         user_id=order.user_id,
                         points=actual_deduct,
-                        record_type="refund",
                         operation_type="refund",
                         description=f"微信支付退款扣回积分 {order.uuid}",
                         extra_data={
@@ -286,6 +287,7 @@ class WechatWebhookService:
                             "refund_id": refund_id,
                             "out_refund_no": out_refund_no,
                             "wechat_refund": True,
+                            "actual_record_type": "refund",  # 在 extra_data 中记录实际类型
                         },
                     )
                     logger.info(f"✅ [WECHAT WEBHOOK SERVICE] 积分扣除成功: {actual_deduct}")
@@ -342,14 +344,24 @@ class WechatWebhookService:
         
         elif event_type == "REFUND.ABNORMAL":
             # 退款异常：记录日志，但不处理业务逻辑
-            logger.warning(f"⚠️ [WECHAT WEBHOOK SERVICE] 退款异常: refund_id={refund_id}, out_trade_no={out_trade_no}")
+            logger.warning(f"⚠️ [WECHAT WEBHOOK SERVICE] 退款异常: refund_id={refund_id or 'N/A'}, out_trade_no={out_trade_no or 'N/A'}")
             logger.warning(f"   需要前往商户平台手动处理此笔退款")
-            return {"status": "abnormal", "refund_id": refund_id, "message": "退款异常，需要手动处理"}
+            return {
+                "status": "abnormal",
+                "refund_id": refund_id,
+                "out_trade_no": out_trade_no,
+                "message": "退款异常，需要手动处理"
+            }
         
         elif event_type == "REFUND.CLOSED":
             # 退款关闭：记录日志
-            logger.info(f"ℹ️ [WECHAT WEBHOOK SERVICE] 退款关闭: refund_id={refund_id}, out_trade_no={out_trade_no}")
-            return {"status": "closed", "refund_id": refund_id, "message": "退款已关闭"}
+            logger.info(f"ℹ️ [WECHAT WEBHOOK SERVICE] 退款关闭: refund_id={refund_id or 'N/A'}, out_trade_no={out_trade_no or 'N/A'}")
+            return {
+                "status": "closed",
+                "refund_id": refund_id,
+                "out_trade_no": out_trade_no,
+                "message": "退款已关闭"
+            }
         
         else:
             logger.warning(f"⚠️ [WECHAT WEBHOOK SERVICE] 未处理的退款状态: refund_status={refund_status}, event_type={event_type}")
