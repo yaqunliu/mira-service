@@ -8,9 +8,11 @@ UCloud US3 文件管理客户端
 import os
 import time
 import hashlib
+import httpx
 from typing import Dict, Any, Optional, List, Union
 from pathlib import Path
 from io import BytesIO
+from urllib.parse import urlparse
 from app.core.config import settings
 from app.core.logger import logger
 
@@ -651,6 +653,216 @@ class US3Client:
         put_key = put_key.lstrip("/")
         url = f"https://{bucket}{self.download_suffix}/{put_key}"
         return url
+
+    @staticmethod
+    def is_us3_url(url_or_key: str) -> bool:
+        """
+        判断 URL 或 key 是否是 US3 链接
+        
+        Args:
+            url_or_key: URL 或文件 key
+            
+        Returns:
+            如果是 US3 链接返回 True，否则返回 False
+        """
+        if not url_or_key:
+            return False
+        
+        # 检查是否包含 ufileos.com（US3 的域名特征）
+        return 'ufileos.com' in url_or_key
+
+    @staticmethod
+    def parse_us3_url(url: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        解析 US3 URL，提取 bucket 和 put_key
+        
+        Args:
+            url: US3 URL，格式为 https://{bucket}.{suffix}/{put_key}
+            
+        Returns:
+            (bucket, put_key) 元组，如果解析失败返回 (None, None)
+        """
+        try:
+            parsed = urlparse(url)
+            # US3 URL 格式: https://{bucket}.{suffix}/{put_key}
+            # 例如: https://mira-video.hk.ufileos.com/staging/20251211/...
+            hostname = parsed.hostname
+            if not hostname or 'ufileos.com' not in hostname:
+                return None, None
+            
+            # 提取 bucket（hostname 的第一部分）
+            bucket = hostname.split('.')[0]
+            
+            # 提取 put_key（path 去掉开头的 /）
+            put_key = parsed.path.lstrip('/')
+            
+            return bucket, put_key
+        except Exception as e:
+            logger.warning(f"解析 US3 URL 失败: {url}, error: {e}")
+            return None, None
+
+
+def download_file_smart(
+    url_or_key: str,
+    save_file: str,
+    bucket: Optional[str] = None,
+    timeout: int = 60
+) -> Dict[str, Any]:
+    """
+    智能下载文件：如果是 US3 链接且 bucket 匹配则使用 US3 下载，否则使用 HTTP 下载
+    
+    Args:
+        url_or_key: 文件 URL 或 US3 key
+        save_file: 保存文件的本地路径
+        bucket: US3 bucket（如果 url_or_key 是 key 时需要指定）
+        timeout: HTTP 下载超时时间（秒）
+        
+    Returns:
+        包含下载结果的字典
+    """
+    try:
+        # 判断是否是 US3 链接
+        if US3Client.is_us3_url(url_or_key):
+            logger.info(f"检测到 US3 链接: {url_or_key}")
+            
+            # 解析 US3 URL 获取 bucket 和 put_key
+            parsed_bucket, put_key = US3Client.parse_us3_url(url_or_key)
+            
+            if not put_key:
+                # 如果解析失败，尝试将 url_or_key 作为 put_key 使用
+                logger.warning(f"无法从 URL 解析 bucket 和 key，尝试作为 put_key 使用: {url_or_key}")
+                put_key = url_or_key
+                if not bucket:
+                    # 如果也没有提供 bucket，尝试从配置获取
+                    bucket = settings.DEFAULT_BUCKET
+                    if not bucket:
+                        logger.warning(f"无法确定 US3 bucket，使用 HTTP 下载: {url_or_key}")
+                        return download_file_http(url_or_key, save_file, timeout)
+            else:
+                # 使用解析出的 bucket（如果提供了 bucket 参数则优先使用）
+                if bucket:
+                    logger.info(f"使用提供的 bucket: {bucket}")
+                else:
+                    bucket = parsed_bucket
+                    if not bucket:
+                        bucket = settings.DEFAULT_BUCKET
+                        if not bucket:
+                            logger.warning(f"无法确定 US3 bucket，使用 HTTP 下载: {url_or_key}")
+                            return download_file_http(url_or_key, save_file, timeout)
+            
+            # 获取当前配置的 bucket
+            configured_bucket = settings.DEFAULT_BUCKET or settings.US3_BUCKET
+            if not configured_bucket:
+                logger.warning(f"未配置 US3 bucket，使用 HTTP 下载: {url_or_key}")
+                return download_file_http(url_or_key, save_file, timeout)
+            
+            # 检查 bucket 是否匹配
+            if bucket != configured_bucket:
+                logger.warning(
+                    f"Bucket 不匹配，使用 HTTP 下载: "
+                    f"URL bucket={bucket}, 配置 bucket={configured_bucket}, url={url_or_key}"
+                )
+                return download_file_http(url_or_key, save_file, timeout)
+            
+            # Bucket 匹配，使用 US3 下载
+            logger.info(f"Bucket 匹配 ({bucket})，使用 US3 下载: {url_or_key}")
+            us3_client = US3Client()
+            download_result = us3_client.download_file(
+                bucket=bucket,
+                put_key=put_key,
+                save_file=save_file
+            )
+            
+            # 如果 US3 下载失败（如 404），尝试使用 HTTP 下载作为后备
+            if not download_result.get('success') and download_result.get('status_code') == 404:
+                logger.warning(f"US3 下载失败（404），尝试使用 HTTP 下载: {url_or_key}")
+                return download_file_http(url_or_key, save_file, timeout)
+            
+            return download_result
+        else:
+            # 使用 HTTP 下载
+            logger.info(f"检测到普通 URL，使用 HTTP 下载: {url_or_key}")
+            return download_file_http(url_or_key, save_file, timeout)
+            
+    except Exception as e:
+        error_msg = f"智能下载文件失败: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        # 发生异常时，尝试使用 HTTP 下载作为后备
+        logger.warning(f"发生异常，尝试使用 HTTP 下载: {url_or_key}")
+        return download_file_http(url_or_key, save_file, timeout)
+
+
+def download_file_http(
+    url: str,
+    save_file: str,
+    timeout: int = 60
+) -> Dict[str, Any]:
+    """
+    使用 HTTP 下载文件
+    
+    Args:
+        url: 文件 URL
+        save_file: 保存文件的本地路径
+        timeout: 超时时间（秒）
+        
+    Returns:
+        包含下载结果的字典
+    """
+    try:
+        logger.info(f"开始 HTTP 下载文件: {url} -> {save_file}")
+        
+        # 确保保存目录存在
+        save_dir = os.path.dirname(save_file)
+        if save_dir and not os.path.exists(save_dir):
+            os.makedirs(save_dir, exist_ok=True)
+        
+        # 使用 httpx 下载
+        timeout_config = httpx.Timeout(
+            connect=10.0,
+            read=timeout,
+            write=10.0,
+            pool=10.0,
+        )
+        
+        with httpx.Client(timeout=timeout_config, follow_redirects=True) as client:
+            response = client.get(url)
+            response.raise_for_status()
+            
+            # 保存文件
+            with open(save_file, 'wb') as f:
+                f.write(response.content)
+        
+        file_size = os.path.getsize(save_file)
+        logger.info(f"HTTP 文件下载成功: {url} -> {save_file}, 大小: {file_size} 字节")
+        
+        return {
+            "success": True,
+            "url": url,
+            "save_file": save_file,
+            "file_size": file_size,
+            "status_code": response.status_code,
+            "message": "文件下载成功",
+        }
+        
+    except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP 下载失败，状态码: {e.response.status_code}"
+        logger.error(f"{error_msg}: {url}")
+        return {
+            "success": False,
+            "url": url,
+            "save_file": save_file,
+            "status_code": e.response.status_code,
+            "message": error_msg,
+        }
+    except Exception as e:
+        error_msg = f"HTTP 下载异常: {str(e)}"
+        logger.error(f"{error_msg}: {url}", exc_info=True)
+        return {
+            "success": False,
+            "url": url,
+            "save_file": save_file,
+            "message": error_msg,
+        }
 
 
 # 便捷函数

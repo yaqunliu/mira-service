@@ -313,7 +313,7 @@ class UploadHelper:
         bucket: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        下载文件（使用内网地址下载）
+        智能下载文件：如果是 US3 链接则使用 US3 下载，否则使用 HTTP 下载
         
         Args:
             url_or_put_key: 外网URL或put_key
@@ -323,52 +323,26 @@ class UploadHelper:
         Returns:
             包含下载结果的字典
         """
+        from app.utils.us3 import download_file_smart
+        
         try:
-            # 如果是URL，提取put_key并转换为内网URL
-            if url_or_put_key.startswith('http://') or url_or_put_key.startswith('https://'):
-                # 这是URL，转换为内网URL
-                internal_url = self.convert_to_internal_url(url_or_put_key)
-                # 从URL中提取put_key
-                # URL格式: https://{bucket}{suffix}/{put_key}
-                if self.internal_download_suffix in internal_url:
-                    put_key = internal_url.split(self.internal_download_suffix + '/', 1)[1]
-                elif self.external_download_suffix in url_or_put_key:
-                    put_key = url_or_put_key.split(self.external_download_suffix + '/', 1)[1]
-                else:
-                    # 尝试从URL中提取
-                    parts = internal_url.split('/', 3)
-                    if len(parts) >= 4:
-                        put_key = parts[3]
-                    else:
-                        raise ValueError(f"无法从URL中提取put_key: {url_or_put_key}")
-            else:
-                # 这是put_key
-                put_key = url_or_put_key
-                internal_url = self.get_internal_download_url(put_key)
-            
-            # 创建使用内网地址的US3客户端实例（线程安全）
-            us3_client = US3Client(
-                upload_suffix=self.internal_upload_suffix,
-                download_suffix=self.internal_download_suffix
-            )
-            
-            # 下载文件
-            download_result = us3_client.download_file(
+            # 使用智能下载函数
+            download_result = download_file_smart(
+                url_or_key=url_or_put_key,
+                save_file=save_file,
                 bucket=bucket or self.bucket,
-                put_key=put_key,
-                save_file=save_file
+                timeout=60
             )
             
             if not download_result.get('success'):
                 raise US3UploadError(f"下载失败: {download_result.get('message')}")
             
-            logger.info(f"文件下载成功: {put_key} -> {save_file}")
+            logger.info(f"文件下载成功: {url_or_put_key} -> {save_file}")
             
             return {
                 "success": True,
-                "put_key": put_key,
+                "put_key": url_or_put_key,
                 "save_file": save_file,
-                "internal_url": internal_url,
                 "message": "文件下载成功"
             }
                 

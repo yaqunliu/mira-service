@@ -6,7 +6,7 @@ import json
 import tempfile
 from pathlib import Path
 from app.core.celery_app import celery_app
-from app.utils.us3 import US3Client
+from app.utils.us3 import US3Client, download_file_smart
 from app.utils.file_utils import read_prompt_file
 from app.utils.ai_client import AIClient
 from app.core.config import settings
@@ -65,15 +65,15 @@ def character_analysis_task(self, novel_id: int, chapter_id: int, creation_id: i
         
         logger.info(f"准备下载章节内容到临时文件: {temp_file_path}")
         
-        # 从us3下载章节内容到临时文件
-        us3_client = US3Client()
-        download_result = us3_client.download_file(
-            bucket=None, 
-            put_key=chapter_content_url, 
-            save_file=temp_file_path
+        # 智能下载章节内容到临时文件（自动判断是 US3 链接还是普通 URL）
+        download_result = download_file_smart(
+            url_or_key=chapter_content_url,
+            save_file=temp_file_path,
+            bucket=None,
+            timeout=60
         )
         
-        if not download_result['success']:
+        if not download_result.get('success'):
             error_detail = download_result.get('message', '未知错误')
             logger.error(f"获取章节内容失败: {error_detail}")
             raise Exception(f"获取章节内容失败: {error_detail}")
@@ -301,15 +301,15 @@ def playbook_generation_task(self, previous_result, novel_id: int, chapter_id: i
         
         logger.info(f"准备下载章节内容到临时文件: {temp_file_path}")
         
-        # 从us3下载章节内容到临时文件
-        us3_client = US3Client()
-        download_result = us3_client.download_file(
-            bucket=None, 
-            put_key=chapter_content_url, 
-            save_file=temp_file_path
+        # 智能下载章节内容到临时文件（自动判断是 US3 链接还是普通 URL）
+        download_result = download_file_smart(
+            url_or_key=chapter_content_url,
+            save_file=temp_file_path,
+            bucket=None,
+            timeout=60
         )
         
-        if not download_result['success']:
+        if not download_result.get('success'):
             error_detail = download_result.get('message', '未知错误')
             logger.error(f"获取章节内容失败: {error_detail}")
             raise Exception(f"获取章节内容失败: {error_detail}")
