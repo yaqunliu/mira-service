@@ -49,7 +49,8 @@ def get_current_user(
     """
     # 如果没有提供token，抛出未授权异常
     if not credentials:
-        logger.warning("未提供token，拒绝访问")
+        # 停掉 sync 相关日志
+        # logger.warning("未提供token，拒绝访问")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="未提供认证令牌，请使用 Supabase 登录",
@@ -61,7 +62,8 @@ def get_current_user(
     # 验证 Supabase token
     supabase_user_data = supabase_service.get_user_from_token(token)
     if not supabase_user_data:
-        logger.warning("Supabase token 验证失败")
+        # 停掉 sync 相关日志
+        # logger.warning("Supabase token 验证失败")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="无效的认证令牌，请使用 Supabase 登录",
@@ -71,7 +73,8 @@ def get_current_user(
     # 使用 Supabase token，同步用户到数据库
     user = UserSyncService.get_user_from_supabase_token(db, token)
     if not user:
-        logger.warning("Supabase token 验证成功但无法同步用户")
+        # 停掉 sync 相关日志
+        # logger.warning("Supabase token 验证成功但无法同步用户")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="无法获取用户信息",

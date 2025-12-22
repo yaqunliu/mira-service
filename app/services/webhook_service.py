@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Any, Dict, Optional
 from sqlalchemy.orm import Session
@@ -39,24 +40,41 @@ class WebhookService:
 
     @staticmethod
     def process_event(db: Session, payload: Dict[str, Any]):
+        # ========== WEBHOOK 处理日志 ==========
+        logger.info("=" * 80)
+        logger.info(f"🔄 [CREEM WEBHOOK SERVICE] 开始处理事件")
+        logger.info(f"   - 完整 Payload:")
+        logger.info(f"   {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        logger.info("=" * 80)
+        
         # 支持多种事件类型字段名：eventType, type, event
         event_type = payload.get("eventType") or payload.get("type") or payload.get("event")
         # 支持多种事件ID字段名：id, event_id
         creem_event_id = payload.get("id") or payload.get("event_id")
+        
+        logger.info(f"📋 [CREEM WEBHOOK SERVICE] 解析的事件信息:")
+        logger.info(f"   - 事件类型: {event_type}")
+        logger.info(f"   - 事件ID: {creem_event_id}")
+        
         if not event_type:
+            logger.error(f"❌ [CREEM WEBHOOK SERVICE] 缺少事件类型")
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="缺少事件类型")
 
         event = WebhookService.record_event(db, event_type, creem_event_id, payload, source="webhook")
         if event.processed:
-            logger.info(f"Webhook 事件已处理，跳过: {creem_event_id or event.uuid}")
+            logger.info(f"⏭️ [CREEM WEBHOOK SERVICE] 事件已处理，跳过: {creem_event_id or event.uuid}")
             return {"status": "skipped"}
 
         try:
+            logger.info(f"🎯 [CREEM WEBHOOK SERVICE] 路由到对应的事件处理器: {event_type}")
             if event_type in ("checkout.session.completed", "checkout.completed"):
+                logger.info(f"💰 [CREEM WEBHOOK SERVICE] 处理支付完成事件")
                 WebhookService._handle_checkout_completed(db, payload)
             elif event_type == "checkout.session.failed":
+                logger.info(f"❌ [CREEM WEBHOOK SERVICE] 处理支付失败事件")
                 WebhookService._handle_checkout_failed(db, payload)
             elif event_type in ("invoice.paid", "subscription.paid"):
+                logger.info(f"💳 [CREEM WEBHOOK SERVICE] 处理发票/订阅支付事件")
                 WebhookService._handle_invoice_paid(db, payload)
             elif event_type in (
                 "subscription.created",
@@ -69,24 +87,30 @@ class WebhookService:
                 "subscription.paused",
                 "subscription.expired",
             ):
+                logger.info(f"📝 [CREEM WEBHOOK SERVICE] 处理订阅更新事件")
                 WebhookService._handle_subscription_update(db, payload)
             elif event_type in ("subscription.cancelled", "subscription.canceled"):
+                logger.info(f"🚫 [CREEM WEBHOOK SERVICE] 处理订阅取消事件")
                 WebhookService._handle_subscription_cancelled(db, payload)
             elif event_type == "subscription.scheduled_cancel":
+                logger.info(f"⏰ [CREEM WEBHOOK SERVICE] 处理订阅计划取消事件")
                 WebhookService._handle_subscription_scheduled_cancel(db, payload)
             elif event_type == "refund.created":
+                logger.info(f"💸 [CREEM WEBHOOK SERVICE] 处理退款创建事件")
                 WebhookService._handle_refund_created(db, payload)
             elif event_type == "dispute.created":
-                logger.info(f"收到事件 {event_type}，目前仅记录事件，不做业务处理")
+                logger.info(f"⚠️ [CREEM WEBHOOK SERVICE] 收到争议创建事件，目前仅记录事件，不做业务处理")
             else:
-                logger.warning(f"未处理的事件类型: {event_type}")
+                logger.warning(f"⚠️ [CREEM WEBHOOK SERVICE] 未处理的事件类型: {event_type}")
         except Exception as e:
-            logger.exception(f"处理 Webhook 事件失败: {e}")
+            logger.exception(f"❌ [CREEM WEBHOOK SERVICE] 处理 Webhook 事件失败: {e}")
             event.error_message = str(e)
             db.commit()
             raise
         else:
             WebhookService.mark_processed(db, event)
+            logger.info(f"✅ [CREEM WEBHOOK SERVICE] 事件处理完成并标记为已处理")
+            logger.info("=" * 80)
         return {"status": "ok"}
 
     @staticmethod

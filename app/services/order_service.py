@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
@@ -21,6 +21,7 @@ from app.services.subscription_service import SubscriptionService
 from app.models.webhook_event import WebhookEvent
 from app.schemas.order import Order as OrderSchema
 from app.core.config import settings
+from app.core.timezone_utils import now as shanghai_now, to_aware as to_shanghai
 
 
 class OrderService:
@@ -99,7 +100,7 @@ class OrderService:
             points_issued=0,
             success_url=success_url,
             cancel_url=cancel_url,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+            expires_at=shanghai_now() + timedelta(minutes=30),
             order_metadata=metadata,
         )
         db.add(order)
@@ -123,7 +124,7 @@ class OrderService:
         
         # 保存支付信息到 metadata
         metadata["payment_info"] = payment_info
-        metadata["payment_info_created_at"] = datetime.now(timezone.utc).isoformat()
+        metadata["payment_info_created_at"] = shanghai_now().isoformat()
         
         # 更新订单的 metadata
         order.order_metadata = metadata
@@ -276,7 +277,7 @@ class OrderService:
             return
         
         order.status = "paid"
-        order.paid_at = paid_at or datetime.now(timezone.utc)
+        order.paid_at = paid_at or shanghai_now()
         
         # 根据支付方式更新对应的支付详情表
         if order.payment_method == "creem" and order.creem_payment:
@@ -367,7 +368,7 @@ class OrderService:
                     subscription_id=subscription_id,  # 通用订阅ID
                     status="active",
                     billing_period=order.product.billing_period,
-                    current_period_start=paid_at or datetime.now(timezone.utc),
+                    current_period_start=to_shanghai(paid_at) if paid_at else shanghai_now(),
                     current_period_end=None,
                     next_billing_date=None,
                     points_per_period=order.points_amount,
@@ -529,12 +530,12 @@ class OrderService:
         """
         from app.services.order_query_service import OrderQueryService
         
-        # 确保 now 是 timezone-aware 的 datetime
+        # 确保 now 是 timezone-aware 的 datetime（使用上海时区）
         if now is None:
-            now = datetime.now(timezone.utc)
-        elif now.tzinfo is None:
-            # 如果传入的是 naive datetime，转换为 UTC aware
-            now = now.replace(tzinfo=timezone.utc)
+            now = shanghai_now()
+        else:
+            # 转换为上海时区
+            now = to_shanghai(now)
         
         min_age = now - timedelta(minutes=3)
         from sqlalchemy.orm import joinedload

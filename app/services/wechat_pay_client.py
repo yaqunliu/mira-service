@@ -30,6 +30,9 @@ class WechatPayClient:
         cert_path: str = settings.WECHAT_CERT_PATH,
         base_url: str = settings.WECHAT_API_BASE_URL,
         use_sandbox: bool = settings.WECHAT_USE_SANDBOX,
+        timeout: int = settings.WECHAT_TIMEOUT,
+        max_retries: int = settings.WECHAT_MAX_RETRIES,
+        retry_delay: int = settings.WECHAT_RETRY_DELAY,
     ):
         self.appid = appid
         self.mchid = mchid
@@ -37,6 +40,9 @@ class WechatPayClient:
         self.cert_serial_no = cert_serial_no
         self.base_url = base_url.rstrip("/")
         self.use_sandbox = use_sandbox
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
         
         # 加载私钥
         self.private_key = None
@@ -154,7 +160,7 @@ class WechatPayClient:
         json_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        发送HTTP请求
+        发送HTTP请求（带重试机制）
         
         注意：微信支付V3 API没有沙箱环境，所有V3 API请求都直接发送到生产环境
         """
@@ -196,73 +202,126 @@ class WechatPayClient:
                 logger.debug(f"  Payload: {json_data}")
             logger.debug(f"  Body (raw): {body}")
         
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.request(method, url, headers=headers, content=body)
-            
-            # 记录响应原始内容（用于调试）
-            response_text = resp.text
-            response_status = resp.status_code
-            response_headers = dict(resp.headers)
-            
-            logger.info(f"微信支付API响应: status={response_status}, url={url}")
-            # 始终记录响应状态和基本信息
-            logger.debug(f"[DEBUG] 微信支付API 响应原始内容:")
-            logger.debug(f"  URL: {url}")
-            logger.debug(f"  Status: {response_status}")
-            logger.debug(f"  Headers: {response_headers}")
-            logger.debug(f"  Response Text (前500字符): {response_text[:500] if response_text else '(empty)'}")
-            logger.debug(f"  Response Text (完整): {response_text if response_text else '(empty)'}")
-            logger.debug(f"  Response Content Length: {len(response_text) if response_text else 0}")
-            # 如果响应不是200，或者响应为空，记录警告
-            if response_status != 200:
-                logger.warning(f"微信支付API返回非200状态: status={response_status}, response_text={response_text[:200]}")
-            if not response_text or len(response_text.strip()) == 0:
-                logger.warning(f"微信支付API响应为空: status={response_status}, url={url}")
-            
+        # 配置超时：分别设置连接超时和读取超时
+        # connect: 连接超时（建立连接的时间）
+        # read: 读取超时（等待响应的时间）
+        timeout_config = httpx.Timeout(
+            connect=10.0,  # 连接超时10秒
+            read=self.timeout,  # 读取超时使用配置的值（默认60秒）
+            write=10.0,  # 写入超时10秒
+            pool=10.0,  # 连接池超时10秒
+        )
+        
+        last_error = None
+        for attempt in range(self.max_retries + 1):
             try:
-                resp.raise_for_status()
+                with httpx.Client(timeout=timeout_config) as client:
+                    resp = client.request(method, url, headers=headers, content=body)
+                    
+                    # 记录响应原始内容（用于调试）
+                    response_text = resp.text
+                    response_status = resp.status_code
+                    response_headers = dict(resp.headers)
+                    
+                    logger.info(f"微信支付API响应: status={response_status}, url={url}")
+                    # 始终记录响应状态和基本信息
+                    logger.debug(f"[DEBUG] 微信支付API 响应原始内容:")
+                    logger.debug(f"  URL: {url}")
+                    logger.debug(f"  Status: {response_status}")
+                    logger.debug(f"  Headers: {response_headers}")
+                    logger.debug(f"  Response Text (前500字符): {response_text[:500] if response_text else '(empty)'}")
+                    logger.debug(f"  Response Text (完整): {response_text if response_text else '(empty)'}")
+                    logger.debug(f"  Response Content Length: {len(response_text) if response_text else 0}")
+                    # 如果响应不是200，或者响应为空，记录警告
+                    if response_status != 200:
+                        logger.warning(f"微信支付API返回非200状态: status={response_status}, response_text={response_text[:200]}")
+                    if not response_text or len(response_text.strip()) == 0:
+                        logger.warning(f"微信支付API响应为空: status={response_status}, url={url}")
+                    
+                    try:
+                        resp.raise_for_status()
+                    except httpx.HTTPStatusError as e:
+                        error_detail = None
+                        try:
+                            error_detail = resp.json()
+                        except Exception as json_err:
+                            error_detail = {
+                                "error": "无法解析JSON响应",
+                                "raw_response": response_text[:1000],  # 限制长度
+                                "json_error": str(json_err)
+                            }
+                        logger.error(f"微信支付API错误: {e.response.status_code} - {error_detail} | url={url}")
+                        logger.error(f"微信支付API错误 - 完整响应: {response_text}")
+                        raise
+                    
+                    # 尝试解析JSON响应
+                    try:
+                        response_data = resp.json()
+                        logger.debug(f"[DEBUG] 微信支付API 响应JSON解析成功:")
+                        logger.debug(f"  URL: {url}")
+                        logger.debug(f"  Status: {response_status}")
+                        logger.debug(f"  Response: {response_data}")
+                        return response_data
+                    except Exception as json_err:
+                        # JSON解析失败，记录详细信息（始终记录，不只在DEBUG模式）
+                        logger.error(f"微信支付API响应JSON解析失败: {json_err}")
+                        logger.error(f"  URL: {url}")
+                        logger.error(f"  Method: {method.upper()}")
+                        logger.error(f"  Status: {response_status}")
+                        logger.error(f"  Response Headers: {response_headers}")
+                        logger.error(f"  Response Text (完整): {response_text if response_text else '(empty)'}")
+                        logger.error(f"  Response Text (长度): {len(response_text) if response_text else 0}")
+                        logger.error(f"  Response Content (bytes, 前500字节): {resp.content[:500] if resp.content else b'(empty)'}")
+                        logger.error(f"  Response Content (bytes, hex, 前100字节): {resp.content[:100].hex() if resp.content else '(empty)'}")
+                        # 尝试检测响应内容类型
+                        content_type = response_headers.get('content-type', 'unknown')
+                        logger.error(f"  Content-Type: {content_type}")
+                        raise ValueError(
+                            f"无法解析微信支付API响应为JSON: {json_err}, "
+                            f"status={response_status}, "
+                            f"content_type={content_type}, "
+                            f"response_text={response_text[:500] if response_text else '(empty)'}"
+                        )
+            
+            except (httpx.TimeoutException, httpx.ReadTimeout, httpx.ConnectTimeout) as e:
+                last_error = e
+                if attempt < self.max_retries:
+                    wait_time = self.retry_delay * (attempt + 1)  # 指数退避
+                    logger.warning(
+                        f"微信支付API请求超时 (尝试 {attempt + 1}/{self.max_retries + 1}): "
+                        f"url={url}, error={str(e)}, {wait_time}秒后重试"
+                    )
+                    time.sleep(wait_time)
+                else:
+                    logger.error(
+                        f"微信支付API请求超时，已重试 {self.max_retries} 次: "
+                        f"url={url}, error={str(e)}, timeout={self.timeout}秒"
+                    )
+                    raise
+            
             except httpx.HTTPStatusError as e:
-                error_detail = None
-                try:
-                    error_detail = resp.json()
-                except Exception as json_err:
-                    error_detail = {
-                        "error": "无法解析JSON响应",
-                        "raw_response": response_text[:1000],  # 限制长度
-                        "json_error": str(json_err)
-                    }
-                logger.error(f"微信支付API错误: {e.response.status_code} - {error_detail} | url={url}")
-                logger.error(f"微信支付API错误 - 完整响应: {response_text}")
+                # HTTP状态错误（如4xx, 5xx）不重试，直接抛出
                 raise
             
-            # 尝试解析JSON响应
-            try:
-                response_data = resp.json()
-                logger.debug(f"[DEBUG] 微信支付API 响应JSON解析成功:")
-                logger.debug(f"  URL: {url}")
-                logger.debug(f"  Status: {response_status}")
-                logger.debug(f"  Response: {response_data}")
-                return response_data
-            except Exception as json_err:
-                # JSON解析失败，记录详细信息（始终记录，不只在DEBUG模式）
-                logger.error(f"微信支付API响应JSON解析失败: {json_err}")
-                logger.error(f"  URL: {url}")
-                logger.error(f"  Method: {method.upper()}")
-                logger.error(f"  Status: {response_status}")
-                logger.error(f"  Response Headers: {response_headers}")
-                logger.error(f"  Response Text (完整): {response_text if response_text else '(empty)'}")
-                logger.error(f"  Response Text (长度): {len(response_text) if response_text else 0}")
-                logger.error(f"  Response Content (bytes, 前500字节): {resp.content[:500] if resp.content else b'(empty)'}")
-                logger.error(f"  Response Content (bytes, hex, 前100字节): {resp.content[:100].hex() if resp.content else '(empty)'}")
-                # 尝试检测响应内容类型
-                content_type = response_headers.get('content-type', 'unknown')
-                logger.error(f"  Content-Type: {content_type}")
-                raise ValueError(
-                    f"无法解析微信支付API响应为JSON: {json_err}, "
-                    f"status={response_status}, "
-                    f"content_type={content_type}, "
-                    f"response_text={response_text[:500] if response_text else '(empty)'}"
-                )
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries:
+                    wait_time = self.retry_delay * (attempt + 1)
+                    logger.warning(
+                        f"微信支付API请求失败 (尝试 {attempt + 1}/{self.max_retries + 1}): "
+                        f"url={url}, error={str(e)}, {wait_time}秒后重试"
+                    )
+                    time.sleep(wait_time)
+                else:
+                    logger.error(
+                        f"微信支付API请求失败，已重试 {self.max_retries} 次: "
+                        f"url={url}, error={str(e)}"
+                    )
+                    raise
+        
+        # 如果所有重试都失败，抛出最后一个错误
+        if last_error:
+            raise last_error
     
     def create_native_order(
         self,

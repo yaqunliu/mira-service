@@ -1,3 +1,6 @@
+import json
+import hmac
+import hashlib
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status, Response
 from sqlalchemy.orm import Session
 from app.api.deps import get_db
@@ -5,8 +8,6 @@ from app.services.webhook_service import WebhookService
 from app.services.wechat_webhook_service import WechatWebhookService
 from app.core.config import settings
 from app.core.logger import logger
-import hmac
-import hashlib
 
 router = APIRouter()
 
@@ -17,15 +18,44 @@ async def creem_webhook(
     db: Session = Depends(get_db),
     creem_signature: str | None = Header(None, convert_underscores=False),
 ):
+    # ========== WEBHOOK 接收日志 ==========
+    logger.info("=" * 80)
+    logger.info("🔔 [CREEM WEBHOOK] 收到 Creem Webhook 回调")
+    logger.info("=" * 80)
+    
+    # 获取原始请求体
+    body_bytes = await request.body()
+    body_str = body_bytes.decode('utf-8') if body_bytes else ""
     payload = await request.json()
+    
+    # 记录请求头信息
+    headers_dict = dict(request.headers)
+    logger.info(f"📥 [CREEM WEBHOOK] 请求头信息:")
+    logger.info(f"   - Signature: {creem_signature}")
+    logger.info(f"   - Content-Type: {headers_dict.get('content-type', 'N/A')}")
+    logger.info(f"   - User-Agent: {headers_dict.get('user-agent', 'N/A')}")
+    logger.info(f"   - 完整请求头: {headers_dict}")
+    
+    # 记录请求体（原始和解析后的）
+    logger.info(f"📦 [CREEM WEBHOOK] 原始请求体 (前1000字符):")
+    logger.info(f"   {body_str[:1000]}")
+    logger.info(f"📦 [CREEM WEBHOOK] 完整请求体:")
+    logger.info(f"   {body_str}")
+    logger.info(f"📦 [CREEM WEBHOOK] 解析后的 Payload:")
+    logger.info(f"   {json.dumps(payload, indent=2, ensure_ascii=False)}")
+    logger.info("=" * 80)
 
     # 可选：签名校验（如果 Creem 提供签名）
     if settings.CREEM_WEBHOOK_SECRET and creem_signature:
-        body_bytes = await request.body()
         if not _verify_signature(body_bytes, creem_signature, settings.CREEM_WEBHOOK_SECRET):
+            logger.error("❌ [CREEM WEBHOOK] 签名验证失败")
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="签名验证失败")
+        logger.info("✅ [CREEM WEBHOOK] 签名验证成功")
 
+    logger.info(f"🔄 [CREEM WEBHOOK] 开始处理事件...")
     result = WebhookService.process_event(db, payload)
+    logger.info(f"✅ [CREEM WEBHOOK] 事件处理完成: {result}")
+    logger.info("=" * 80)
     return result
 
 
@@ -43,9 +73,34 @@ async def wechat_webhook(
     
     参考: https://pay.weixin.qq.com/docs/merchant/apis/wechat-pay-api-v3/getting-started/verify-signature.html
     """
+    # ========== WEBHOOK 接收日志 ==========
+    logger.info("=" * 80)
+    logger.info("🔔 [WECHAT WEBHOOK] 收到微信支付回调通知")
+    logger.info("=" * 80)
+    
     body = await request.body()
     body_str = body.decode('utf-8')
     payload = await request.json()
+    
+    # 记录请求头信息
+    headers_dict = dict(request.headers)
+    logger.info(f"📥 [WECHAT WEBHOOK] 请求头信息:")
+    logger.info(f"   - Wechatpay-Signature: {wechatpay_signature}")
+    logger.info(f"   - Wechatpay-Timestamp: {wechatpay_timestamp}")
+    logger.info(f"   - Wechatpay-Nonce: {wechatpay_nonce}")
+    logger.info(f"   - Wechatpay-Serial: {wechatpay_serial}")
+    logger.info(f"   - Content-Type: {headers_dict.get('content-type', 'N/A')}")
+    logger.info(f"   - User-Agent: {headers_dict.get('user-agent', 'N/A')}")
+    logger.info(f"   - 完整请求头: {headers_dict}")
+    
+    # 记录请求体（原始和解析后的）
+    logger.info(f"📦 [WECHAT WEBHOOK] 原始请求体 (前1000字符):")
+    logger.info(f"   {body_str[:1000]}")
+    logger.info(f"📦 [WECHAT WEBHOOK] 完整请求体:")
+    logger.info(f"   {body_str}")
+    logger.info(f"📦 [WECHAT WEBHOOK] 解析后的 Payload:")
+    logger.info(f"   {json.dumps(payload, indent=2, ensure_ascii=False)}")
+    logger.info("=" * 80)
     
     # 验证签名
     if wechatpay_signature and wechatpay_timestamp and wechatpay_nonce:
@@ -58,12 +113,17 @@ async def wechat_webhook(
             serial_no=wechatpay_serial or "",
         )
         if not is_valid:
-            logger.warning("微信支付回调签名验证失败")
+            logger.error("❌ [WECHAT WEBHOOK] 签名验证失败")
             # 开发环境可以继续，生产环境应该返回错误
             # raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="签名验证失败")
+        else:
+            logger.info("✅ [WECHAT WEBHOOK] 签名验证成功")
     
     # 处理回调
+    logger.info(f"🔄 [WECHAT WEBHOOK] 开始处理回调...")
     result = WechatWebhookService.process_callback(db, payload, body_str)
+    logger.info(f"✅ [WECHAT WEBHOOK] 回调处理完成: {result}")
+    logger.info("=" * 80)
     
     # 微信支付要求返回200或204状态码
     return Response(status_code=200)

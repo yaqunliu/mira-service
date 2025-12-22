@@ -94,8 +94,14 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         persist_start = time.perf_counter()
         try:
             logger.info(f"从URL下载图像: {temp_image_url}")
-            # 下载图像
-            with httpx.Client(timeout=30.0) as client:
+            # 下载图像 - 使用配置的超时时间
+            timeout_config = httpx.Timeout(
+                connect=10.0,
+                read=settings.AI_IMAGE_DOWNLOAD_TIMEOUT,  # 使用配置的超时时间（默认60秒）
+                write=10.0,
+                pool=10.0,
+            )
+            with httpx.Client(timeout=timeout_config) as client:
                 response = client.get(temp_image_url)
                 response.raise_for_status()
                 image_data = response.content

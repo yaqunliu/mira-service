@@ -198,7 +198,14 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             else:
                 # 从URL下载图像
                 logger.info(f"从URL下载图像: {temp_image_url}")
-                with httpx.Client(timeout=30.0) as client:
+                # 使用配置的超时时间，而不是硬编码的30秒
+                timeout_config = httpx.Timeout(
+                    connect=10.0,
+                    read=settings.AI_IMAGE_DOWNLOAD_TIMEOUT,  # 使用配置的超时时间（默认60秒）
+                    write=10.0,
+                    pool=10.0,
+                )
+                with httpx.Client(timeout=timeout_config) as client:
                     response = client.get(temp_image_url)
                     response.raise_for_status()
                     image_data = response.content

@@ -53,17 +53,21 @@ class UserSyncService:
             user_metadata = supabase_user_data.get("user_metadata", {})
             # 优先使用 avatar_url 字段，如果没有则使用 user_metadata 中的值
             avatar_url = supabase_user_data.get("avatar_url") or user_metadata.get("avatar_url") or user_metadata.get("picture")
-            logger.info(f"同步用户头像: email={email}, avatar_url={avatar_url}, has_avatar_field={hasattr(user, 'avatar')}")
+            # 停掉 sync 相关日志
+            # logger.info(f"同步用户头像: email={email}, avatar_url={avatar_url}, has_avatar_field={hasattr(user, 'avatar')}")
             if avatar_url:
                 # 如果 User 模型有 avatar 字段，更新它（即使已有值也更新，确保使用最新的头像）
                 if hasattr(user, 'avatar'):
                     if user.avatar != avatar_url:
                         user.avatar = avatar_url
                         updated = True
-                        logger.info(f"更新用户头像: {avatar_url}")
+                        # 停掉 sync 相关日志
+                        # logger.info(f"更新用户头像: {avatar_url}")
                 else:
                     # 如果没有 avatar 字段，记录日志但不报错
-                    logger.warning(f"User 模型没有 avatar 字段，无法更新头像。avatar_url={avatar_url}")
+                    # 停掉 sync 相关日志
+                    # logger.warning(f"User 模型没有 avatar 字段，无法更新头像。avatar_url={avatar_url}")
+                    pass
             
             if updated:
                 db.commit()
@@ -86,7 +90,8 @@ class UserSyncService:
             user_metadata = supabase_user_data.get("user_metadata", {})
             # 优先使用 avatar_url 字段，如果没有则使用 user_metadata 中的值
             avatar_url = supabase_user_data.get("avatar_url") or user_metadata.get("avatar_url") or user_metadata.get("picture")
-            logger.info(f"创建新用户头像: email={email}, avatar_url={avatar_url}")
+            # 停掉 sync 相关日志
+            # logger.info(f"创建新用户头像: email={email}, avatar_url={avatar_url}")
             
             new_user = User(
                 username=username,
@@ -103,9 +108,11 @@ class UserSyncService:
             # 创建积分账户并赠送注册积分
             try:
                 PointsService.register_reward(db, new_user.user_id)
-                logger.info(f"Supabase 用户注册积分赠送成功: user_id={new_user.user_id}")
+                # 停掉 sync 相关日志
+                # logger.info(f"Supabase 用户注册积分赠送成功: user_id={new_user.user_id}")
             except Exception as e:
                 # 如果积分赠送失败，记录日志但不影响注册流程
+                # 只保留错误日志，不保留成功日志
                 logger.error(f"Supabase 用户注册积分赠送失败: user_id={new_user.user_id}, error={str(e)}")
             
             return new_user

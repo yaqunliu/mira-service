@@ -57,8 +57,9 @@ async def sync_supabase_user(
                 db.commit()
                 db.refresh(user)
     
-    from app.core.logger import logger
-    logger.info(f"同步用户响应: user_id={user.user_id}, avatar={avatar}")
+    # 停掉 sync 相关日志
+    # from app.core.logger import logger
+    # logger.info(f"同步用户响应: user_id={user.user_id}, avatar={avatar}")
     
     return success_response(
         data={

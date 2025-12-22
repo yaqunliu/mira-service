@@ -101,8 +101,9 @@ class Settings(BaseSettings):
     
     # AI 重试配置
     AI_MAX_RETRIES: int = 3  # 最大重试次数
-    AI_TIMEOUT: int = 120  # 超时时间（秒）
+    AI_TIMEOUT: int = 120  # AI API调用超时时间（秒），默认120秒
     AI_RETRY_DELAY: int = 2  # 重试间隔（秒）
+    AI_IMAGE_DOWNLOAD_TIMEOUT: int = 60  # 图片下载超时时间（秒），默认60秒
     
     # 云存储配置 (US3)
     US3_PUBLIC_KEY: str = ""
@@ -178,6 +179,9 @@ class Settings(BaseSettings):
     WECHAT_NOTIFY_URL: str = ""  # 支付回调通知URL
     WECHAT_API_BASE_URL: str = "https://api.mch.weixin.qq.com"  # 微信支付API基础URL
     WECHAT_USE_SANDBOX: bool = False  # 是否使用仿真系统（沙箱环境，注意：V3 API没有沙箱，此参数对V3 API无效）
+    WECHAT_TIMEOUT: int = 60  # 微信支付API超时时间（秒），默认60秒
+    WECHAT_MAX_RETRIES: int = 3  # 微信支付API最大重试次数
+    WECHAT_RETRY_DELAY: int = 2  # 微信支付API重试间隔（秒）
     
     ENABLE_TEST_EXCEPTION: str = "false"
     

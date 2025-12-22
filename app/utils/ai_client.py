@@ -699,13 +699,23 @@ class AIClient:
             Base64 编码的图片数据
         """
         try:
-            with httpx.Client(timeout=30.0) as client:
+            # 使用配置的超时时间，而不是硬编码的30秒
+            timeout_config = httpx.Timeout(
+                connect=10.0,  # 连接超时10秒
+                read=settings.AI_IMAGE_DOWNLOAD_TIMEOUT,  # 读取超时使用配置的值（默认60秒）
+                write=10.0,  # 写入超时10秒
+                pool=10.0,  # 连接池超时10秒
+            )
+            with httpx.Client(timeout=timeout_config) as client:
                 response = client.get(image_url)
                 response.raise_for_status()
                 image_data = response.content
                 # 转换为 Base64
                 base64_data = base64.b64encode(image_data).decode('utf-8')
                 return base64_data
+        except httpx.TimeoutException as e:
+            logger.error(f"下载图片超时: {image_url}, timeout={settings.AI_IMAGE_DOWNLOAD_TIMEOUT}秒, error={e}")
+            raise
         except Exception as e:
             logger.error(f"下载图片并转换为 Base64 失败: {e}")
             raise
