@@ -82,7 +82,6 @@ class WechatWebhookService:
             nonce=nonce,
         )
         logger.info(f"✅ [WECHAT WEBHOOK SERVICE] 解密成功，解密后的数据:")
-        import json
         logger.info(f"   {json.dumps(decrypted_data, indent=2, ensure_ascii=False)}")
         
         # 解析订单信息
