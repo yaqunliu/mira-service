@@ -16,7 +16,7 @@ class SupabaseService:
         self.client: Optional[Client] = None
         
         # 记录配置信息（不记录完整 secret）
-        logger.info(f"Supabase 配置: URL={self.supabase_url}, JWT_SECRET 已配置={bool(self.supabase_jwt_secret)}")
+        # logger.info(f"Supabase 配置: URL={self.supabase_url}, JWT_SECRET 已配置={bool(self.supabase_jwt_secret)}")
         
         if self.supabase_anon_key:
             try:
@@ -52,7 +52,7 @@ class SupabaseService:
                         "verify_exp": False,   # 不验证过期时间（先获取信息）
                     }
                 )
-                logger.info(f"Token payload (未验证签名): aud={unverified_payload.get('aud')}, sub={unverified_payload.get('sub')}, exp={unverified_payload.get('exp')}, iss={unverified_payload.get('iss')}")
+                # logger.info(f"Token payload (未验证签名): aud={unverified_payload.get('aud')}, sub={unverified_payload.get('sub')}, exp={unverified_payload.get('exp')}, iss={unverified_payload.get('iss')}")
                 # 检查 token 是否过期
                 import time
                 exp = unverified_payload.get('exp')
@@ -73,12 +73,12 @@ class SupabaseService:
                     algorithms=["HS256"],
                     audience="authenticated"
                 )
-                logger.info("Token 验证成功（带 audience）")
+                # logger.info("Token 验证成功（带 audience）")
                 return payload
             except JWTError as audience_error:
                 # 如果带 audience 验证失败，尝试不带 audience 验证
-                logger.warning(f"带 audience 验证失败: {str(audience_error)}")
-                logger.warning(f"尝试不带 audience 验证...")
+                # logger.warning(f"带 audience 验证失败: {str(audience_error)}")
+                # logger.warning(f"尝试不带 audience 验证...")
                 try:
                     payload = jwt.decode(
                         token,
@@ -110,8 +110,8 @@ class SupabaseService:
             # 从 user_metadata 中提取 avatar_url 或 picture
             avatar_url = user_metadata.get("avatar_url") or user_metadata.get("picture")
             
-            logger.info(f"从 JWT token 提取用户信息: email={payload.get('email')}, avatar_url={avatar_url}")
-            logger.debug(f"User metadata: {user_metadata}")
+            # logger.info(f"从 JWT token 提取用户信息: email={payload.get('email')}, avatar_url={avatar_url}")
+            # logger.debug(f"User metadata: {user_metadata}")
             
             return {
                 "supabase_user_id": payload.get("sub"),
