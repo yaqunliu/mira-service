@@ -180,9 +180,9 @@ class WebhookService:
         OrderService.mark_paid(
             db=db,
             order=order,
-            transaction_id=creem_transaction_id,
+            creem_transaction_id=creem_transaction_id,  # 使用正确的参数名
             paid_at=paid_at,
-            subscription_id=subscription_id,
+            creem_subscription_id=subscription_id,  # 使用正确的参数名
         )
 
         # 若为订阅，更新订阅信息（mark_paid 已创建订阅记录，这里只需要更新周期信息）
