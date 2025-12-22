@@ -9,7 +9,7 @@ class Subscription(BaseModel):
     subscription_id: int
     order_id: int
     user_id: int
-    creem_subscription_id: str
+    creem_subscription_id: Optional[str] = None  # 微信订阅没有此字段
     status: str
     billing_period: str
     current_period_start: Optional[datetime] = None

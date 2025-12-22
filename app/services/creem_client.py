@@ -23,6 +23,17 @@ class CreemClient:
     def _request(self, method: str, path: str, params: Dict[str, Any] | None = None, json: Dict[str, Any] | None = None):
         url = f"{self.base_url}{path}"
         logger.info(f"Creem API {method.upper()} {url}")
+        
+        # Debug 模式下记录请求详情
+        if settings.DEBUG:
+            logger.debug(f"[DEBUG] Creem API 请求详情:")
+            logger.debug(f"  URL: {url}")
+            logger.debug(f"  Method: {method.upper()}")
+            if params:
+                logger.debug(f"  Params: {params}")
+            if json:
+                logger.debug(f"  Payload: {json}")
+        
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.request(method, url, headers=self._headers, params=params, json=json)
             try:
@@ -43,7 +54,16 @@ class CreemClient:
                 # 将错误信息附加到异常中
                 e.response._error_detail = error_detail
                 raise
-            return resp.json()
+            
+            # Debug 模式下记录响应详情
+            response_data = resp.json()
+            if settings.DEBUG:
+                logger.debug(f"[DEBUG] Creem API 响应详情:")
+                logger.debug(f"  URL: {url}")
+                logger.debug(f"  Status: {resp.status_code}")
+                logger.debug(f"  Response: {response_data}")
+            
+            return response_data
 
     # 产品列表
     def search_products(self, page_number: int = 1, page_size: int = 100) -> Dict[str, Any]:
@@ -135,7 +155,14 @@ class CreemClient:
 
     # 获取订阅详情
     def get_subscription(self, creem_subscription_id: str) -> Dict[str, Any]:
-        return self._request("GET", f"/v1/subscriptions/{creem_subscription_id}")
+        """
+        获取订阅详情
+        subscription_id 作为查询参数传递，不是路径参数
+        """
+        params: Dict[str, Any] = {
+            "subscription_id": creem_subscription_id,
+        }
+        return self._request("GET", "/v1/subscriptions", params=params)
 
     # 获取 checkout 详情（用于轮询容错）
     def get_checkout(self, checkout_id: str) -> Dict[str, Any]:

@@ -20,13 +20,18 @@ def list_subscriptions(
     # 手动设置 product 字段（从 order.product 获取）
     subscriptions = []
     for item in items:
+        # 从关系对象中获取支付方式特定的ID
+        creem_subscription_id = None
+        if item.creem_subscription:
+            creem_subscription_id = item.creem_subscription.creem_subscription_id
+        
         # 确保 UUID 字段被正确转换为字符串
         sub_dict = {
             "uuid": str(item.uuid) if item.uuid else None,
             "subscription_id": item.subscription_id,
             "order_id": item.order_id,
             "user_id": item.user_id,
-            "creem_subscription_id": item.creem_subscription_id,
+            "creem_subscription_id": creem_subscription_id,
             "status": item.status,
             "billing_period": item.billing_period,
             "current_period_start": item.current_period_start,
@@ -62,13 +67,18 @@ def get_active_subscriptions(
     # 手动设置 product 字段（从 order.product 获取）
     subscriptions = []
     for item in items:
+        # 从关系对象中获取支付方式特定的ID
+        creem_subscription_id = None
+        if item.creem_subscription:
+            creem_subscription_id = item.creem_subscription.creem_subscription_id
+        
         # 确保 UUID 字段被正确转换为字符串
         sub_dict = {
             "uuid": str(item.uuid) if item.uuid else None,
             "subscription_id": item.subscription_id,
             "order_id": item.order_id,
             "user_id": item.user_id,
-            "creem_subscription_id": item.creem_subscription_id,
+            "creem_subscription_id": creem_subscription_id,
             "status": item.status,
             "billing_period": item.billing_period,
             "current_period_start": item.current_period_start,
@@ -115,19 +125,35 @@ def cancel_subscription(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    # 检查是否为微信订阅，微信订阅不支持取消（因为没有自动续费，不需要取消）
+    subscription = SubscriptionService.get_by_uuid(db, user.user_id, subscription_uuid)
+    if not subscription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="订阅不存在")
+    
+    if subscription.payment_method == "wechat":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="微信订阅不支持取消功能（手动续费，无需取消）"
+        )
+    
     subscription = SubscriptionService.cancel_subscription(
         db=db,
         user_id=user.user_id,
         subscription_uuid=subscription_uuid,
         cancel_at_period_end=body.cancel_at_period_end,
     )
+    # 从关系对象中获取支付方式特定的ID
+    creem_subscription_id = None
+    if subscription.creem_subscription:
+        creem_subscription_id = subscription.creem_subscription.creem_subscription_id
+    
     # 确保 UUID 字段被正确转换为字符串
     sub_dict = {
         "uuid": str(subscription.uuid) if subscription.uuid else None,
         "subscription_id": subscription.subscription_id,
         "order_id": subscription.order_id,
         "user_id": subscription.user_id,
-        "creem_subscription_id": subscription.creem_subscription_id,
+        "creem_subscription_id": creem_subscription_id,
         "status": subscription.status,
         "billing_period": subscription.billing_period,
         "current_period_start": subscription.current_period_start,

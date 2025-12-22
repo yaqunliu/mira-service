@@ -13,6 +13,10 @@ from .order import Order
 from .subscription import Subscription
 from .subscription_points_history import SubscriptionPointsHistory
 from .webhook_event import WebhookEvent
+from .creem_payment import CreemPayment
+from .wechat_payment import WechatPayment
+from .creem_subscription import CreemSubscription
+from .wechat_subscription import WechatSubscription
 
 __all__ = [
     "User",
@@ -30,4 +34,8 @@ __all__ = [
     "Subscription",
     "SubscriptionPointsHistory",
     "WebhookEvent",
+    "CreemPayment",
+    "WechatPayment",
+    "CreemSubscription",
+    "WechatSubscription",
 ]

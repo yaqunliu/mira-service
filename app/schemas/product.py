@@ -6,7 +6,9 @@ from datetime import datetime
 class Product(BaseModel):
     uuid: str
     product_id: int
-    creem_product_id: str
+    payment_method: str  # creem, wechat
+    language: str  # zh, en, ja等
+    origin_product_id: Optional[str] = None  # 远程产品ID（用于购买对应的远程产品）
     name: str
     description: Optional[str] = None
     price: int
@@ -18,8 +20,7 @@ class Product(BaseModel):
     image_url: Optional[AnyUrl | str] = None
     product_url: Optional[AnyUrl | str] = None
     features: Optional[Any] = None
-    creem_mode: Optional[str] = None
-    synced_at: Optional[datetime] = None
+    product_metadata: Optional[Any] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

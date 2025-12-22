@@ -7,6 +7,7 @@ from app.db.base import Base
 
 
 class Subscription(Base):
+    """统一订阅表 - 不包含支付方式特定字段"""
     __tablename__ = "subscriptions"
 
     subscription_id = Column(Integer, primary_key=True, index=True)
@@ -20,9 +21,10 @@ class Subscription(Base):
     )
     order_id = Column(Integer, ForeignKey("orders.order_id"), unique=True, nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False, index=True)
-    creem_subscription_id = Column(String(100), unique=True, nullable=False, index=True)
-    status = Column(String(20), nullable=False, index=True)  # active / cancelled / expired / past_due
-    billing_period = Column(String(50), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.product_id"), nullable=False, index=True)
+    payment_method = Column(String(20), nullable=False, index=True)  # creem, wechat
+    status = Column(String(20), nullable=False, index=True)  # active, cancelled, expired, past_due
+    billing_period = Column(String(50), nullable=False)  # every-month, every-year
     current_period_start = Column(DateTime(timezone=True))
     current_period_end = Column(DateTime(timezone=True))
     next_billing_date = Column(DateTime(timezone=True))
@@ -30,11 +32,14 @@ class Subscription(Base):
     last_points_issued_at = Column(DateTime(timezone=True))
     cancel_at_period_end = Column(Boolean, default=False)
     cancelled_at = Column(DateTime(timezone=True))
-    subscription_metadata = Column(JSON, name="metadata")  # 数据库列名保持为metadata，避免迁移
+    subscription_metadata = Column(JSON, name="subscription_metadata")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     order = relationship("Order", back_populates="subscription")
+    product = relationship("Product")
     user = relationship("User")
     histories = relationship("SubscriptionPointsHistory", back_populates="subscription")
+    creem_subscription = relationship("CreemSubscription", back_populates="subscription", uselist=False, cascade="all, delete-orphan")
+    wechat_subscription = relationship("WechatSubscription", back_populates="subscription", uselist=False, cascade="all, delete-orphan")
 

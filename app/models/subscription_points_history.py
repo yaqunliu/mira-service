@@ -26,7 +26,11 @@ class SubscriptionPointsHistory(Base):
     period_end = Column(DateTime(timezone=True), nullable=False)
     points_amount = Column(Integer, nullable=False)
     issued_at = Column(DateTime(timezone=True), server_default=func.now())
-    creem_invoice_id = Column(String(100), index=True)
+    payment_method = Column(String(20), index=True)  # creem, wechat
+    invoice_id = Column(String(100), index=True)  # 通用发票ID（替代creem_invoice_id）
+    
+    # 保留旧字段以便数据迁移（后续可删除）
+    creem_invoice_id = Column(String(100), index=True, nullable=True)
 
     subscription = relationship("Subscription", back_populates="histories")
     order = relationship("Order")

@@ -9,6 +9,7 @@ Note: 模型配置使用 Python 代码中的工厂模式管理（app/core/model_
 """
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -21,9 +22,15 @@ depends_on = None
 def upgrade() -> None:
     # 为 creations 表添加 extra_data 字段
     # 注意：模型配置现在使用 Python 代码中的工厂模式管理，不再存储在数据库中
-    op.add_column('creations', 
-        sa.Column('extra_data', postgresql.JSONB(astext_type=sa.Text()), nullable=True)
-    )
+    # 检查列是否已存在（避免重复添加）
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    columns = [col['name'] for col in inspector.get_columns('creations')]
+    
+    if 'extra_data' not in columns:
+        op.add_column('creations', 
+            sa.Column('extra_data', postgresql.JSONB(astext_type=sa.Text()), nullable=True)
+        )
 
 
 def downgrade() -> None:

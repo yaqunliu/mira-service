@@ -1,31 +1,119 @@
 #!/usr/bin/env python3
 """
-创建测试产品脚本
-用于在数据库中创建测试产品，包含 markdown 格式的 description
+创建测试产品脚本 - 支持中英文版本
+
+不再调用Creem API，直接创建产品到数据库。
+汇率：1 USD = 7 CNY
+
+注意：
+- 英文产品（Creem支付）创建后，需要手动设置 origin_product_id 为真实的Creem产品ID
+- 中文产品（微信支付）不需要 origin_product_id，可以为空
 """
+
+import sys
+from pathlib import Path
+
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from app.core.config import settings
-from app.services.creem_client import CreemClient
-from app.services.product_service import ProductService
 from app.models.product import Product
 from datetime import datetime
 import uuid
-import httpx
-import json
 
 
 def create_test_products():
-    """创建测试产品：先调用 Creem API 创建，再回填本地数据库"""
+    """创建测试产品：中英文版本"""
     engine = create_engine(str(settings.DATABASE_URL))
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     
     db = SessionLocal()
     
     try:
-        # 一次性积分产品
-        onetime_products = [
+        # 汇率：1 USD = 7 CNY
+        USD_TO_CNY = 7
+        
+        # 一次性积分产品 - 英文版本（Creem支付）
+        onetime_products_en = [
+            {
+                "name": "8000 Points",
+                "description": """## 8000 Points Package
+
+**Instant delivery, never expires**
+
+### What's Included
+- **8000 Points** - Use for all AI features
+- **Instant delivery** - Points arrive immediately after payment
+- **Never expires** - Points are valid forever
+
+### Best For
+- Trying out AI character generation
+- Creating a few storyboards and videos
+- Testing platform features
+
+### Recommended For
+- New users first purchase
+- Small creative projects
+- Feature testing and exploration""",
+                "price_usd": 1990,  # $19.90
+                "points_amount": 8000,
+            },
+            {
+                "name": "20000 Points",
+                "description": """## 20000 Points Package
+
+**Popular choice, great value**
+
+### What's Included
+- **20000 Points** - Generous usage allowance
+- **Instant delivery** - Points arrive immediately after payment
+- **Never expires** - Points are valid forever
+
+### Best For
+- Medium-scale novel adaptation projects
+- Creating multiple storyboards and videos
+- Generating multiple AI characters
+
+### Recommended For
+- Individual creators
+- Small studios
+- Regular platform users
+
+> 💡 **Popular Choice**: Best value for money""",
+                "price_usd": 3990,  # $39.90
+                "points_amount": 20000,
+            },
+            {
+                "name": "120000 Points",
+                "description": """## 120000 Points Package
+
+**Mega bundle, perfect for power users**
+
+### What's Included
+- **120000 Points** - Massive capacity for long-term use
+- **Instant delivery** - Points arrive immediately after payment
+- **Never expires** - Points are valid forever
+
+### Best For
+- Large novel adaptation projects
+- Batch video content generation
+- Professional content creation teams
+
+### Recommended For
+- Professional creators
+- Content studios
+- Users who need lots of points
+
+> 🎁 **Great Value**: Bigger bundles save more""",
+                "price_usd": 9990,  # $99.90
+                "points_amount": 120000,
+            },
+        ]
+        
+        # 一次性积分产品 - 中文版本（微信支付）
+        onetime_products_zh = [
             {
                 "name": "8000 积分",
                 "description": """## 8000 积分包
@@ -46,11 +134,8 @@ def create_test_products():
 - 新手用户首次购买
 - 小规模创作项目
 - 功能测试和体验""",
-                "price": 1990,  # $19.90
-                "currency": "USD",
-                "billing_type": "onetime",
+                "price_cny": 13930,  # ¥139.30 (1990 * 7)
                 "points_amount": 8000,
-                "status": "active",
             },
             {
                 "name": "20000 积分",
@@ -74,11 +159,8 @@ def create_test_products():
 - 定期使用平台的用户
 
 > 💡 **热门推荐**：性价比最高的选择""",
-                "price": 3990,  # $39.90
-                "currency": "USD",
-                "billing_type": "onetime",
+                "price_cny": 27930,  # ¥279.30 (3990 * 7)
                 "points_amount": 20000,
-                "status": "active",
             },
             {
                 "name": "120000 积分",
@@ -102,16 +184,93 @@ def create_test_products():
 - 需要大量积分的用户
 
 > 🎁 **超值优惠**：购买大包更划算""",
-                "price": 9990,  # $99.90
-                "currency": "USD",
-                "billing_type": "onetime",
+                "price_cny": 69930,  # ¥699.30 (9990 * 7)
                 "points_amount": 120000,
-                "status": "active",
             },
         ]
         
-        # 订阅产品
-        recurring_products = [
+        # 订阅产品 - 英文版本（Creem支付）
+        recurring_products_en = [
+            {
+                "name": "Monthly · 20000 Points/Month",
+                "description": """## Monthly Subscription
+
+**Auto-delivery every month, cancel anytime**
+
+### What's Included
+- **20000 Points/Month** - Automatically delivered each month
+- **Auto-renewal** - No manual action needed
+- **Cancel anytime** - Flexible subscription management
+
+### Best For
+- Regular content creation
+- Stable points needs
+- Users who prefer automation
+
+### Recommended For
+- Individual creators
+- Regular platform users
+- Users who want convenience
+
+> ⭐ **Recommended Plan**: Perfect for most users""",
+                "price_usd": 3990,  # $39.90/month
+                "billing_period": "every-month",
+                "points_amount": 20000,
+            },
+            {
+                "name": "Quarterly · 25000 Points/Month",
+                "description": """## Quarterly Subscription
+
+**More points, better value**
+
+### What's Included
+- **25000 Points/Month** - 25% more than monthly plan
+- **Auto-renewal** - Renews every quarter
+- **Cancel anytime** - Flexible subscription management
+
+### Best For
+- Users who need more points
+- Long-term platform usage
+- Users who want more value
+
+### Recommended For
+- Active creators
+- Users who need more points
+- Long-term platform users""",
+                "price_usd": 11990,  # $119.90/quarter
+                "billing_period": "every-month",
+                "points_amount": 25000,
+            },
+            {
+                "name": "Yearly · 30000 Points/Month",
+                "description": """## Yearly Subscription
+
+**Best value, save more with annual plan**
+
+### What's Included
+- **30000 Points/Month** - 50% more than monthly plan
+- **Auto-renewal** - Renews every year
+- **Cancel anytime** - Flexible subscription management
+
+### Best For
+- Professional content creators
+- Long-term platform usage
+- Users who want maximum value
+
+### Recommended For
+- Professional creators
+- Content studios
+- Long-term platform users
+
+> 💰 **Best Value**: Most cost-effective subscription option""",
+                "price_usd": 39900,  # $399.00/year
+                "billing_period": "every-month",
+                "points_amount": 30000,
+            },
+        ]
+        
+        # 订阅产品 - 中文版本（微信支付）
+        recurring_products_zh = [
             {
                 "name": "月付 · 20000积分/月",
                 "description": """## 月付订阅套餐
@@ -134,12 +293,9 @@ def create_test_products():
 - 希望省心的用户
 
 > ⭐ **推荐套餐**：适合大多数用户""",
-                "price": 3990,  # $39.90/月
-                "currency": "USD",
-                "billing_type": "recurring",
+                "price_cny": 27930,  # ¥279.30/month (3990 * 7)
                 "billing_period": "every-month",
                 "points_amount": 20000,
-                "status": "active",
             },
             {
                 "name": "季度 · 25000积分/月",
@@ -161,12 +317,9 @@ def create_test_products():
 - 活跃创作者
 - 需要更多积分的用户
 - 长期使用平台的用户""",
-                "price": 11990,  # $119.90/季度
-                "currency": "USD",
-                "billing_type": "recurring",
+                "price_cny": 83930,  # ¥839.30/quarter (11990 * 7)
                 "billing_period": "every-month",
                 "points_amount": 25000,
-                "status": "active",
             },
             {
                 "name": "年付 · 30000积分/月",
@@ -190,121 +343,97 @@ def create_test_products():
 - 长期使用平台的用户
 
 > 💰 **年付更省**：最超值的订阅选择""",
-                "price": 39900,  # $399.00/年
-                "currency": "USD",
-                "billing_type": "recurring",
+                "price_cny": 279300,  # ¥2793.00/year (39900 * 7)
                 "billing_period": "every-month",
                 "points_amount": 30000,
-                "status": "active",
             },
         ]
         
-        all_products = onetime_products + recurring_products
+        # 默认图片 URL
+        default_image_url = "https://mirastream.gmonkey.top/home-page/banner-placeholder.png"
+        
         created_count = 0
         skipped_count = 0
         
-        client = CreemClient()
-        
-        # 默认图片 URL
-        default_image_url = "https://mirastream.gmonkey.top/home-page/banner-placeholder.png"
-
-        for product_data in all_products:
-            # 先在 Creem 创建产品
-            payload_metadata = {"points_amount": product_data["points_amount"]}
-            try:
-                # 打印请求参数
-                print(f"\n正在创建产品: {product_data['name']}")
-                request_params = {
-                    'name': product_data['name'],
-                    'price': product_data['price'],
-                    'currency': product_data['currency'],
-                    'billing_type': product_data['billing_type'],
-                    'billing_period': product_data.get('billing_period'),
-                    'status': product_data['status'],
-                    'image_url': default_image_url,
-                    'tax_mode': 'inclusive',
-                    'tax_category': 'digital-goods-service',
-                }
-                print(f"请求参数: {json.dumps(request_params, indent=2, ensure_ascii=False)}")
-                
-                creem_resp = client.create_product(
-                    name=product_data["name"],
-                    price=product_data["price"],
-                    currency=product_data["currency"],
-                    billing_type=product_data["billing_type"],
-                    billing_period=product_data.get("billing_period"),
-                    description=product_data["description"],
-                    image_url=default_image_url,
-                    tax_mode="inclusive",
-                    tax_category="digital-goods-service",
-                )
-                print(f"Creem 响应: {json.dumps(creem_resp, indent=2, ensure_ascii=False)}")
-            except httpx.HTTPStatusError as e:
-                # 打印详细的 HTTP 错误信息
-                error_detail = getattr(e.response, '_error_detail', None)
-                if error_detail:
-                    print(f"\n❌ Creem 创建失败: {product_data['name']}")
-                    print(f"状态码: {e.response.status_code}")
-                    print(f"错误详情: {json.dumps(error_detail, indent=2, ensure_ascii=False)}")
-                else:
-                    # 尝试从响应中读取错误信息
-                    try:
-                        error_body = e.response.json()
-                        print(f"\n❌ Creem 创建失败: {product_data['name']}")
-                        print(f"状态码: {e.response.status_code}")
-                        print(f"错误详情: {json.dumps(error_body, indent=2, ensure_ascii=False)}")
-                    except Exception:
-                        print(f"\n❌ Creem 创建失败: {product_data['name']}")
-                        print(f"状态码: {e.response.status_code}")
-                        print(f"错误文本: {e.response.text}")
-                continue
-            except Exception as exc:  # pragma: no cover - 脚本运行时捕获
-                print(f"\n❌ Creem 创建失败: {product_data['name']} => {exc}")
-                print(f"异常类型: {type(exc).__name__}")
-                import traceback
-                traceback.print_exc()
-                continue
-
-            creem_product_id = creem_resp.get("id") or creem_resp.get("product_id")
-            if not creem_product_id:
-                print(f"Creem 未返回 product_id，跳过: {product_data['name']}，响应: {creem_resp}")
-                continue
-
-            # 检查本地是否已有同 ID
-            existing = db.query(Product).filter_by(creem_product_id=creem_product_id).first()
+        # 创建英文产品（Creem支付）
+        all_en_products = onetime_products_en + recurring_products_en
+        for product_data in all_en_products:
+            # 检查是否已存在（通过name和payment_method+language）
+            existing = db.query(Product).filter_by(
+                name=product_data["name"],
+                payment_method="creem",
+                language="en"
+            ).first()
+            
             if existing:
-                print(f"产品已存在（本地）: {product_data['name']} / {creem_product_id}")
+                print(f"产品已存在（英文）: {product_data['name']}")
                 skipped_count += 1
                 continue
-
-            # 回填本地数据库
-            upsert_payload = {
-                "id": creem_product_id,
-                "name": creem_resp.get("name") or product_data["name"],
-                "description": creem_resp.get("description") or product_data["description"],
-                "price": creem_resp.get("price") or product_data["price"],
-                "currency": creem_resp.get("currency") or product_data["currency"],
-                "billing_type": creem_resp.get("billing_type") or product_data["billing_type"],
-                "billing_period": creem_resp.get("billing_period") or product_data.get("billing_period"),
-                "points_amount": product_data["points_amount"],
-                "status": creem_resp.get("status") or product_data["status"],
-                "image_url": creem_resp.get("image_url"),
-                "product_url": creem_resp.get("product_url"),
-                "features": creem_resp.get("features"),
-                "mode": creem_resp.get("mode"),
-                "metadata": payload_metadata,
-            }
-
-            ProductService.upsert_product(db, upsert_payload)
+            
+            product = Product(
+                payment_method="creem",
+                language="en",
+                origin_product_id=None,  # 注意：Creem支付需要此字段，需要手动设置真实的Creem产品ID
+                name=product_data["name"],
+                description=product_data["description"],
+                price=product_data["price_usd"],
+                currency="USD",
+                billing_type="recurring" if product_data.get("billing_period") else "onetime",
+                billing_period=product_data.get("billing_period"),
+                points_amount=product_data["points_amount"],
+                status="active",
+                image_url=default_image_url,
+            )
+            db.add(product)
             created_count += 1
-            print(f"创建产品成功: {product_data['name']} / {creem_product_id}")
+            print(f"创建产品成功（英文）: {product_data['name']}")
+        
+        # 创建中文产品（微信支付）
+        all_zh_products = onetime_products_zh + recurring_products_zh
+        for product_data in all_zh_products:
+            # 检查是否已存在（通过name和payment_method+language）
+            existing = db.query(Product).filter_by(
+                name=product_data["name"],
+                payment_method="wechat",
+                language="zh"
+            ).first()
+            
+            if existing:
+                print(f"产品已存在（中文）: {product_data['name']}")
+                skipped_count += 1
+                continue
+            
+            product = Product(
+                payment_method="wechat",
+                language="zh",
+                origin_product_id=None,  # 微信支付不需要此字段，可以为空
+                name=product_data["name"],
+                description=product_data["description"],
+                price=product_data["price_cny"],
+                currency="CNY",
+                billing_type="recurring" if product_data.get("billing_period") else "onetime",
+                billing_period=product_data.get("billing_period"),
+                points_amount=product_data["points_amount"],
+                status="active",
+                image_url=default_image_url,
+            )
+            db.add(product)
+            created_count += 1
+            print(f"创建产品成功（中文）: {product_data['name']}")
         
         db.commit()
         print(f"\n完成！创建了 {created_count} 个产品，跳过了 {skipped_count} 个已存在的产品")
+        print(f"  - 英文产品（Creem支付）: {len(all_en_products)} 个")
+        print(f"  - 中文产品（微信支付）: {len(all_zh_products)} 个")
+        print(f"\n⚠️  重要提示：")
+        print(f"  - 英文产品（Creem支付）需要手动设置 origin_product_id 为真实的Creem产品ID")
+        print(f"  - 中文产品（微信支付）不需要 origin_product_id，可以为空")
         
     except Exception as e:
         db.rollback()
         print(f"创建产品失败: {e}")
+        import traceback
+        traceback.print_exc()
         raise
     finally:
         db.close()
@@ -312,4 +441,3 @@ def create_test_products():
 
 if __name__ == "__main__":
     create_test_products()
-

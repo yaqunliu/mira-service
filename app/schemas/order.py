@@ -21,15 +21,13 @@ class Order(BaseModel):
     order_number: str
     user_id: int
     product_id: int
+    payment_method: str  # creem, wechat
     order_type: str
     status: str
     amount: int
     currency: str
     points_amount: int
     points_issued: int
-    checkout_url: Optional[AnyUrl | str] = None
-    creem_checkout_id: Optional[str] = None
-    creem_transaction_id: Optional[str] = None
     paid_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     success_url: Optional[AnyUrl | str] = None
@@ -38,6 +36,9 @@ class Order(BaseModel):
     product: Optional[Product] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    
+    # 支付信息（根据payment_method返回对应信息）
+    payment_info: Optional[dict] = None  # 包含checkout_url或code_url等
 
     class Config:
         from_attributes = True

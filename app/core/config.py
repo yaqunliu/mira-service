@@ -164,6 +164,21 @@ class Settings(BaseSettings):
     CREEM_CHECKOUT_SUCCESS_URL: str = ""  # 默认支付成功回调
     CREEM_CHECKOUT_CANCEL_URL: str = ""  # 默认支付取消回调
     
+    # 微信支付配置
+    WECHAT_APPID: str = ""  # 微信应用ID
+    WECHAT_MCHID: str = ""  # 微信商户号
+    WECHAT_API_V3_KEY: str = ""  # APIv3密钥
+    WECHAT_CERT_SERIAL_NO: str = ""  # 商户API证书序列号（从apiclient_cert.pem获取，用于API请求签名）
+    WECHAT_PRIVATE_KEY_PATH: str = ""  # 商户API证书私钥文件路径（apiclient_key.pem，必需，用于API请求签名）
+    # 注意：平台证书与商户API证书不同
+    # - 商户API证书私钥（apiclient_key.pem）：商户用于签名请求到微信支付（必需）
+    # - 平台证书（wechatpay_cert.pem）：商户用于验证微信支付回调通知的签名（可选但建议配置）
+    # 参考文档：https://pay.weixin.qq.com/doc/v3/merchant/4013053420
+    WECHAT_CERT_PATH: str = ""  # 微信支付平台证书文件路径（wechatpay_cert.pem，可选，用于回调签名验证）
+    WECHAT_NOTIFY_URL: str = ""  # 支付回调通知URL
+    WECHAT_API_BASE_URL: str = "https://api.mch.weixin.qq.com"  # 微信支付API基础URL
+    WECHAT_USE_SANDBOX: bool = False  # 是否使用仿真系统（沙箱环境，注意：V3 API没有沙箱，此参数对V3 API无效）
+    
     ENABLE_TEST_EXCEPTION: str = "false"
     
     model_config = ConfigDict(

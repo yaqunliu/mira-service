@@ -7,6 +7,7 @@ Create Date: 2025-12-09 11:40:00.000000
 """
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -18,9 +19,15 @@ depends_on = None
 
 def upgrade() -> None:
     # 为 creations 表添加 character_ids 字段（JSONB类型，存储角色ID列表）
-    op.add_column('creations', 
-        sa.Column('character_ids', postgresql.JSONB(astext_type=sa.Text()), nullable=True)
-    )
+    # 检查列是否已存在（避免重复添加）
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    columns = [col['name'] for col in inspector.get_columns('creations')]
+    
+    if 'character_ids' not in columns:
+        op.add_column('creations', 
+            sa.Column('character_ids', postgresql.JSONB(astext_type=sa.Text()), nullable=True)
+        )
 
 
 def downgrade() -> None:

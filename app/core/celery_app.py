@@ -23,6 +23,7 @@ app = Celery(
         "app.tasks.subscription_poll_task",
         "app.tasks.product_sync_task",
         "app.tasks.subscription_sync_task",
+        "app.tasks.subscription_expire_task",
     ]
 )
 
@@ -56,15 +57,15 @@ app.conf.beat_schedule = {
     },
     'issue-subscription-points-monthly': {
         'task': 'issue_subscription_points_monthly',
-        'schedule': crontab(hour=0, minute=10),  # 每天 00:10 兜底月度发放
+        'schedule': crontab(day_of_month=1, hour=0, minute=10),  # 每月1号 00:10 发放月度积分
     },
     'poll-pending-orders': {
         'task': 'poll_pending_orders',
-        'schedule': crontab(minute='*/3'),  # 每5分钟兜底查询一次未支付订单
+        'schedule': crontab(minute='*/3'),  # 每3分钟兜底查询一次未支付订单
     },
     'poll-subscriptions-billing': {
         'task': 'poll_subscriptions_billing',
-        'schedule': crontab(minute='*/10'),  # 每10分钟兜底查询计费日内订阅
+        'schedule': crontab(day_of_month=1, hour=0, minute=5),  # 每月1号 00:05 查询Creem订阅续费状态并发放积分
     },
     'sync-products-hourly': {
         'task': 'sync_products',
@@ -73,6 +74,10 @@ app.conf.beat_schedule = {
     'sync-subscriptions-daily': {
         'task': 'sync_subscriptions',
         'schedule': crontab(hour=2, minute=0),  # 每天 02:00 执行
+    },
+    'check-expired-subscriptions': {
+        'task': 'check_expired_subscriptions',
+        'schedule': crontab(hour=1, minute=0),  # 每天 01:00 执行，检查并标记过期的订阅
     },
 }
 

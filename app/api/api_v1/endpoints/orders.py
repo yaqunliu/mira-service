@@ -38,6 +38,26 @@ def get_order(
     return order
 
 
+@router.get("/{order_uuid}/status", summary="查询订单支付状态（主动查询支付平台）")
+def query_order_status(
+    order_uuid: str = Path(..., description="订单 uuid"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """查询订单支付状态，调用支付平台API获取最新状态"""
+    from app.services.order_query_service import OrderQueryService
+    
+    order = OrderService.get_order_by_uuid(db, user, order_uuid)
+    result = OrderQueryService.query_order_status(db, order)
+    
+    return {
+        "order_uuid": order.uuid,
+        "status": result.get("status"),
+        "updated": result.get("updated", False),
+        "payment_status": result,
+    }
+
+
 @router.get("", response_model=OrderList, summary="查询订单列表")
 def list_orders(
     status: str | None = Query(None, description="订单状态"),
