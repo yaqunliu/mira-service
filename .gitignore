@@ -156,6 +156,8 @@ logs/
 temp/
 tmp/
 ai_res/
+temp_images/
+outputs/
 
 # 字体文件（运行时自动下载）
 static/fonts/*.ttf

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Optional, List
-from pydantic import BaseModel, Field
+import json
+from typing import Optional, List, Any, Dict
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
+from app.schemas.shot import NarrationItem
 
 
 class SceneSetting(BaseModel):
@@ -45,11 +47,42 @@ class ShotBrief(BaseModel):
     shot_number: int
     image_prompt: str | None
     image_url: str | None
-    narration: str | None
+    narration: List[NarrationItem] = Field(default_factory=list)
     description: str | None
     
     class Config:
         from_attributes = True
+
+    @field_validator('narration', mode='before')
+    @classmethod
+    def validate_narration(cls, v: Any) -> List[NarrationItem]:
+        if not v:
+            return []
+        if isinstance(v, str):
+            try:
+                data = json.loads(v)
+                if isinstance(data, list):
+                    result = []
+                    for item in data:
+                        if isinstance(item, dict) and "角色" in item and "内容" in item:
+                            result.append(NarrationItem(**item))
+                        elif isinstance(item, str):
+                            result.append(NarrationItem(角色="旁白", 内容=item))
+                    return result
+                return [NarrationItem(角色="旁白", 内容=str(data))]
+            except:
+                return [NarrationItem(角色="旁白", 内容=v)]
+        if isinstance(v, list):
+            result = []
+            for item in v:
+                if isinstance(item, dict):
+                    result.append(NarrationItem(**item))
+                elif isinstance(item, NarrationItem):
+                    result.append(item)
+                elif isinstance(item, str):
+                    result.append(NarrationItem(角色="旁白", 内容=item))
+            return result
+        return []
 
 
 class ShotDetail(BaseModel):
@@ -60,15 +93,68 @@ class ShotDetail(BaseModel):
     shot_number: int
     image_url: Optional[str] = None
     image_prompt: Optional[str] = None
-    narration: Optional[str] = None
+    narration: List[NarrationItem] = Field(default_factory=list)
     description: Optional[str] = None
-    
+    video_url: Optional[str] = None
+    audio_url: Optional[str] = None
+    duration: Optional[float] = None
+    video_status: Optional[str] = None
+    video_duration: Optional[int] = None
+    status_detail: Optional[Dict[str, Any]] = None
+    extra_data: Optional[Dict[str, Any]] = None
+
     class Config:
         from_attributes = True
+
+    @field_validator('narration', mode='before')
+    @classmethod
+    def validate_narration(cls, v: Any) -> List[NarrationItem]:
+        if not v:
+            return []
+        if isinstance(v, str):
+            try:
+                data = json.loads(v)
+                if isinstance(data, list):
+                    result = []
+                    for item in data:
+                        if isinstance(item, dict) and "角色" in item and "内容" in item:
+                            result.append(NarrationItem(**item))
+                        elif isinstance(item, str):
+                            result.append(NarrationItem(角色="旁白", 内容=item))
+                    return result
+                return [NarrationItem(角色="旁白", 内容=str(data))]
+            except:
+                return [NarrationItem(角色="旁白", 内容=v)]
+        if isinstance(v, list):
+            result = []
+            for item in v:
+                if isinstance(item, dict):
+                    result.append(NarrationItem(**item))
+                elif isinstance(item, NarrationItem):
+                    result.append(item)
+                elif isinstance(item, str):
+                    result.append(NarrationItem(角色="旁白", 内容=item))
+            return result
+        return []
     
     @classmethod
     def from_db_model(cls, shot) -> "ShotDetail":
         """从数据库模型转换"""
+        narration_list = []
+        if shot.narration:
+            try:
+                data = json.loads(shot.narration)
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict) and "角色" in item and "内容" in item:
+                            narration_list.append(NarrationItem(**item))
+                        elif isinstance(item, str):
+                            narration_list.append(NarrationItem(角色="旁白", 内容=item))
+                else:
+                    narration_list = [NarrationItem(角色="旁白", 内容=str(data))]
+            except (json.JSONDecodeError, TypeError):
+                narration_list = [NarrationItem(角色="旁白", 内容=shot.narration)]
+        
         return cls(
             shot_id=shot.shot_id,
             uuid=shot.uuid,
@@ -76,8 +162,15 @@ class ShotDetail(BaseModel):
             shot_number=shot.shot_number,
             image_url=shot.image_url,
             image_prompt=shot.image_prompt,
-            narration=shot.narration,
-            description=shot.description
+            narration=narration_list,
+            description=shot.description,
+            video_url=shot.video_url,
+            audio_url=shot.audio_url,
+            duration=shot.video_duration,
+            video_status=shot.video_status,
+            video_duration=shot.video_duration,
+            status_detail=shot.status_detail,
+            extra_data=shot.extra_data
         )
 
 
@@ -86,6 +179,7 @@ class Scene(SceneBase):
     scene_id: int
     uuid: str
     creation_id: int
+    image_url: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     shots: Optional[List["ShotBrief"]] = None
@@ -100,6 +194,7 @@ class SceneResponse(BaseModel):
     uuid: str = Field(..., alias="uuid")
     title: str
     duration: Optional[str] = None
+    image_url: Optional[str] = Field(None, alias="imageUrl")
     scene_setting: SceneSetting = Field(..., alias="sceneSetting")
     shot_list: List[int] = Field(default_factory=list, alias="shotList")
     
@@ -115,6 +210,7 @@ class SceneResponse(BaseModel):
             uuid=scene.uuid,
             title=scene.title,
             duration=scene.duration,
+            imageUrl=scene.image_url,
             sceneSetting=SceneSetting(
                 time=scene.time_setting,
                 location=scene.location,

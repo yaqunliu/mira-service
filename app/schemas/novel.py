@@ -13,6 +13,7 @@ class NovelBase(BaseModel):
 class NovelCreate(NovelBase):
     content: Optional[str] = None
     file_path: Optional[str] = None
+    type: str = "novel"  # novel or script
 
 
 class NovelUpdate(BaseModel):

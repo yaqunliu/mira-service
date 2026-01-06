@@ -16,14 +16,17 @@ app = Celery(
         "app.tasks.creation_task",
         "app.tasks.character_task",
         "app.tasks.shot_task",
+        "app.tasks.step4_scene_image_gen_task",
+        "app.tasks.step7_video_prompt_gen_task",
+        "app.tasks.step8_video_gen_task",
         "app.tasks.full_generation_task",
         "app.tasks.points_task",
         "app.tasks.subscription_task",
         "app.tasks.order_poll_task",
         "app.tasks.subscription_poll_task",
-        "app.tasks.product_sync_task",
         "app.tasks.subscription_sync_task",
         "app.tasks.subscription_expire_task",
+        "app.tasks.video_export",
     ]
 )
 
@@ -66,10 +69,6 @@ app.conf.beat_schedule = {
     'poll-subscriptions-billing': {
         'task': 'poll_subscriptions_billing',
         'schedule': crontab(day_of_month=1, hour=0, minute=5),  # 每月1号 00:05 查询Creem订阅续费状态并发放积分
-    },
-    'sync-products-hourly': {
-        'task': 'sync_products',
-        'schedule': crontab(minute=0),  # 每小时的第0分钟执行
     },
     'sync-subscriptions-daily': {
         'task': 'sync_subscriptions',

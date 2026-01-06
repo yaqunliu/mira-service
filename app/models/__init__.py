@@ -5,6 +5,7 @@ from .creation import Creation
 from .character import Character
 from .scene import Scene
 from .shot import Shot
+from .asset import Asset, AssetType
 from .points_account import PointsAccount
 from .points_record import PointsRecord
 from .temporary_points import TemporaryPoints
@@ -21,11 +22,13 @@ from .wechat_subscription import WechatSubscription
 __all__ = [
     "User",
     "Novel",
-    "Chapter", 
+    "Chapter",
     "Creation",
     "Character",
     "Scene",
     "Shot",
+    "Asset",
+    "AssetType",
     "PointsAccount",
     "PointsRecord",
     "TemporaryPoints",

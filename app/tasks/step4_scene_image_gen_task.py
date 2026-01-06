@@ -1,0 +1,297 @@
+"""
+V2 视频生成流程 - 步骤 4: 场景图生成
+"""
+import os
+import json
+import httpx
+from datetime import datetime
+from app.core.celery_app import celery_app
+from app.core.logger import logger
+from app.db.session import SessionLocal
+from sqlalchemy.orm import Session
+from app.models.creation import Creation
+from app.models.scene import Scene
+from app.utils.task_types import TaskType
+from app.utils.ai_client import AIClient
+from app.utils.file_utils import read_prompt_file
+from app.utils.us3 import US3Client
+from app.utils.upload_helper import upload_helper
+from app.core.config import settings
+from app.models.user import User
+from app.utils.points_deduction import deduct_points_for_image
+from app.utils.model_prices import ModelPrices
+import math
+
+
+@celery_app.task(bind=True, name="batch_generate_scene_images_task")
+def batch_generate_scene_images_task(self, creation_id: int, force_regenerate: bool = False):
+    """
+    批量生成场景图片任务（并行）
+    """
+    db: Session = SessionLocal()
+    try:
+        self.update_state(
+            state='PROGRESS',
+            meta={
+                'task_type': TaskType.SCENE_IMAGE_GENERATION,
+                'creation_id': creation_id,
+                'status': '正在准备批量生成场景图片...'
+            }
+        )
+
+        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        if not creation:
+            raise Exception(f"Creation not found: {creation_id}")
+
+        # Update Step Status: Processing
+        from app.services.creation_service import CreationService
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation_id,
+            step_name="sceneImageGeneration",
+            status="processing",
+            task_id=self.request.id
+        )
+
+        scenes = db.query(Scene).filter(Scene.creation_id == creation_id).all()
+        if not scenes:
+            CreationService.update_creation_step_status(
+                db=db,
+                creation_id=creation_id,
+                step_name="sceneImageGeneration",
+                status="success"
+            )
+            return {"status": "success", "message": "No scenes found"}
+
+        # 筛选需要生成的场景
+        scenes_to_generate = []
+        for scene in scenes:
+            if force_regenerate or not scene.image_url:
+                scenes_to_generate.append(scene.scene_id)
+
+        if not scenes_to_generate:
+            # Update Step Status: Success (Nothing to do)
+            CreationService.update_creation_step_status(
+                db=db,
+                creation_id=creation_id,
+                step_name="sceneImageGeneration",
+                status="success"
+            )
+            return {"status": "success", "message": "All scenes have images"}
+
+        logger.info(f"Starting batch generation for {len(scenes_to_generate)} scenes")
+
+        # 使用 Celery group 并行执行
+        from celery import group
+        job = group(
+            generate_single_scene_image_task.s(scene_id, creation_id) 
+            for scene_id in scenes_to_generate
+        )
+        result = job.apply_async()
+        
+        # 等待所有子任务完成 (设置较长的超时时间，例如 10 分钟)
+        # 注意：这里会阻塞 Worker 线程，确保有足够的并发 Worker
+        try:
+            # 使用 disable_sync_subtasks=False 允许在任务中等待子任务，但这不是最佳实践
+            # 更好的方式是使用 chord 或 chain，但为了保持现有逻辑简单，我们使用 allow_join_result
+            # 或者简单地不等待结果，而是让前端轮询 creation 状态。
+            # 但为了更新 creation 状态为 success，我们需要知道什么时候结束。
+            
+            # 修正：不要在任务中直接调用 result.get()，这会导致死锁或 RuntimeError
+            # 替代方案：
+            # 1. 使用 chord(header)(callback) 模式
+            # 2. 或者让这个任务只是触发 group，然后立即返回。状态更新由回调任务处理。
+            # 3. 或者使用 allow_join_result 上下文管理器（不推荐，但能解决报错）
+            
+            from celery.result import allow_join_result
+            with allow_join_result():
+                result.get(timeout=600)
+            
+            # Update Step Status: Success
+            CreationService.update_creation_step_status(
+                db=db,
+                creation_id=creation_id,
+                step_name="sceneImageGeneration",
+                status="success"
+            )
+            
+            # 清除 current_task_id
+            creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+            if creation:
+                creation.current_task_id = None
+                db.commit()
+
+        except Exception as e:
+            logger.warning(f"Batch generation timed out or failed: {e}")
+            # 即使超时，也可能部分成功，但为了状态一致性，这里标记为 failed 或者 partial?
+            # 暂时标记为 failed，让前端可以重试
+            CreationService.update_creation_step_status(
+                db=db,
+                creation_id=creation_id,
+                step_name="sceneImageGeneration",
+                status="failed",
+                error=str(e)
+            )
+            raise e
+        
+        return {
+            "status": "success",
+            "scene_count": len(scenes_to_generate)
+        }
+
+    except Exception as e:
+        logger.error(f"Batch Scene Image Generation Failed: {str(e)}")
+        # Update Step Status: Failed (Outer try-except)
+        try:
+            db.rollback() # Rollback any pending transaction first
+            
+            from app.services.creation_service import CreationService
+            CreationService.update_creation_step_status(
+                db=db,
+                creation_id=creation_id,
+                step_name="sceneImageGeneration",
+                status="failed",
+                error=str(e)
+            )
+            
+            # 清除 current_task_id
+            creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+            if creation:
+                creation.current_task_id = None
+                db.commit()
+        except Exception as update_error:
+            logger.error(f"Failed to update creation status: {update_error}")
+            
+        raise e
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, name="generate_single_scene_image_task")
+def generate_single_scene_image_task(self, scene_id: int, creation_id: int):
+    """
+    单个场景图片生成任务
+    """
+    db: Session = SessionLocal()
+    try:
+        self.update_state(
+            state='PROGRESS',
+            meta={
+                'task_type': TaskType.SCENE_IMAGE_GENERATION,
+                'scene_id': scene_id,
+                'creation_id': creation_id,
+                'status': '正在生成场景图片...'
+            }
+        )
+
+        scene = db.query(Scene).filter(Scene.scene_id == scene_id).first()
+        if not scene:
+            raise Exception(f"Scene not found: {scene_id}")
+
+        ai_client = AIClient()
+        prompt_template = read_prompt_file("scene_image.md")
+        us3_client = US3Client()
+
+        logger.info(f"Regenerating image for scene: {scene.title}")
+        
+        # 构建环境设定描述
+        env_config = {
+            "时间": scene.time_setting,
+            "地点": scene.location,
+            "空间": scene.space_type,
+            "氛围": scene.atmosphere
+        }
+        environment_desc = json.dumps(env_config, ensure_ascii=False, indent=2)
+        
+        messages = [
+            {
+                "role": "user",
+                "content": f"{prompt_template}\n\n场景标题：{scene.title}\n\n环境设定：\n{environment_desc}"
+            }
+        ]
+        
+        # 1. 获取图片提示词
+        response = ai_client.chat_completion(messages=messages)
+        image_prompt = response.get("content", "").strip()
+        image_prompt = image_prompt.replace("```", "").strip()
+        
+        # 2. 生成图片
+        # 注意：Qwen-Image 等模型需要具体的宽x高格式，不能直接传 "16:9"
+        # 常用 16:9 分辨率: 1280x720, 1024x576
+        temp_image_url = ai_client.generate_image_by_prompt(
+            prompt=image_prompt,
+            model=ai_client.text_to_image_model,
+            aspectRatio="1280x720"
+        )
+        
+        # 3. 上传 US3
+        import uuid
+        filename = f"scenes/{creation_id}/{scene.scene_id}_{uuid.uuid4().hex[:8]}.png"
+        
+        # 下载图片
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.get(temp_image_url)
+            resp.raise_for_status()
+            image_data = resp.content
+        
+        # 上传图片
+        us3_client.upload_file_stream(image_data, put_key=filename, content_type="image/png")
+        us3_url = us3_client.get_file_url(filename)
+        
+        scene.image_url = us3_url
+        scene.status = "completed"
+
+        # 扣除积分（场景图生成使用文生图模型）
+        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        if creation:
+            user_id = creation.owner_id
+            try:
+                deduct_points_for_image(
+                    db=db,
+                    user_id=user_id,
+                    image_count=1,
+                    model_name=ai_client.text_to_image_model or settings.IMAGE_MODEL_TEXT_TO_IMAGE or "black-forest-labs/flux-kontext-pro/multi",
+                    reference_image_count=0,  # 文生图，无参考图
+                    image_size="2K",
+                    creation_id=creation_id,
+                    novel_id=creation.novel_id,
+                    description=f"生成场景图片（{scene.title}）",
+                    scene_id=scene_id  # 用于幂等性检查，防止重试重复扣费
+                )
+                logger.info(f"场景 {scene_id} 图片生成积分扣除成功")
+            except Exception as e:
+                logger.opt(exception=True).error("场景图片生成积分扣除失败: {}", str(e))
+                # 积分扣除失败不影响图片生成流程，只记录错误
+
+        # 如果是单个任务（不是 batch 触发的），清除 current_task_id
+        # 我们可以通过 check current_task_id 是否等于当前任务 ID 来判断
+        if creation and str(creation.current_task_id) == str(self.request.id):
+            creation.current_task_id = None
+
+        db.commit()
+
+        return {
+            "status": "success",
+            "scene_id": scene_id,
+            "image_url": us3_url
+        }
+
+    except Exception as e:
+        logger.error(f"Single Scene Image Generation Failed: {str(e)}")
+        # 尝试更新状态为 failed
+        try:
+            scene = db.query(Scene).filter(Scene.scene_id == scene_id).first()
+            if scene:
+                scene.status = "failed"
+                
+                # 清除 current_task_id
+                creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+                if creation and str(creation.current_task_id) == str(self.request.id):
+                    creation.current_task_id = None
+                
+                db.commit()
+        except:
+            pass
+        raise e
+    finally:
+        db.close()

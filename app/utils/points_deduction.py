@@ -89,39 +89,50 @@ def deduct_points_for_audio(
 def deduct_points_for_video(
     db: Session,
     user_id: int,
-    shot_count: int,
-    creation_id: int,
+    model_name: str,
+    duration_seconds: int,
+    resolution: str = "720p",
+    creation_id: Optional[int] = None,
     novel_id: Optional[int] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    shot_id: Optional[int] = None
 ) -> bool:
     """
-    扣除视频生成积分（按视频片段数）
-    
-    规则：每个视频片段1积分
-    
+    扣除视频生成积分（按实际成本：模型+时长+分辨率）
+
+    规则：每1元扣除100积分，每1分钱扣除1积分
+
     Args:
         db: 数据库会话
         user_id: 用户ID
-        shot_count: 视频片段数（分镜数）
-        creation_id: 创作ID
+        model_name: 视频模型名称
+        duration_seconds: 视频时长（秒）
+        resolution: 视频分辨率（480p/720p/1080p）
+        creation_id: 创作ID（可选）
         novel_id: 小说ID（可选）
         description: 描述（可选）
-        
+        shot_id: 分镜ID（可选，用于记录）
+
     Returns:
         是否扣除成功
     """
     try:
-        points = shot_count  # 每个片段1积分
-        
+        # 计算实际成本（元）
+        cost = ModelPrices.calculate_video_cost(model_name, duration_seconds, resolution)
+
+        # 转换为积分：每1元=100积分，每1分钱=1积分
+        # 使用向上取整，确保小数部分也扣除（如1.1积分扣2积分）
+        points = int(math.ceil(cost * 100))
+
         # 确保至少扣除1积分，不能不扣除
         if points <= 0:
-            logger.warning(f"视频生成片段数为0，调整为1积分")
+            logger.warning(f"视频生成积分计算为0或负数: cost={cost}, points={points}，调整为1积分")
             points = 1
-        
+
         # 生成描述
         if not description:
-            description = f"生成视频（{shot_count}个片段）"
-        
+            description = f"生成视频（{duration_seconds}秒，{resolution}，成本{cost:.4f}元）"
+
         # 扣除积分（预扣机制，不检查重复，允许用户重复生成）
         PointsService.deduct_points(
             db=db,
@@ -132,15 +143,19 @@ def deduct_points_for_video(
             novel_id=novel_id,
             description=description,
             extra_data={
-                "shot_count": shot_count,
-                "points": points
+                "model_name": model_name,
+                "duration_seconds": duration_seconds,
+                "resolution": resolution,
+                "cost_yuan": cost,
+                "points": points,
+                "shot_id": shot_id  # 仅用于记录，不用于重复检查
             },
             check_duplicate=False  # 允许重复生成，不检查重复
         )
-        
-        logger.info(f"用户 {user_id} 视频生成扣除积分: {points} (片段数: {shot_count})")
+
+        logger.info(f"用户 {user_id} 视频生成扣除积分: {points} (成本: {cost:.4f}元, {duration_seconds}秒, {resolution})")
         return True
-        
+
     except Exception as e:
         logger.error(f"视频生成积分扣除失败: {str(e)}", exc_info=True)
         raise
@@ -156,23 +171,29 @@ def deduct_points_for_image(
     creation_id: Optional[int] = None,
     novel_id: Optional[int] = None,
     description: Optional[str] = None,
-    shot_id: Optional[int] = None,  # 新增：用于幂等性检查
-    character_id: Optional[int] = None  # 新增：用于幂等性检查
+    shot_id: Optional[int] = None,  # 用于幂等性检查
+    character_id: Optional[int] = None,  # 用于幂等性检查
+    scene_id: Optional[int] = None  # 用于幂等性检查
 ) -> bool:
     """
     扣除图片生成积分（按实际成本）
-    
+
     规则：每1元扣除100积分，每1分钱扣除1积分
-    
+
     Args:
         db: 数据库会话
         user_id: 用户ID
         image_count: 图片数量
         model_name: 图片模型名称
+        reference_image_count: 参考图片数量（默认0）
+        image_size: 图片尺寸（默认2K）
         creation_id: 创作ID（可选）
         novel_id: 小说ID（可选）
         description: 描述（可选）
-        
+        shot_id: 分镜ID（可选，用于幂等性检查）
+        character_id: 角色ID（可选，用于幂等性检查）
+        scene_id: 场景ID（可选，用于幂等性检查）
+
     Returns:
         是否扣除成功
     """
@@ -201,9 +222,11 @@ def deduct_points_for_image(
         # 确定操作类型
         if creation_id and character_id:
             operation_type = "generate_character"
+        elif creation_id and scene_id:
+            operation_type = "generate_scene"
         else:
             operation_type = "generate_shot"
-        
+
         # 扣除积分（预扣机制，带幂等性检查）
         PointsService.deduct_points(
             db=db,
@@ -219,7 +242,8 @@ def deduct_points_for_image(
                 "cost_yuan": cost,
                 "points": points,
                 "shot_id": shot_id,  # 用于幂等性检查
-                "character_id": character_id  # 用于幂等性检查
+                "character_id": character_id,  # 用于幂等性检查
+                "scene_id": scene_id  # 用于幂等性检查
             },
             check_duplicate=True  # 启用重复检查
         )

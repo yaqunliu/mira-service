@@ -22,10 +22,22 @@ class Creation(Base):
     voice_id = Column(String(100), nullable=True)  # Fish Audio 语音模型ID，用于TTS生成
     voice_speed = Column(Float, default=1.0, nullable=False)  # 语速设置，范围 0-10，默认 1.0
     
+    # 视频生成配置
+    video_generation_mode = Column(String(20), default="old")  # old: 旧版快速生成, new: 新版高质量生成
+    video_generation_strategy = Column(String(20), default="ai_video")  # ai_video: AI图生视频, image_effects: 静态图片+特效
+    
+    # 音频策略
+    audio_strategy = Column(String(20), default="tts")  # tts: 纯TTS, ai_audio: AI生成音频（优先）+ TTS备选
+    
     # 外键
     owner_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
-    novel_id = Column(Integer, ForeignKey("novels.novel_id"), nullable=False)
-    chapter_id = Column(Integer, ForeignKey("chapters.chapter_id"), nullable=False)
+    novel_id = Column(Integer, ForeignKey("novels.novel_id"), default=0, nullable=False)
+    chapter_id = Column(Integer, ForeignKey("chapters.chapter_id"), default=0, nullable=False)
+    
+    # 新增字段
+    creation_type = Column(String(20), default="chapter", nullable=False)  # chapter: 章节创作, script: 文案创作
+    preview_text = Column(String(500), nullable=True)  # 文本预览，最多500字符
+    text_content_url = Column(String(500), nullable=True)  # 文本内容在US3上的存储URL
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -33,6 +45,11 @@ class Creation(Base):
     deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)  # 软删除时间戳
     extra_data = Column(JSONB, nullable=True)  # 扩展数据，存储创作配置（如模型选择、模式选择等）
     character_ids = Column(JSONB, nullable=True)  # 关联的角色ID列表，包括新建和复用的角色
+    scene_ids = Column(JSONB, nullable=True)  # 关联的场景ID列表，包括新建和复用的场景
+
+    # 新版高质量生成流程字段
+    timeline_config = Column(JSONB, nullable=True)  # 多轨道编辑配置（存储视频轨、音频轨、文案轨等信息）
+    editing_status = Column(String(20), nullable=True)  # 编辑状态：editing, previewing, completed
     
     # 关系
     owner = relationship("User", back_populates="creations")

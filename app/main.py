@@ -65,6 +65,20 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
 # 包含API路由
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
+# 挂载静态文件目录（用于开发环境访问生成的媒体资源）
+from fastapi.staticfiles import StaticFiles
+import os
+from pathlib import Path
+
+# 获取 project_root/app/video_generation_flow 目录
+# 假设 main.py 在 project_root/app/main.py
+current_dir = Path(__file__).parent
+video_flow_dir = current_dir / "video_generation_flow"
+
+if video_flow_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(video_flow_dir)), name="static")
+
+
 
 @app.get("/")
 async def root():

@@ -17,7 +17,7 @@ class Chapter(Base):
     content_url = Column(String(500))
     chapter_number = Column(Integer, nullable=False)
     word_count = Column(Integer, default=0)
-    preview = Column(String(100))  # 章节内容预览，前30个字
+    preview = Column(String(100))  # 章节内容预览，前100个字
     
     # 外键
     novel_id = Column(Integer, ForeignKey("novels.novel_id"), nullable=False)

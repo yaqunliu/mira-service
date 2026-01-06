@@ -6,7 +6,8 @@
 - 小说上传任务 (novel_upload)
 - AI 生成任务 (character_image_generation, shot_image_generation, audio_generation, video_synthesis 等)
 """
-from typing import Optional, Dict, Any
+import json
+from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.api.deps import get_db
@@ -22,6 +23,19 @@ from app.utils.response import success_response
 from sqlalchemy.orm import selectinload
 
 router = APIRouter()
+
+
+def parse_narration(narration_str: Optional[str]) -> List[str]:
+    """解析旁白字符串为列表"""
+    if not narration_str:
+        return []
+    try:
+        data = json.loads(narration_str)
+        if isinstance(data, list):
+            return data
+        return [str(data)]
+    except (json.JSONDecodeError, TypeError):
+        return [narration_str]
 
 
 def _get_resource_by_task_result(
@@ -59,7 +73,7 @@ def _get_resource_by_task_result(
                     }
                 }
     
-    elif task_type == TaskType.CREATION_INIT or task_type == TaskType.CHARACTER_ANALYSIS or task_type == TaskType.SCENE_DESCRIPTION_GENERATION or task_type == TaskType.BATCH_SHOT_IMAGE_GENERATION:
+    elif task_type == TaskType.CREATION_INIT or task_type == TaskType.BATCH_SHOT_IMAGE_GENERATION:
         creation_id = result.get("creation_id")
         if creation_id:
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
@@ -106,22 +120,45 @@ def _get_resource_by_task_result(
                     }
                 }
     
-    elif task_type == TaskType.VIDEO_SYNTHESIS:
+    elif task_type in [TaskType.CHARACTER_ANALYSIS, TaskType.SCENE_DESCRIPTION_GENERATION, TaskType.SCENE_SHOT_DECOMPOSITION, TaskType.SCENE_IMAGE_GENERATION, TaskType.SHOT_SCRIPT_DESIGN, TaskType.SHOT_IMAGE_PROMPT_GENERATION, TaskType.VIDEO_PROMPT_GENERATION, TaskType.AI_VIDEO_GENERATION]:
         creation_id = result.get("creation_id")
-        if creation_id:
+        if not creation_id:
+            # Try to find by task_id in result or creation record
+            creation = db.query(Creation).filter(Creation.uuid == result.get("task_id")).first()
+        else:
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
-            if creation:
-                return {
-                    "type": "creation",
-                    "creation_id": creation_id,
-                    "creation": {
-                        "creation_id": creation.creation_id,
-                        "title": creation.title,
-                        "status": creation.status,
-                        "video_url": result.get("video_url"),
-                        "audio_url": result.get("audio_url"),
-                    }
+            
+        if creation:
+            # Fetch shots if completed
+            shots_data = []
+            if creation.status == "completed":
+                shots = db.query(Shot).join(Scene).filter(Scene.creation_id == creation.creation_id).order_by(Shot.shot_id).all()
+                for s in shots:
+                    shots_data.append({
+                        "shot_id": s.shot_id,
+                        "title": s.title,
+                        "narration": parse_narration(s.narration),
+                        "image_url": s.image_url,
+                        "video_url": s.video_url,
+                        "audio_url": s.audio_url,
+                        "content": s.content
+                    })
+
+            # For V2, we might want to return the full timeline config if completed
+            return {
+                "type": "creation_v2",
+                "creation_id": creation.creation_id,
+                "creation": {
+                    "creation_id": creation.creation_id,
+                    "title": creation.title,
+                    "status": creation.status,
+                    "timeline_config": creation.timeline_config,
+                    "shots": shots_data,
+                    # Fallback for old frontend expectations
+                    "video_url": creation.video_url,
+                    "audio_url": creation.audio_url,
                 }
+            }
     
     return None
 
@@ -240,14 +277,23 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
         }
         
         # 根据任务状态返回不同信息
-        if task_state == "PENDING":
-            # 任务等待执行
-            response.update({
-                "message": "任务等待执行",
-                "resource": None,
-                "progress": None,
-            })
-        elif task_state == "STARTED":
+        if task_state == "PENDING" or task_state == "STARTED":
+            # 检查是否是僵尸任务 (Zombie Task Detection)
+            # 如果任务处于 PENDING 状态，但在数据库中已经创建很久了，可能是 worker 崩溃了
+            creation = db.query(Creation).filter(Creation.uuid == task_id).first()
+            if creation and creation.status == "processing":
+                from datetime import datetime, timedelta, timezone
+                now = datetime.now(timezone.utc)
+                # 如果创建超过 10 分钟且没有更新，判定为失败
+                if creation.updated_at and now - creation.updated_at.replace(tzinfo=timezone.utc) > timedelta(minutes=10):
+                    logger.warning(f"检测到僵尸任务: task_id={task_id}, creation_id={creation.creation_id}. 标记为完成失败。")
+                    creation.status = "failed"
+                    db.commit()
+                    task_state = "FAILURE"
+                    response["status"] = "FAILURE"
+                    response["message"] = "任务异常中断或超时"
+                    return success_response(data=response)
+
             # 任务正在执行
             response.update({
                 "message": "任务正在处理中",

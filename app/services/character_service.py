@@ -82,6 +82,10 @@ class CharacterService:
         character_ids = [character.character_id]
 
         try:
+            # 更新角色状态为 generating
+            character.status = "generating"
+            db.commit()
+
             # 传递 creation_uuid 到 Celery 任务
             # force_regenerate=True 强制重新生成
             # 注意：这个任务不会更新 creation 的 current_task_id，因此不会触发页面跳转

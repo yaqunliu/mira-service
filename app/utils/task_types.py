@@ -25,6 +25,13 @@ class TaskType(str, Enum):
     BATCH_AUDIO_GENERATION = "batch_audio_generation"  # 批量音频生成（含字幕）
     BATCH_VIDEO_GENERATION = "batch_video_generation"  # 批量视频生成
     VIDEO_MERGE = "video_merge"  # 视频合并（视频+音频+字幕）
+    # V2 高质量生成流程任务
+    SCENE_SHOT_DECOMPOSITION = "scene_shot_decomposition"  # 场景分镜拆解
+    SCENE_IMAGE_GENERATION = "scene_image_generation"  # 场景图生成
+    SHOT_SCRIPT_DESIGN = "shot_script_design"  # 分镜剧本设计
+    SHOT_IMAGE_PROMPT_GENERATION = "shot_image_prompt_generation"  # 分镜图片提示词生成
+    VIDEO_PROMPT_GENERATION = "video_prompt_generation"  # 视频提示词生成
+    AI_VIDEO_GENERATION = "ai_video_generation"  # AI 图生视频生成
 
 
 class TaskStage(str, Enum):
@@ -63,10 +70,16 @@ def get_task_type_from_name(task_name: str) -> TaskType:
         return TaskType.NOVEL_UPLOAD
     elif "creation_init" in task_name_lower:
         return TaskType.CREATION_INIT
+    elif "character_analysis" in task_name_lower:
+        return TaskType.CHARACTER_ANALYSIS
     elif "character_image" in task_name_lower:
         return TaskType.CHARACTER_IMAGE_GENERATION
+    elif "scene_analysis" in task_name_lower:
+        return TaskType.SCENE_DESCRIPTION_GENERATION
     elif "scene_description" in task_name_lower:
         return TaskType.SCENE_DESCRIPTION_GENERATION
+    elif "shot_analysis" in task_name_lower:
+        return TaskType.SCENE_SHOT_DECOMPOSITION
     elif "creation_shots" in task_name_lower or "batch_shot" in task_name_lower:
         return TaskType.BATCH_SHOT_IMAGE_GENERATION
     elif "shot_image" in task_name_lower or "single_shot" in task_name_lower:

@@ -80,7 +80,38 @@ async def upload_novel(
             status_code=e.status_code,
             detail=e.detail
         )
+    except BaseServiceException as e:
+        # 将业务异常转换为HTTP异常
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail
+        )
 
+from app.schemas.novel import NovelCreate
+
+@router.post("/create", status_code=status.HTTP_201_CREATED)
+async def create_project(
+    novel_in: NovelCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    创建项目（非文件上传方式）
+    
+    用于创建 "剧本/文案项目" (type=script)
+    """
+    try:
+        # Simple Logic: Create a Novel record with type='script'
+        # Since NovelService.create_novel_service doesn't exist yet (only upload), we'll implement logic here or calling a service method
+        # For simplicity and speed, let's implement service logic inline or add to service
+        
+        # Call service to create
+        novel = NovelService.create_project_service(db=db, novel_in=novel_in, user_id=user.user_id)
+        return success_response(data={"novel_id": novel.novel_id, "uuid": novel.uuid, "title": novel.title, "type": novel.type}, message="项目创建成功")
+        
+    except Exception as e:
+        logger.error(f"创建项目失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/", response_model=dict)
 async def get_novels(
@@ -90,6 +121,7 @@ async def get_novels(
     owner_id: Optional[int] = Query(None, description="过滤所有者ID"),
     search: Optional[str] = Query(None, description="搜索关键词（标题或作者）"),
     title: Optional[str] = Query(None, description="按标题筛选（模糊匹配）"),
+    type: Optional[str] = Query(None, description="按类型筛选：novel, script"),
     order_by: str = Query("created_at", description="排序字段：created_at, updated_at, title"),
     order: str = Query("desc", description="排序方向：asc, desc"),
     db: Session = Depends(get_db),
@@ -132,6 +164,7 @@ async def get_novels(
             owner_id=owner_id,
             search=search,
             title_filter=title,
+            type_filter=type,
             order_by=order_by,
             order=order
         )
@@ -159,11 +192,13 @@ async def get_novels(
             "author": novel.author,
             "chapter_count": novel.chapter_count,
             "status": novel.status,
+            "type": novel.type,
             "owner_id": novel.owner_id,
             "created_at": novel.created_at,
             "updated_at": novel.updated_at,
             "creation_ids": creation_ids,
             "character_ids": character_ids,
+            "type": novel.type,
         })
     
     return success_response(
@@ -249,6 +284,7 @@ async def get_novel(
             "author": novel.author,
             "chapter_count": novel.chapter_count,
             "status": novel.status,
+            "type": novel.type,
             "owner_id": novel.owner_id,
             "task_id": novel.task_id,
             "created_at": novel.created_at,
@@ -344,6 +380,7 @@ async def get_novel_chapters(
             "preview": chapter.preview,
             "content_url": chapter.content_url,
             "created_at": chapter.created_at,
+            "has_creation": len(chapter.creation) > 0 if chapter.creation else False,
         }
         for chapter in chapters
     ]
@@ -454,6 +491,39 @@ async def update_chapter(
         },
         message="章节更新成功"
     )
+
+from app.schemas.chapter import ChapterCreate
+
+@router.post("/{novel_uuid}/chapters", status_code=status.HTTP_201_CREATED)
+async def create_chapter(
+    novel_uuid: str,
+    chapter_in: ChapterCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    创建章节（直接从文本）
+    """
+    try:
+        # Get novel first to confirm ownership
+        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
+        
+        # Use service to create chapter
+        # Override novel_id from path
+        chapter_in.novel_id = novel.novel_id
+        
+        chapter = NovelService.create_chapter_service(
+            db=db, 
+            novel_id=novel.novel_id, 
+            chapter_in=chapter_in, 
+            user_id=user.user_id
+        )
+        return success_response(data={"chapter_id": chapter.chapter_id, "uuid": chapter.uuid, "title": chapter.title}, message="章节创建成功")
+        
+    except Exception as e:
+        logger.error(f"创建章节失败: {e}")
+        # Map exceptions if needed
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/{novel_uuid}/chapters/{chapter_uuid}")

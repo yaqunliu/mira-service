@@ -93,11 +93,36 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = ""
     LLM_MODEL_NAME: str = ""
+
+    # 专用LLM模型配置
+    LLM_MODEL_CHARACTER_ANALYSIS: str = "zai-org/glm-4.6"  # 人物解析模型
+    LLM_MODEL_SCENE_ANALYSIS: str = "zai-org/glm-4.6"  # 场景解析模型
+    LLM_MODEL_SHOT_ANALYSIS: str = "zai-org/glm-4.6"  # 分镜解析模型
+    LLM_MODEL_SCRIPT_GENERATION: str = "zai-org/glm-4.6"  # 剧本生成模型
+    LLM_MODEL_PROMPT_GENERATION: str = "Qwen/Qwen-Plus"  # 提示词生成模型
+
     # 图片生成模型配置
     IMAGE_MODEL_TEXT_TO_IMAGE: str = ""  # 文生图模型（用于生成角色图片）
     IMAGE_MODEL_IMAGE_TO_IMAGE: str = ""  # 图生图模型（用于生成分镜图片）
     # 向后兼容：如果新配置未设置，使用旧配置
     IMAGE_MODEL_NAME: str = ""  # 旧配置（已废弃，保留用于向后兼容）
+    
+    # 火山云AI配置
+    ARK_API_KEY: str = ""  # 火山云AI API密钥
+    ARK_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"  # 火山云AI API基础URL
+    
+    # 火山云图片生成模型配置
+    ARK_IMAGE_MODEL: str = "doubao-seedream-4-5-251128"  # Seedream 4.5模型
+    
+    # 火山云视频生成模型配置
+    ARK_VIDEO_MODEL: str = "doubao-seedance-1-0-pro-250528"  # Seedance 1.0 Pro模型
+    ARK_VIDEO_TIMEOUT: int = 300  # 视频生成超时时间（秒）
+    ARK_VIDEO_RETRY_DELAY: int = 5  # 视频生成重试间隔（秒）
+
+    # Sora2 视频生成配置（使用 OPENAI_API_KEY 和 OPENAI_BASE_URL）
+    SORA2_MODEL: str = "openai/sora-2/image-to-video"  # Sora2 图生视频模型
+    SORA2_TIMEOUT: int = 1800  # Sora2 视频生成超时时间（秒），默认30分钟
+    SORA2_RETRY_DELAY: int = 5  # Sora2 视频生成重试间隔（秒）
     
     # AI 重试配置
     AI_MAX_RETRIES: int = 3  # 最大重试次数
@@ -115,7 +140,7 @@ class Settings(BaseSettings):
     DEFAULT_BUCKET: str = ""
     INTERNAL_DOWNLOAD_SUFFIX: str = ""  # 内网下载后缀（用于实际下载）
     INTERNAL_UPLOAD_SUFFIX: str = ""  # 内网上传后缀（用于实际上传）
-    
+
     # Fish Audio 配置
     FISH_AUDIO_API_KEY: str = ""
     FISH_AUDIO_DEFAULT_VOICE_ID: str = ""  # 默认语音模型 ID，如 "54a5170264694bfc8e9ad98df7bd89c3" (丁真)
@@ -156,6 +181,18 @@ class Settings(BaseSettings):
     MODEL_PRICES_LLM: str = '{"Qwen/Qwen-Plus": {"input": 0.8, "output": 2.0}}'  # LLM模型价格：输入/输出价格（元/百万tokens）
     MODEL_PRICES_IMAGE: str = '{"gemini-3-pro-image-preview": 0.97, "black-forest-labs/flux-kontext-pro/multi": 0.35}'  # 图片模型价格：元/张（Nano Banana2: 0.97元/张，基于1张参考图+2K输出）
     MODEL_PRICES_AUDIO: str = '{"s1": 120}'  # 音频模型价格：元/兆字节
+    MODEL_PRICES_VIDEO: str = '''
+    {
+        "Wan-AI/Wan2.2-I2V": {"720p": 0.35, "480p": 0.18},
+        "Wan-AI/Wan2.2-T2V": {"720p": 0.35, "480p": 0.18},
+        "Wan-AI/Wan2.5-I2V": {"1080p": 1.095, "720p": 0.73, "480p": 0.365},
+        "Wan-AI/Wan2.5-T2V": {"1080p": 1.095, "720p": 0.73, "480p": 0.365},
+        "openai/sora-2/text-to-video": {"720p": 0.71},
+        "openai/sora-2/text-to-video-pro": {"1080p": 3.56, "720p": 2.14},
+        "openai/sora-2/image-to-video": {"720p": 0.71},
+        "openai/sora-2/image-to-video-pro": {"1080p": 3.56, "720p": 2.14}
+    }
+    '''  # 视频模型价格：元/秒
     
     # Creem 支付配置
     CREEM_API_KEY: str = ""
@@ -186,7 +223,7 @@ class Settings(BaseSettings):
     ENABLE_TEST_EXCEPTION: str = "false"
     
     model_config = ConfigDict(
-        env_file=".env",
+        env_file=[".env.local", ".env"],  # 先读取 .env.local（本地开发），再读取 .env（Docker/生产）
         case_sensitive=True,
         extra="ignore",  # 忽略额外的环境变量，避免验证错误
     )

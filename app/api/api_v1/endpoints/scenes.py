@@ -15,7 +15,71 @@ from app.schemas.scene import (
 )
 from app.utils.response import success_response
 
+from app.tasks.step4_scene_image_gen_task import generate_single_scene_image_task
+from app.tasks.step8_video_gen_task import generate_scene_videos_task
+from app.core.logger import logger
+
 router = APIRouter()
+
+
+@router.get("/novel/{novel_id}")
+async def get_novel_scenes(
+    novel_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    获取小说的所有场景列表（用于场景复用）
+
+    该接口返回指定小说下所有未删除的场景，用于在创作时选择复用已有场景。
+
+    Args:
+        novel_id: 小说ID
+
+    Returns:
+        场景列表
+        {
+            "items": [
+                {
+                    "sceneId": 1,
+                    "title": "场景1",
+                    "timeSettings": "白天",
+                    "location": "书房",
+                    "spaceType": "室内",
+                    "atmosphere": "安静"
+                },
+                ...
+            ],
+            "total": 10
+        }
+    """
+    # 查询该小说的所有场景（未删除）
+    scenes = db.query(Scene).filter(
+        Scene.novel_id == novel_id,
+        Scene.deleted_at.is_(None)
+    ).order_by(Scene.scene_id.desc()).all()
+
+    # 验证权限：检查用户是否有权访问这些场景
+    # 通过检查场景关联的创作项目的所有者
+    if scenes:
+        # 获取第一个场景关联的创作，检查权限
+        first_scene_creation = db.query(Creation).filter(
+            Creation.creation_id == scenes[0].creation_id
+        ).first()
+
+        if first_scene_creation and first_scene_creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限访问该小说的场景")
+
+    # 转换为响应格式
+    scene_responses = [SceneResponse.from_db_model(scene) for scene in scenes]
+
+    return success_response(
+        data={
+            "items": [scene.model_dump(by_alias=True) for scene in scene_responses],
+            "total": len(scene_responses)
+        },
+        message="获取小说场景列表成功"
+    )
 
 
 @router.get("/creation/{creation_uuid}")
@@ -217,6 +281,32 @@ async def get_scene(
     )
 
 
+@router.get("/{scene_uuid}/with-shots")
+async def get_scene_with_shots(
+    scene_uuid: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    根据UUID获取场景详情（包含完整分镜详情）
+    """
+    scene = db.query(Scene).options(
+        selectinload(Scene.shots),
+        selectinload(Scene.creation)
+    ).filter(Scene.uuid == scene_uuid).first()
+    
+    if not scene:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    
+    if scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限访问该场景")
+    
+    return success_response(
+        data=SceneWithShotsResponse.from_db_model(scene).model_dump(),
+        message="获取场景详情成功"
+    )
+
+
 @router.put("/{scene_uuid}")
 async def update_scene(
     scene_uuid: str,
@@ -273,6 +363,82 @@ async def update_scene(
     return success_response(
         data=scene_response.model_dump(by_alias=True),
         message="场景更新成功"
+    )
+
+
+@router.post("/{scene_uuid}/regenerate-image")
+async def regenerate_scene_image(
+    scene_uuid: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    重新生成场景图片
+    """
+    scene = db.query(Scene).options(
+        selectinload(Scene.creation)
+    ).filter(Scene.uuid == scene_uuid).first()
+    
+    if not scene:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    
+    if scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限操作该场景")
+    
+    # 清空现有图片
+    scene.image_url = None
+    db.commit()
+    
+    # 启动任务
+    task = generate_single_scene_image_task.delay(
+        scene_id=scene.scene_id,
+        creation_id=scene.creation_id
+    )
+    
+    logger.info(f"Scene {scene_uuid} image regeneration started: task_id={task.id}")
+    
+    return success_response(
+        data={
+            "task_id": task.id,
+            "scene_uuid": scene_uuid
+        },
+        message="场景图片重新生成任务已启动"
+    )
+
+
+@router.post("/{scene_uuid}/regenerate-videos")
+async def regenerate_scene_videos(
+    scene_uuid: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    重新生成场景下所有分镜的视频
+    """
+    scene = db.query(Scene).options(
+        selectinload(Scene.creation)
+    ).filter(Scene.uuid == scene_uuid).first()
+    
+    if not scene:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    
+    if scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限操作该场景")
+    
+    # 启动任务
+    task = generate_scene_videos_task.delay(
+        scene_id=scene.scene_id,
+        creation_id=scene.creation_id
+    )
+    
+    logger.info(f"Scene {scene_uuid} video regeneration started: task_id={task.id}")
+    
+    return success_response(
+        data={
+            "task_id": task.id,
+            "scene_uuid": scene_uuid
+        },
+        message="场景视频重新生成任务已启动"
     )
 
 

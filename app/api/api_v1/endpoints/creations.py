@@ -1,3 +1,4 @@
+import json
 from typing import Optional, List
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,17 +9,30 @@ from app.api.deps import get_db, get_current_user
 from app.models.user import User
 from app.models.creation import Creation
 from app.models.shot import Shot
-from app.schemas.creation import CreationCreate, Creation as CreationSchema, CreationStatus
+from app.models.scene import Scene
+from app.schemas.creation import CreationCreate, CreationUpdate, CreationStatus
 from app.services.creation_service import CreationService
 from app.core.exceptions import BaseServiceException
 from app.utils.response import success_response
 from app.tasks.shot_task import generate_creation_shots_task, generate_shots_by_ids_task
 from app.tasks.full_generation_task import generate_full_video_task
-from app.tasks.creation_task import playbook_generation_task
+from app.tasks.creation_task import character_analysis_task
 from app.core.logger import logger
 
 router = APIRouter()
 
+
+def parse_narration(narration_str: Optional[str]) -> List[str]:
+    """解析旁白字符串为列表"""
+    if not narration_str:
+        return []
+    try:
+        data = json.loads(narration_str)
+        if isinstance(data, list):
+            return data
+        return [str(data)]
+    except (json.JSONDecodeError, TypeError):
+        return [narration_str]
 
 @router.post("/create")
 async def create_creation_service(
@@ -43,7 +57,7 @@ async def create_creation_service(
     except Exception as e:
         raise HTTPException(status_code=500, detail="获取用户信息失败")
 
-    # 验证参数：如果提供了 creation_id，则不需要 novel_id 和 chapter_id；否则必须提供
+    # 验证参数：如果提供了 creation_id，则不需要 novel_id 和 chapter_id；否则必须提供 novel_id+chapter_id 或 text_content
     if creation_data.creation_id:
         if creation_data.novel_id is not None or creation_data.chapter_id is not None:
             logger.warning(
@@ -52,10 +66,10 @@ async def create_creation_service(
                 f"将忽略 novel_id 和 chapter_id"
             )
     else:
-        if not creation_data.novel_id or not creation_data.chapter_id:
+        if not ((creation_data.novel_id and creation_data.chapter_id) or creation_data.text_content):
             raise HTTPException(
                 status_code=400,
-                detail="创建新创作时必须提供 novel_id 和 chapter_id，或提供 creation_id 继续已存在的创作"
+                detail="创建新创作时必须提供 novel_id 和 chapter_id，或提供 text_content 进行文案创作，或提供 creation_id 继续已存在的创作"
             )
 
     # 将UUID转换为ID（如果需要）
@@ -104,6 +118,7 @@ async def create_creation_service(
             creation_id=creation_id_int,
             narration_mode=narration_mode,
             extra_data=extra_data,
+            text_content=creation_data.text_content
         )
 
         # 获取创建的创作对象，返回UUID
@@ -194,6 +209,9 @@ async def get_creations_service(
                 "chapter_id": creation.chapter_id,
                 "extra_data": creation.extra_data,
                 "character_ids": creation.character_ids,
+                "creation_type": creation.creation_type,
+                "preview_text": creation.preview_text,
+                "text_content_url": creation.text_content_url,
             }
 
             # 角色列表（供前端弹框选择），返回主要字段
@@ -211,6 +229,7 @@ async def get_creations_service(
                         "hair": character.hair,
                         "clothing": character.clothing,
                         "tags": character.tags,
+                        "voice_description": character.voice_description,
                         "image_prompt": character.image_prompt,
                         "visual_style": character.visual_style,
                         "image_url": getattr(character, "image_url", None),
@@ -283,11 +302,15 @@ async def get_creations_service(
                             "title": shot.title,
                             "shot_number": shot.shot_number,
                             "description": shot.description,
-                            "narration": shot.narration,
+                            "narration": parse_narration(shot.narration),
                             "image_prompt": shot.image_prompt,
                             "image_url": shot.image_url,
                             "audio_url": shot.audio_url,
-                            "audio_duration": shot.audio_duration,
+                            "video_url": shot.video_url,
+                            "video_status": shot.video_status,
+                            "video_duration": shot.video_duration,
+                            "status_detail": shot.status_detail,
+                            "extra_data": shot.extra_data,
                             "scene_id": shot.scene_id,
                             "created_at": shot.created_at,
                             "updated_at": shot.updated_at,
@@ -355,6 +378,7 @@ async def get_creation_by_chapter(
                 "hair": char.hair,
                 "clothing": char.clothing,
                 "tags": char.tags,
+                "voice_description": char.voice_description,
                 "image_prompt": char.image_prompt,
                 "visual_style": char.visual_style,
                 "image_url": char.image_url,
@@ -376,6 +400,7 @@ async def get_creation_by_chapter(
                 "location": scene.location,
                 "space_type": scene.space_type,
                 "atmosphere": scene.atmosphere,
+                "image_url": scene.image_url,
                 "created_at": scene.created_at,
                 "updated_at": scene.updated_at,
             }
@@ -402,6 +427,9 @@ async def get_creation_by_chapter(
             "extra_data": creation.extra_data,
             "characters": characters,
             "scenes": scenes,
+            "creation_type": creation.creation_type,
+            "preview_text": creation.preview_text,
+            "text_content_url": creation.text_content_url,
         }
         
         return success_response(
@@ -456,6 +484,9 @@ async def get_creation_simple(
             "created_at": creation.created_at,
             "updated_at": creation.updated_at,
             "current_task_id": creation.current_task_id,
+            "creation_type": creation.creation_type,
+            "preview_text": creation.preview_text,
+            "text_content_url": creation.text_content_url,
         }
         
         return success_response(
@@ -474,6 +505,7 @@ async def get_creation_simple(
 @router.get("/{creation_uuid}")
 async def get_creation(
     creation_uuid: str,
+    exclude_timeline: bool = Query(False, description="是否排除timeline_config字段"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -505,6 +537,11 @@ async def get_creation(
             "created_at": creation.created_at,
             "updated_at": creation.updated_at,
             "current_task_id": creation.current_task_id,
+            "creation_type": creation.creation_type,
+            "preview_text": creation.preview_text,
+            "text_content_url": creation.text_content_url,
+            "timeline_config": None if exclude_timeline else creation.timeline_config,
+            "editing_status": creation.editing_status,
         }
         
         # 角色列表（返回主要字段）
@@ -522,6 +559,7 @@ async def get_creation(
                     "hair": character.hair,
                     "clothing": character.clothing,
                     "tags": character.tags,
+                    "voice_description": character.voice_description,
                     "image_prompt": character.image_prompt,
                     "visual_style": character.visual_style,
                     "image_url": getattr(character, "image_url", None),
@@ -539,11 +577,13 @@ async def get_creation(
                     "scene_id": scene.scene_id,
                     "uuid": scene.uuid,
                     "title": scene.title,
+                    "status": scene.status,
                     "duration": scene.duration,
                     "time_setting": scene.time_setting,
                     "location": scene.location,
                     "space_type": scene.space_type,
                     "atmosphere": scene.atmosphere,
+                    "image_url": scene.image_url,
                     "created_at": scene.created_at,
                     "updated_at": scene.updated_at,
                     "shots": [],
@@ -557,19 +597,25 @@ async def get_creation(
                                     "character_id": character.character_id,
                                     "uuid": character.uuid,
                                     "name": character.name,
+                                    "status": character.status,
                                     "image_url": getattr(character, "image_url", None),
                                 })
                         scene_data["shots"].append({
                             "shot_id": shot.shot_id,
                             "uuid": shot.uuid,
                             "title": shot.title,
+                            "status": shot.status,
                             "shot_number": shot.shot_number,
                             "description": shot.description,
-                            "narration": shot.narration,
+                            "narration": parse_narration(shot.narration),
                             "image_prompt": shot.image_prompt,
                             "image_url": shot.image_url,
                             "audio_url": shot.audio_url,
-                            "audio_duration": shot.audio_duration,
+                            "video_url": shot.video_url,
+                            "video_status": shot.video_status,
+                            "video_duration": shot.video_duration,
+                            "status_detail": shot.status_detail,
+                            "extra_data": shot.extra_data,
                             "scene_id": shot.scene_id,
                             "created_at": shot.created_at,
                             "updated_at": shot.updated_at,
@@ -582,6 +628,69 @@ async def get_creation(
         )
     except BaseServiceException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@router.put("/{creation_uuid}")
+async def update_creation(
+    creation_uuid: str,
+    update_data: CreationUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    更新创作项目
+    
+    Args:
+        creation_uuid: 创作项目UUID
+        update_data: 更新数据
+        
+    Returns:
+        更新后的创作项目
+    """
+    try:
+        creation = CreationService.update_creation_service(
+            db=db,
+            creation_uuid=creation_uuid,
+            user_id=user.user_id,
+            update_data=update_data.dict(exclude_unset=True)
+        )
+        
+        response_data = {
+            "creation_id": creation.creation_id,
+            "uuid": creation.uuid,
+            "title": creation.title,
+            "status": creation.status,
+            "chapter_id": creation.chapter_id,
+            "novel_id": creation.novel_id,
+            "novel_uuid": creation.novel.uuid if creation.novel else None,
+            "chapter_uuid": creation.chapter.uuid if creation.chapter else None,
+            "owner_id": creation.owner_id,
+            "voice_id": creation.voice_id,
+            "voice_speed": creation.voice_speed,
+            "video_url": creation.video_url,
+            "audio_url": creation.audio_url,
+            "subtitle_url": creation.subtitle_url,
+            "extra_data": creation.extra_data,
+            "created_at": creation.created_at,
+            "updated_at": creation.updated_at,
+            "current_task_id": creation.current_task_id,
+            "creation_type": creation.creation_type,
+            "preview_text": creation.preview_text,
+            "text_content_url": creation.text_content_url,
+            "timeline_config": creation.timeline_config,
+            "editing_status": creation.editing_status,
+        }
+        
+        return success_response(
+            data=response_data,
+            message="创作项目更新成功"
+        )
+        
+    except BaseServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except Exception as e:
+        logger.error(f"更新创作项目失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"更新失败: {str(e)}")
 
 
 @router.delete("/{creation_uuid}")
@@ -701,6 +810,14 @@ async def start_generate_shots(
                 detail=f"创作项目正在执行其他任务，任务ID: {creation.current_task_id}"
             )
         
+        # 更新状态为 pending
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation.creation_id,
+            step_name="shotImageGeneration",
+            status="pending"
+        )
+
         # 根据请求参数选择任务类型
         if request.shot_ids:
             # 将UUID列表转换为shot_id列表（Celery任务需要整数ID）
@@ -716,6 +833,13 @@ async def start_generate_shots(
             shot_ids = [shot.shot_id for shot in shots]
             
             # 生成指定分镜（传递整数ID给Celery任务）
+            
+            # 更新状态
+            db.query(Shot).filter(Shot.shot_id.in_(shot_ids)).update(
+                {Shot.status: "generating"}, synchronize_session=False
+            )
+            db.commit()
+
             task = generate_shots_by_ids_task.delay(
                 shot_ids=shot_ids,
                 creation_id=creation.creation_id
@@ -723,11 +847,50 @@ async def start_generate_shots(
             message = f"已启动 {len(shot_ids)} 个分镜图片生成任务"
         else:
             # 生成所有分镜
+            
+            # 更新所有分镜状态
+            if request.force_regenerate:
+                # 如果强制重新生成，更新所有分镜状态
+                # 注意：这可能会影响大量数据，但在单创作范围内应该还好
+                # 更好的方式是只更新该创作下的分镜
+                pass # 逻辑比较复杂，暂且在 Task 中处理或者这里处理
+                # 这里简单处理：先不更新全部，因为 quantity might be large.
+                # 但用户要求 "及时更新"。
+                # 我们可以先查询出所有 ID 然后更新。
+                pass
+            
+            # 简单起见，我们在 Task 中处理全量更新，或者在这里查询并更新
+            # 为了响应速度，这里只更新 creation 状态？不，用户要求角色分镜场景状态。
+            # 我们可以做一个快速更新
+            try:
+                # 获取该创作的所有 scene_id
+                scene_ids = db.query(Scene.scene_id).filter(Scene.creation_id == creation.creation_id).all()
+                scene_ids = [s[0] for s in scene_ids]
+                if scene_ids:
+                    # 更新这些场景下的 shot 状态
+                    query = db.query(Shot).filter(Shot.scene_id.in_(scene_ids))
+                    if not request.force_regenerate:
+                        query = query.filter(Shot.image_url.is_(None))
+                    
+                    query.update({Shot.status: "generating"}, synchronize_session=False)
+                    db.commit()
+            except Exception as e:
+                logger.error(f"Failed to update shot status: {e}")
+
             task = generate_creation_shots_task.delay(
                 creation_id=creation.creation_id,
                 force_regenerate=request.force_regenerate
             )
             message = "分镜图片批量生成任务已启动"
+            
+            # 更新 task_id 和状态
+            CreationService.update_creation_step_status(
+                db=db,
+                creation_id=creation.creation_id,
+                step_name="shotImageGeneration",
+                status="pending",
+                task_id=task.id
+            )
         
         # 更新创作的当前任务ID
         creation.current_task_id = task.id
@@ -754,6 +917,105 @@ async def start_generate_shots(
 
 class GeneratePlaybookRequest(BaseModel):
     narration_mode: str = "original"  # 解说词模式：original（原文模式）或 rewrite（爽文模式）
+
+
+@router.post("/{creation_uuid}/analyze-characters")
+async def start_character_analysis(
+    creation_uuid: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    手动启动角色分析任务（第一步）
+    
+    该接口会启动一个 Celery 任务来异步分析角色。
+    前端可以通过返回的 task_id 轮询查询任务状态。
+    
+    Args:
+        creation_uuid: 创作项目UUID
+    
+    Returns:
+        {
+            "task_id": "xxx",  # 任务ID，用于查询任务状态
+            "creation_uuid": "xxx",
+            "message": "角色分析任务已启动"
+        }
+    """
+    try:
+        # 验证创作项目是否存在
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+        if not creation:
+            raise HTTPException(status_code=404, detail="创作项目不存在")
+        
+        # 验证权限
+        if creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限操作该创作项目")
+        
+        # 检查是否有正在执行的任务 (已废弃，现在使用 extra_data 记录任务状态)
+        # if creation.current_task_id:
+        #     raise HTTPException(
+        #         status_code=400, 
+        #         detail=f"创作项目正在执行其他任务，任务ID: {creation.current_task_id}"
+        #     )
+        
+        # 获取内容URL
+        content_url = None
+        if creation.creation_type == "script":
+            content_url = creation.text_content_url
+            # 如果没有 text_content_url，尝试从关联的 chapter 获取
+            if not content_url and creation.chapter:
+                content_url = creation.chapter.content_url
+        else:
+            if creation.chapter:
+                content_url = creation.chapter.content_url
+        
+        if not content_url:
+            raise HTTPException(status_code=400, detail="无法获取创作内容URL")
+        
+        # 更新状态为 pending
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation.creation_id,
+            step_name="characterAnalysis",
+            status="pending"
+        )
+            
+        # 启动角色分析任务
+        task = character_analysis_task.delay(
+            novel_id=creation.novel_id or 0,
+            chapter_id=creation.chapter_id or 0,
+            creation_id=creation.creation_id,
+            chapter_content_url=content_url
+        )
+        
+        # 更新 task_id
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation.creation_id,
+            step_name="characterAnalysis",
+            status="pending",
+            task_id=task.id
+        )
+        
+        # 更新创作的当前任务ID
+        creation.current_task_id = task.id
+        db.commit()
+        
+        logger.info(f"创作 {creation_uuid} 角色分析任务已启动: task_id={task.id}")
+        
+        return success_response(
+            data={
+                "task_id": task.id,
+                "creation_uuid": creation_uuid
+            },
+            message="角色分析任务已启动"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"启动角色分析任务失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
 
 
 @router.post("/{creation_uuid}/generate-playbook")
@@ -798,25 +1060,22 @@ async def start_generate_playbook(
         if creation.owner_id != user.user_id:
             raise HTTPException(status_code=403, detail="无权限操作该创作项目")
         
-        # 验证状态：必须完成角色分析（包括已生成角色图片或已拆分分镜的状态）
-        from app.schemas.creation import CreationStatus
-        allowed_statuses = [
-            CreationStatus.CHARACTER_ANALYZED,
-            CreationStatus.CHARACTER_GENERATED,
-            CreationStatus.PLAYBOOK_GENERATED,
-        ]
-        if creation.status not in allowed_statuses:
-            raise HTTPException(
-                status_code=400,
-                detail=f"创作状态不正确，当前状态 {creation.status}。需要先完成角色分析。"
-            )
+        # 验证状态：使用 extra_data 中的状态
+        extra_data = creation.extra_data or {}
         
+        # 不再强制检查角色分析状态，允许并行进行
+        # if not steps.get("characterAnalysis", {}).get("status") == "success":
+        #      raise HTTPException(
+        #         status_code=400,
+        #         detail=f"创作状态不正确。需要先完成角色分析。"
+        #     )
+
         # 检查是否有正在执行的任务
-        if creation.current_task_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"创作项目正在执行其他任务，任务ID: {creation.current_task_id}"
-            )
+        # if creation.current_task_id:
+        #     raise HTTPException(
+        #         status_code=400,
+        #         detail=f"创作项目正在执行其他任务，任务ID: {creation.current_task_id}"
+        #     )
         
         # 验证 narration_mode
         if request.narration_mode not in ["original", "rewrite"]:
@@ -831,29 +1090,45 @@ async def start_generate_playbook(
         if not chapter or not chapter.content_url:
             raise HTTPException(status_code=404, detail="章节内容不存在")
         
-        # 启动分镜拆分任务
+        # 更新状态为 pending
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation.creation_id,
+            step_name="sceneAnalysis",
+            status="pending"
+        )
+        
+        # 启动分镜拆分任务 (使用 scene_analysis_task)
         # 注意：当从 API 直接调用时，previous_result 参数传入 None（因为不是通过 link 调用）
-        task = playbook_generation_task.delay(
-            None,  # previous_result: 从 API 直接调用时传入 None
+        from app.tasks.creation_task import scene_analysis_task
+        task = scene_analysis_task.delay(
             novel_id=creation.novel_id,
             chapter_id=creation.chapter_id,
             creation_id=creation.creation_id,
-            chapter_content_url=chapter.content_url,
-            narration_mode=request.narration_mode
+            chapter_content_url=chapter.content_url
+        )
+        
+        # 更新 task_id
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation.creation_id,
+            step_name="sceneAnalysis",
+            status="pending",
+            task_id=task.id
         )
         
         # 更新创作的当前任务ID
         creation.current_task_id = task.id
         db.commit()
         
-        logger.info(f"创作 {creation_uuid} 分镜拆分任务已启动: task_id={task.id}, narration_mode={request.narration_mode}")
+        logger.info(f"创作 {creation_uuid} 场景解析任务已启动: task_id={task.id}")
         
         return success_response(
             data={
                 "task_id": task.id,
                 "creation_uuid": creation_uuid
             },
-            message="分镜拆分任务已启动"
+            message="场景解析任务已启动"
         )
         
     except HTTPException:
@@ -861,7 +1136,168 @@ async def start_generate_playbook(
     except BaseServiceException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     except Exception as e:
-        logger.error(f"启动分镜拆分任务失败: {str(e)}", exc_info=True)
+        logger.error(f"启动场景解析任务失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
+
+
+@router.post("/{creation_uuid}/analyze-shots")
+async def start_shot_analysis(
+    creation_uuid: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    手动启动分镜拆解任务（第三步）
+    
+    该接口会启动一个 Celery 任务来异步进行分镜拆解。
+    前端可以通过返回的 task_id 轮询查询任务状态。
+    
+    Args:
+        creation_uuid: 创作项目UUID
+        
+    Returns:
+        {
+            "task_id": "xxx",
+            "creation_uuid": "xxx",
+            "message": "分镜拆解任务已启动"
+        }
+    """
+    try:
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+        if not creation:
+            raise HTTPException(status_code=404, detail="创作项目不存在")
+        
+        if creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限操作该创作项目")
+            
+        # 获取 Content URL
+        content_url = None
+        if creation.creation_type == "script":
+            content_url = creation.text_content_url
+            if not content_url and creation.chapter:
+                content_url = creation.chapter.content_url
+        else:
+            if creation.chapter:
+                content_url = creation.chapter.content_url
+                
+        if not content_url:
+            raise HTTPException(status_code=400, detail="无法获取创作内容URL")
+            
+        # 更新状态为 pending
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation.creation_id,
+            step_name="shotAnalysis",
+            status="pending"
+        )
+            
+        from app.tasks.creation_task import shot_analysis_task
+        task = shot_analysis_task.delay(
+            novel_id=creation.novel_id or 0,
+            chapter_id=creation.chapter_id or 0,
+            creation_id=creation.creation_id,
+            chapter_content_url=content_url
+        )
+        
+        # 更新 task_id
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation.creation_id,
+            step_name="shotAnalysis",
+            status="pending",
+            task_id=task.id
+        )
+        
+        creation.current_task_id = task.id
+        db.commit()
+        
+        logger.info(f"创作 {creation_uuid} 分镜拆解任务已启动: task_id={task.id}")
+        
+        return success_response(
+            data={
+                "task_id": task.id,
+                "creation_uuid": creation_uuid
+            },
+            message="分镜拆解任务已启动"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"启动分镜拆解任务失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
+
+
+
+@router.post("/{creation_uuid}/generate-scene-images")
+async def start_generate_scene_images(
+    creation_uuid: str,
+    force_regenerate: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    启动场景图片批量生成任务
+    
+    Args:
+        creation_uuid: 创作项目UUID
+        force_regenerate: 是否强制重新生成（默认为False，只生成没有图片的场景）
+        
+    Returns:
+        任务ID
+    """
+    try:
+        # 验证创作项目是否存在
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+        if not creation:
+            raise HTTPException(status_code=404, detail="创作项目不存在")
+        
+        # 验证权限
+        if creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限操作该创作项目")
+        
+        # 更新状态为 pending
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation.creation_id,
+            step_name="sceneImageGeneration",
+            status="pending"
+        )
+        
+        # 启动批量生成任务
+        from app.tasks.step4_scene_image_gen_task import batch_generate_scene_images_task
+        task = batch_generate_scene_images_task.delay(
+            creation_id=creation.creation_id,
+            force_regenerate=force_regenerate
+        )
+        
+        # 更新 task_id
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation.creation_id,
+            step_name="sceneImageGeneration",
+            status="pending",
+            task_id=task.id
+        )
+        
+        # 更新创作的当前任务ID
+        creation.current_task_id = task.id
+        db.commit()
+        
+        logger.info(f"创作 {creation_uuid} 场景图片批量生成任务已启动: task_id={task.id}")
+        
+        return success_response(
+            data={
+                "task_id": task.id,
+                "creation_uuid": creation_uuid
+            },
+            message="场景图片生成任务已启动"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"启动场景图片生成任务失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
 
 
@@ -1050,3 +1486,203 @@ async def get_generation_progress(
     except Exception as e:
         logger.error(f"查询任务进度失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"查询任务进度失败: {str(e)}")
+
+
+@router.post("/{creation_uuid}/generate-all-videos")
+async def generate_all_videos(
+    creation_uuid: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    批量生成作品中所有分镜的视频
+
+    Args:
+        creation_uuid: 作品UUID
+
+    Returns:
+        任务ID和统计信息
+    """
+    creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+    if not creation:
+        raise HTTPException(status_code=404, detail="作品不存在")
+
+    if creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限操作该作品")
+
+    # 统计需要生成的shots数量
+    total_shots = 0
+    shots_with_images = 0
+
+    for scene in creation.scenes:
+        for shot in scene.shots:
+            total_shots += 1
+            if shot.image_url:
+                shots_with_images += 1
+
+    if shots_with_images == 0:
+        raise HTTPException(status_code=400, detail="没有可生成视频的分镜（需要先生成图片）")
+
+    # 启动批量生成任务
+    from app.tasks.step8_video_gen_task import generate_all_videos_task
+    task = generate_all_videos_task.delay(
+        creation_id=creation.creation_id,
+        user_id=user.user_id
+    )
+
+    return success_response(
+        data={
+            "task_id": task.id,
+            "creation_uuid": creation_uuid,
+            "total_shots": total_shots,
+            "shots_with_images": shots_with_images
+        },
+        message=f"批量视频生成任务已启动，共{shots_with_images}个分镜"
+    )
+
+
+@router.post("/{creation_uuid}/export")
+async def export_video(
+    creation_uuid: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    触发视频导出任务
+
+    从时间轴配置导出最终视频，包含:
+    - 多轨道视频合并（带透明度、可见性控制）
+    - 多轨道音频混音（带音量、静音控制）
+    - 字幕烧录（带样式）
+
+    Args:
+        creation_uuid: 创作项目UUID
+
+    Returns:
+        任务ID，用于轮询任务状态
+    """
+    try:
+        # 验证创作项目是否存在
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+        if not creation:
+            raise HTTPException(status_code=404, detail="创作项目不存在")
+
+        # 验证权限
+        if creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限操作该创作项目")
+
+        # 验证是否有timeline_config
+        if not creation.timeline_config:
+            raise HTTPException(status_code=400, detail="时间轴配置为空，无法导出")
+
+        timeline_config = creation.timeline_config
+        tracks = timeline_config.get('tracks', [])
+
+        # 验证是否至少有一个视频轨道且有clips
+        video_tracks = [t for t in tracks if t.get('type') == 'video']
+        has_video_clips = False
+
+        for track in video_tracks:
+            clips = track.get('clips', [])
+            if clips and len(clips) > 0:
+                has_video_clips = True
+                break
+
+        if not has_video_clips:
+            raise HTTPException(status_code=400, detail="时间轴中没有视频片段，无法导出")
+
+        # 检查是否已有正在进行的导出任务
+        if creation.extra_data and 'steps' in creation.extra_data:
+            video_export_step = creation.extra_data['steps'].get('videoExport')
+            if video_export_step and video_export_step.get('status') == 'processing':
+                raise HTTPException(
+                    status_code=400,
+                    detail="已有正在进行的导出任务，请等待完成后再试"
+                )
+
+        # 启动导出任务前，清除之前的导出状态（如果是失败或成功状态，允许重新导出）
+        if creation.extra_data and 'steps' in creation.extra_data:
+            if 'videoExport' in creation.extra_data['steps']:
+                # 删除旧的导出步骤状态，让任务重新初始化
+                del creation.extra_data['steps']['videoExport']
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(creation, 'extra_data')
+                db.commit()
+
+        # 启动导出任务
+        from app.tasks.video_export import export_video_task
+
+        task = export_video_task.delay(
+            creation_id=creation.creation_id,
+            user_id=user.user_id
+        )
+
+        logger.info(f"视频导出任务已启动: creation_uuid={creation_uuid}, task_id={task.id}")
+
+        return success_response(
+            data={
+                "task_id": task.id,
+                "creation_uuid": creation_uuid
+            },
+            message="视频导出任务已启动"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"启动视频导出任务失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
+
+
+@router.get("/{creation_uuid}/export-history")
+async def get_export_history(
+    creation_uuid: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    获取视频导出历史
+
+    返回该创作的所有导出记录，包括成功和失败的记录
+
+    Args:
+        creation_uuid: 创作项目UUID
+
+    Returns:
+        导出历史列表
+    """
+    try:
+        # 验证创作项目是否存在
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+        if not creation:
+            raise HTTPException(status_code=404, detail="创作项目不存在")
+
+        # 验证权限
+        if creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限访问该创作项目")
+
+        # 获取导出历史
+        extra_data = creation.extra_data or {}
+        outputs = extra_data.get('outputs', [])
+
+        # 按导出时间倒序排列
+        outputs_sorted = sorted(
+            outputs,
+            key=lambda x: x.get('export_at', ''),
+            reverse=True
+        )
+
+        return success_response(
+            data={
+                "creation_uuid": creation_uuid,
+                "outputs": outputs_sorted,
+                "total": len(outputs_sorted)
+            },
+            message="获取导出历史成功"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取导出历史失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取导出历史失败: {str(e)}")

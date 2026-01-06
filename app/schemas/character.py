@@ -12,6 +12,7 @@ class CharacterBase(BaseModel):
     hair: Optional[str] = None
     clothing: Optional[str] = None
     tags: Optional[List[str]] = None  # JSON数组
+    voice_description: Optional[str] = None
     image_prompt: Optional[str] = None
     visual_style: Optional[str] = None
 
@@ -30,6 +31,7 @@ class CharacterUpdate(BaseModel):
     hair: Optional[str] = None
     clothing: Optional[str] = None
     tags: Optional[List[str]] = None  # JSON数组
+    voice_description: Optional[str] = None
     image_prompt: Optional[str] = None
     visual_style: Optional[str] = None
     image_url: Optional[str] = None
@@ -56,6 +58,7 @@ class Character(CharacterBase):
     novel_id: Optional[int] = None
     creation_id: Optional[int] = None
     image_url: Optional[str] = None
+    voice_description: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     

@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session, selectinload, Load
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import asc, desc
 from typing import Tuple, Optional, List
 from app.models.novel import Novel
@@ -8,14 +8,108 @@ from app.models.character import Character
 from app.models.scene import Scene
 from app.models.shot import Shot
 from app.schemas.creation import CreationStatus
-from app.tasks.creation_task import character_analysis_task, playbook_generation_task
+from app.tasks.creation_task import character_analysis_task
 from app.core.logger import logger
 from app.core.exceptions import NotFoundError, DatabaseError, PermissionError, AlreadyExistsError
+from app.utils.us3 import US3Client
+from app.core.config import settings
+import uuid
+import time
 
 
 class CreationService:
     """创作服务类"""
     
+    # 定义所有创作步骤名称
+    STEPS = [
+        "characterAnalysis",
+        "characterImageGeneration",
+        "sceneAnalysis",
+        "shotAnalysis",
+        "sceneImageGeneration",
+        "shotImageGeneration",
+        "videoGeneration"
+    ]
+    
+    @staticmethod
+    def update_creation_step_status(
+        db: Session,
+        creation_id: int,
+        step_name: str,
+        status: str,
+        error: Optional[str] = None,
+        task_id: Optional[str] = None,
+        commit: bool = True
+    ) -> None:
+        """
+        更新创作步骤状态（使用行锁防止并发冲突）
+        
+        Args:
+            db: 数据库会话
+            creation_id: 创作ID
+            step_name: 步骤名称（如 characterAnalysis, sceneAnalysis 等）
+            status: 状态（pending, processing, success, failed）
+            error: 错误信息（可选）
+            task_id: Celery任务ID（可选）
+            commit: 是否立即提交事务（默认True，在任务内部调用建议设为False）
+        """
+        try:
+            # 使用 with_for_update 获取行锁，确保并发安全
+            creation = db.query(Creation).filter(
+                Creation.creation_id == creation_id
+            ).with_for_update().first()
+            
+            if not creation:
+                logger.warning(f"更新步骤状态失败: 创作不存在 creation_id={creation_id}")
+                return
+            
+            # 深度复制 extra_data 以确保 SQLAlchemy 检测到变更
+            import copy
+            from sqlalchemy.orm.attributes import flag_modified
+            
+            extra_data = copy.deepcopy(creation.extra_data) if creation.extra_data else {}
+            if "steps" not in extra_data:
+                extra_data["steps"] = {}
+            
+            current_time_ms = int(time.time() * 1000)
+            
+            # 初始化或更新步骤信息
+            if step_name not in extra_data["steps"]:
+                extra_data["steps"][step_name] = {}
+            
+            step_data = extra_data["steps"][step_name]
+            step_data["status"] = status
+            step_data["updatedAt"] = current_time_ms
+            
+            # 如果状态不是 idle，则标记为已触发
+            if status != "idle":
+                step_data["triggered"] = True
+            
+            if error is not None:
+                step_data["error"] = error
+            elif status in ["pending", "processing", "success"]:
+                # 如果状态不是 failed，清除之前的错误
+                step_data.pop("error", None)
+                
+            if task_id:
+                step_data["taskId"] = task_id
+                
+            # 重新赋值并标记修改，确保触发 ORM 更新
+            creation.extra_data = extra_data
+            flag_modified(creation, "extra_data")
+            
+            if commit:
+                db.commit()
+                logger.info(f"更新创作 {creation_id} 步骤 {step_name} 状态为 {status} (已提交)")
+            else:
+                db.flush()
+                logger.info(f"更新创作 {creation_id} 步骤 {step_name} 状态为 {status} (已刷新)")
+            
+        except Exception as e:
+            logger.error(f"更新创作步骤状态失败: {str(e)}", exc_info=True)
+            # 不在子方法中执行 rollback，让调用方决定是否回滚整个事务
+            raise e
+
     @staticmethod
     def create_creation_service(
         db: Session,
@@ -24,7 +118,8 @@ class CreationService:
         user_id: int,
         creation_id: Optional[int] = None,
         narration_mode: str = "original",
-        extra_data: dict = None
+        extra_data: dict = None,
+        text_content: Optional[str] = None
     ) -> int:
         """
         创建新的创作项目或继续已存在的创作
@@ -76,18 +171,24 @@ class CreationService:
             return creation.creation_id
         
         # 如果没有提供 creation_id，则创建新的创作
-        logger.info(f"创建新的视频创作项目: novel_id={novel_id}, chapter_id={chapter_id}, user_id={user_id}")
+        logger.info(f"创建新的视频创作项目: novel_id={novel_id}, chapter_id={chapter_id}, text_content={text_content[:50]}... (truncated), user_id={user_id}")
         
-        # 验证输入参数
-        if not novel_id or not chapter_id:
-            raise ValueError("创建新创作时必须提供 novel_id 和 chapter_id")
+        # 验证输入参数 - 必须提供 novel_id+chapter_id 或 text_content
+        if not ((novel_id and chapter_id) or text_content):
+            raise ValueError("创建新创作时必须提供 novel_id+chapter_id 或 text_content")
         
-        novel, chapter = CreationService._validate_inputs(
-            db, novel_id, chapter_id, user_id
-        )
+        novel, chapter = None, None
+        chapter_content_url = None
         
-        # 检查是否已存在创作
-        CreationService._check_existing_creation(db, novel_id, chapter_id)
+        if novel_id and chapter_id:
+            # 通过小说章节创建
+            novel, chapter = CreationService._validate_inputs(
+                db, novel_id, chapter_id, user_id
+            )
+            chapter_content_url = chapter.content_url
+            
+            # 检查是否已存在创作
+            CreationService._check_existing_creation(db, novel_id, chapter_id)
         
         # 构建 extra_data（如果提供了 narration_mode，添加到 extra_data 中）
         creation_extra_data = extra_data or {}
@@ -95,13 +196,24 @@ class CreationService:
             creation_extra_data["narration_mode"] = narration_mode
         
         # 创建创作记录
-        creation = CreationService._create_creation_record(
-            db, novel, chapter, user_id, creation_extra_data
-        )
+        if novel and chapter:
+            creation = CreationService._create_creation_record(
+                db, novel, chapter, user_id, creation_extra_data
+            )
+        else:
+            # 通过文本内容创建
+            creation = CreationService._create_text_creation_record(
+                db, user_id, text_content, creation_extra_data
+            )
+        
+        # 确定内容URL
+        content_url = chapter_content_url
+        if not content_url and creation.text_content_url:
+            content_url = creation.text_content_url
         
         # 创建并启动 Celery 任务
         task_id = CreationService._create_and_start_task(
-            creation.creation_id, novel_id, chapter_id, chapter.content_url, narration_mode
+            creation.creation_id, novel_id, chapter_id, content_url, narration_mode
         )
         
         # 将 task_id 绑定到 creation 记录
@@ -157,7 +269,7 @@ class CreationService:
             selectinload(Creation.characters),
             selectinload(Creation.scenes)
             .selectinload(Scene.shots)
-            .selectinload(Shot.characters),
+            # .selectinload(Shot.characters),
         )
         
         # 状态过滤
@@ -393,6 +505,54 @@ class CreationService:
         return creation
 
     @staticmethod
+    def update_creation_service(
+        db: Session,
+        creation_uuid: str,
+        user_id: int,
+        update_data: dict
+    ) -> Creation:
+        """
+        更新创作项目
+        
+        Args:
+            db: 数据库会话
+            creation_uuid: 创作UUID
+            user_id: 用户ID
+            update_data: 更新数据字典
+            
+        Returns:
+            更新后的 Creation 对象
+            
+        Raises:
+            NotFoundError: 当创作不存在时
+            PermissionError: 当用户无权修改该创作时
+        """
+        creation = db.query(Creation).filter(
+            Creation.uuid == creation_uuid,
+            Creation.deleted_at.is_(None)
+        ).first()
+        
+        if not creation:
+            raise NotFoundError(detail="创作项目不存在")
+            
+        if creation.owner_id != user_id:
+            raise PermissionError(detail="无权限修改该创作项目")
+            
+        # 更新字段
+        for field, value in update_data.items():
+            if hasattr(creation, field) and value is not None:
+                setattr(creation, field, value)
+                
+        try:
+            db.commit()
+            db.refresh(creation)
+            return creation
+        except Exception as e:
+            logger.error(f"更新创作项目失败: {str(e)}", exc_info=True)
+            db.rollback()
+            raise DatabaseError(detail=f"更新失败: {str(e)}")
+
+    @staticmethod
     def _validate_inputs(
         db: Session,
         novel_id: int,
@@ -506,6 +666,23 @@ class CreationService:
         return creation
     
     @staticmethod
+    def _init_steps_metadata(extra_data: dict = None) -> dict:
+        """初始化步骤元数据"""
+        data = extra_data or {}
+        if "steps" not in data:
+            data["steps"] = {}
+        
+        current_time_ms = int(time.time() * 1000)
+        for step in CreationService.STEPS:
+            if step not in data["steps"]:
+                data["steps"][step] = {
+                    "status": "idle",
+                    "triggered": False,
+                    "updatedAt": current_time_ms
+                }
+        return data
+
+    @staticmethod
     def _create_creation_record(
         db: Session,
         novel: Novel,
@@ -515,27 +692,92 @@ class CreationService:
     ) -> Creation:
         """
         创建创作记录
-        
+
         Args:
             db: 数据库会话
             novel: 小说对象
             chapter: 章节对象
             user_id: 用户ID
             extra_data: 扩展数据（创作配置）
-        
+
         Returns:
             创建的 Creation 对象
         """
-        title = f"《{novel.title}》第{chapter.chapter_number}章"
+        title = f"{novel.title} {chapter.title}"
         logger.info(f"创建创作记录: title={title}, novel_id={novel.novel_id}, chapter_id={chapter.chapter_id}")
         
+        # 初始化步骤元数据
+        creation_extra_data = CreationService._init_steps_metadata(extra_data)
+        
+        # 创建章节创作记录
         creation = Creation(
             novel_id=novel.novel_id,
             chapter_id=chapter.chapter_id,
             owner_id=user_id,
             title=title,
             status=CreationStatus.CREATED,
-            extra_data=extra_data
+            creation_type="chapter",  # 章节创作类型
+            preview_text=chapter.content[:500] if chapter.content else None,  # 章节内容预览
+            text_content_url=chapter.content_url,  # 章节内容URL
+            extra_data=creation_extra_data
+        )
+        db.add(creation)
+        db.flush()  # 刷新以获取 creation_id，但不提交事务
+        
+        return creation
+    
+    @staticmethod
+    def _create_text_creation_record(
+        db: Session,
+        user_id: int,
+        text_content: str,
+        extra_data: dict = None
+    ) -> Creation:
+        """
+        通过文本内容创建创作记录
+        
+        Args:
+            db: 数据库会话
+            user_id: 用户ID
+            text_content: 直接上传的文本内容
+            extra_data: 扩展数据（创作配置）
+        
+        Returns:
+            创建的 Creation 对象
+        """
+        # 从文本内容中提取标题（前20个字符）
+        title_prefix = text_content[:20].replace('\n', ' ').strip()
+        title = f"文本创作 - {title_prefix}..."
+        logger.info(f"通过文本内容创建创作记录: title={title}, user_id={user_id}")
+        
+        # 将文本内容上传到US3
+        us3_client = US3Client()
+        put_key = f"texts/{uuid.uuid4()}.txt"
+        upload_result = us3_client.upload_file_stream(
+            file_stream=text_content.encode('utf-8'),
+            put_key=put_key,
+            content_type='text/plain'
+        )
+        
+        if not upload_result.get('success'):
+            raise DatabaseError(detail=f"文本内容上传US3失败: {upload_result.get('message')}")
+        
+        # 构建US3访问URL
+        text_content_url = f"https://{upload_result.get('bucket')}.{settings.DOWNLOAD_SUFFIX}/{put_key}"
+        
+        # 初始化步骤元数据
+        creation_extra_data = CreationService._init_steps_metadata(extra_data)
+        
+        creation = Creation(
+            novel_id=0,  # 设置默认值0
+            chapter_id=0,  # 设置默认值0
+            owner_id=user_id,
+            title=title,
+            status=CreationStatus.CREATED,
+            creation_type="script",  # 文案创作类型
+            preview_text=text_content[:500] if text_content else None,  # 文本内容预览
+            text_content_url=text_content_url,  # 文本内容US3 URL
+            extra_data=creation_extra_data
         )
         db.add(creation)
         db.flush()  # 刷新以获取 creation_id，但不提交事务

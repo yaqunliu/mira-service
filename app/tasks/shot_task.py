@@ -33,13 +33,15 @@ from app.services.model_config_service import ModelConfigService
 import math
 
 
-def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id: int = None) -> dict:
+def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id: int = None, force_regen_prompt: bool = False) -> dict:
     """
     生成单个分镜的图片（线程安全函数，使用图生图）
     
     Args:
         shot_id: 分镜ID
         creation_id: 创作ID（用于生成存储路径）
+        freeze_record_id: 冻结记录ID
+        force_regen_prompt: 是否强制重新生成提示词
         
     Returns:
         包含分镜ID和处理结果的字典
@@ -49,7 +51,6 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         Exception: 生图失败
     """
     db: Session = SessionLocal()
-    task_start = time.perf_counter()
     temp_file_path = None
     start_time = time.perf_counter()
     timings: Dict[str, float] = {}
@@ -94,9 +95,15 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             }
         
         # 获取关联的角色及其图片URL
+        # 只处理出镜角色，跳过声音角色（声音角色 basic_info == "声音角色"）
         character_images = []
         character_profiles = []
         for character in shot.characters:
+            # 跳过声音角色
+            if character.basic_info == "声音角色":
+                logger.info(f"跳过声音角色 {character.name}，不加入图片提示词生成")
+                continue
+
             if character.image_url:
                 character_images.append(character.image_url)
                 # 构建角色档案描述
@@ -113,6 +120,11 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                     profile_parts.append(f"服装: {character.clothing}")
                 if profile_parts:
                     character_profiles.append("，".join(profile_parts))
+        
+        # 添加场景图片作为参考图（如果有）
+        if shot.scene and shot.scene.image_url:
+            logger.info(f"分镜 {shot_id} 添加场景图片作为参考: {shot.scene.image_url}")
+            character_images.append(shot.scene.image_url)
         
         # 统一使用同一个模型生成图片；参考图列表可为空
         logger.info(f"分镜 {shot_id} 参考图片数量: {len(character_images)}，统一使用图生图模型")
@@ -151,19 +163,50 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             image_to_image_model=image_to_image_model,
             text_to_image_model=text_to_image_model
         )
-        current_shot_description = shot.description or shot.image_prompt or ""
         
-        # 生成提示词（即使没有参考图也用统一流程）
-        logger.info(f"开始为分镜 {shot_id} 生成图片提示词（统一流程，参考图数量: {len(character_images)}）")
-        prompt_start = time.perf_counter()
-        english_prompt = ai_client.generate_shot_image_prompt(
-            character_profiles=character_profiles,
-            previous_shot_description=previous_shot_description,
-            current_shot_description=current_shot_description,
-            image_model=image_to_image_model  # 传入图片模型以确定输出语言
-        )
-        timings["prompt_sec"] = round(time.perf_counter() - prompt_start, 3)
-        logger.info(f"生成的英文提示词长度: {len(english_prompt)}")
+        # 提示词逻辑：
+        # 1. 如果 force_regen_prompt 为 True，或者 shot.image_prompt 不存在，则调用 LLM 生成
+        # 2. 否则直接使用已有的提示词
+        
+        english_prompt = ""
+        if not force_regen_prompt and shot.image_prompt:
+            english_prompt = shot.image_prompt
+            logger.info(f"分镜 {shot_id} 已有提示词，直接使用: {len(english_prompt)} chars")
+            timings["prompt_sec"] = 0
+        else:
+            current_shot_description = shot.description or ""
+            # 生成提示词（即使没有参考图也用统一流程）
+            logger.info(f"分镜 {shot_id} {'强制' if force_regen_prompt else '开始'}重新生成提示词（参考图数量: {len(character_images)}）")
+            prompt_start = time.perf_counter()
+            english_prompt = ai_client.generate_shot_image_prompt(
+                character_profiles=character_profiles,
+                previous_shot_description=previous_shot_description,
+                current_shot_description=current_shot_description,
+                image_model=image_to_image_model  # 传入图片模型以确定输出语言
+            )
+            timings["prompt_sec"] = round(time.perf_counter() - prompt_start, 3)
+            logger.info(f"生成的英文提示词长度: {len(english_prompt)}")
+            
+            # 保存生成的提示词到数据库
+            try:
+                shot.image_prompt = english_prompt
+                db.add(shot)
+                db.commit()
+                # 刷新对象以确保数据一致性
+                db.refresh(shot) 
+                logger.info(f"分镜 {shot_id} 提示词已保存到数据库")
+            except Exception as e:
+                logger.error(f"分镜 {shot_id} 提示词保存失败: {str(e)}")
+                # 保存失败不影响图片生成，继续执行
+
+        # 打印详细的生图信息方便调试
+        logger.info("=" * 50)
+        logger.info(f"【分镜 {shot_id} 生图信息】")
+        logger.info(f"提示词 (Prompt): {english_prompt}")
+        logger.info(f"参考图列表 ({len(character_images)}张):")
+        for idx, img_url in enumerate(character_images):
+            logger.info(f"  {idx + 1}. {img_url}")
+        logger.info("=" * 50)
         
         # 使用同一模型生成图片；参考图可为空
         logger.info(f"开始为分镜 {shot_id} 调用图生图接口，参考图数量: {len(character_images)}")
@@ -219,8 +262,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 raise ValueError(f"用户不存在: user_id={user_id}")
             user_uuid = user.uuid
             
-            # 获取环境变量和时间戳
-            env = getattr(settings, 'ENV', 'dev')
+            # 获取时间戳
             time_str = datetime.now().strftime('%Y%m%d')
             
             # 使用流式上传
@@ -248,14 +290,15 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
             
         except Exception as e:
-            # 如果US3上传失败，记录错误但继续使用临时URL（降级处理）
-            error_msg = f"图像上传US3失败，使用临时URL: {str(e)}"
-            logger.warning(error_msg, exc_info=True)
-            image_url = temp_image_url
-            timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
+            # 如果US3上传失败，必须抛出异常，因为临时URL（特别是local://）无法被前端访问
+            error_msg = f"图像上传US3失败: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            raise Exception(error_msg)
         
         # 更新分镜信息
         shot.image_url = image_url
+        shot.status = "completed"
+        
         db.commit()
         db.refresh(shot)
         
@@ -300,6 +343,15 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             except Exception as release_error:
                 logger.opt(exception=True).error("释放冻结积分失败: {}", str(release_error))
         
+        # 尝试更新状态为 failed
+        try:
+            shot = db.query(Shot).filter(Shot.shot_id == shot_id).first()
+            if shot:
+                shot.status = "failed"
+                db.commit()
+        except:
+            pass
+
         db.rollback()
         total_sec = round(time.perf_counter() - start_time, 3)
         logger.warning(
@@ -317,7 +369,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
 
 
 @celery_app.task(bind=True, name="generate_single_shot_image_task")
-def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None) -> dict:
+def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None, force_regen_prompt: bool = False) -> dict:
     """
     Celery任务：生成单个分镜的图片
     
@@ -325,11 +377,12 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze
         shot_id: 分镜ID
         creation_id: 创作ID
         freeze_record_id: 冻结记录ID（可选，如果提供则使用冻结机制）
+        force_regen_prompt: 是否强制重新生成提示词
         
     Returns:
         包含分镜ID和处理结果的字典
     """
-    logger.info(f"开始执行分镜图片生成任务: shot_id={shot_id}, creation_id={creation_id}, freeze_record_id={freeze_record_id}")
+    logger.info(f"开始执行分镜图片生成任务: shot_id={shot_id}, creation_id={creation_id}, freeze_record_id={freeze_record_id}, force_regen_prompt={force_regen_prompt}")
     
     # 如未传入冻结记录，则在这里计算并冻结积分（单张生成）
     if not freeze_record_id:
@@ -436,7 +489,20 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze
         }
     )
     
-    result = _generate_single_shot_image(shot_id, creation_id, freeze_record_id)
+    result = _generate_single_shot_image(shot_id, creation_id, freeze_record_id, force_regen_prompt=force_regen_prompt)
+    
+    # 清除 current_task_id
+    db = SessionLocal()
+    try:
+        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        if creation and str(creation.current_task_id) == str(self.request.id):
+            creation.current_task_id = None
+            db.commit()
+    except Exception as e:
+        logger.error(f"Failed to clear current_task_id: {str(e)}")
+    finally:
+        db.close()
+        
     result["task_type"] = TaskType.SHOT_IMAGE_GENERATION
     return result
 
@@ -485,20 +551,31 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
             for shot in scene.shots:
                 # 如果强制重新生成，或者分镜没有图片，则加入列表
                 if force_regenerate or not shot.image_url:
-                    # 必须有 image_prompt 才能生成
-                    if shot.image_prompt:
-                        all_shots.append({
-                            "shot_id": shot.shot_id,
-                            "shot_title": shot.title,
-                            "scene_id": scene.scene_id,
-                            "scene_title": scene.title
-                        })
+                    # 如果没有 image_prompt，也会加入列表，在生成任务中会自动生成提示词
+                    all_shots.append({
+                        "shot_id": shot.shot_id,
+                        "shot_title": shot.title,
+                        "scene_id": scene.scene_id,
+                        "scene_title": scene.title
+                    })
+                else:
+                    logger.info(f"分镜 {shot.shot_id} 已有图片且非强制重新生成，跳过")
         
         total_shots = len(all_shots)
         if total_shots == 0:
             logger.info(f"创作 {creation_id} 没有需要生成图片的分镜")
             creation.status = CreationStatus.SCENE_GENERATED
             creation.current_task_id = None
+            
+            # 更新状态为 success
+            from app.services.creation_service import CreationService
+            CreationService.update_creation_step_status(
+                db=db,
+                creation_id=creation_id,
+                step_name="shotImageGeneration",
+                status="success"
+            )
+            
             db.commit()
             return {
                 "success": True,
@@ -510,6 +587,16 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
             }
         
         logger.info(f"开始为创作 {creation_id} 生成 {total_shots} 个分镜的图片")
+        
+        # 更新状态为 processing
+        from app.services.creation_service import CreationService
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation_id,
+            step_name="shotImageGeneration",
+            status="processing",
+            task_id=self.request.id
+        )
         
         # 计算每个分镜需要的积分并冻结积分
         # 优先使用 creation.extra_data 中的 image_to_image_model（如果不存在则回退到 text_to_image，再回退到 settings）
@@ -642,7 +729,8 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
                     _generate_single_shot_image, 
                     shot["shot_id"], 
                     creation_id,
-                    shot.get("freeze_record_id")
+                    shot.get("freeze_record_id"),
+                    force_regen_prompt=force_regenerate
                 ): shot
                 for shot in shots_with_freeze_records
             }
@@ -693,8 +781,25 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
             # 生成完成后，状态统一落到 SCENE_GENERATED，若全部失败则标记为 FAILED，避免前端一直显示“生成中”
             if success_count > 0:
                 creation.status = CreationStatus.SCENE_GENERATED
+                # 更新状态为 success
+                from app.services.creation_service import CreationService
+                CreationService.update_creation_step_status(
+                    db=db,
+                    creation_id=creation_id,
+                    step_name="shotImageGeneration",
+                    status="success"
+                )
             else:
                 creation.status = CreationStatus.FAILED
+                # 更新状态为 failed
+                from app.services.creation_service import CreationService
+                CreationService.update_creation_step_status(
+                    db=db,
+                    creation_id=creation_id,
+                    step_name="shotImageGeneration",
+                    status="failed",
+                    error="所有分镜生成失败"
+                )
             creation.current_task_id = None
             db.commit()
 
@@ -769,6 +874,17 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
             if creation:
                 creation.current_task_id = None
+                
+                # 更新状态为 failed
+                from app.services.creation_service import CreationService
+                CreationService.update_creation_step_status(
+                    db=db,
+                    creation_id=creation_id,
+                    step_name="shotImageGeneration",
+                    status="failed",
+                    error=error_msg
+                )
+                
                 db.commit()
         except Exception as cleanup_error:
             logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
@@ -785,6 +901,15 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
                 "exc_type": f"{exc_module}.{exc_type}",
                 "exc_message": error_msg,
             }
+        )
+        # 更新任务状态：失败
+        from app.services.creation_service import CreationService
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation_id,
+            step_name="shotImageGeneration",
+            status="failed",
+            error=str(e)
         )
         raise BaseServiceException(message=error_msg)
     finally:
@@ -822,6 +947,16 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
         creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
         if not creation:
             raise NotFoundError(detail=f"创作不存在: creation_id={creation_id}")
+        
+        # 更新任务状态：开始处理
+        from app.services.creation_service import CreationService
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation_id,
+            step_name="shotImageGeneration",
+            status="processing",
+            task_id=self.request.id
+        )
         
         # 查询所有分镜信息
         shots = db.query(Shot).filter(Shot.shot_id.in_(shot_ids)).all()
@@ -1004,6 +1139,24 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
             f"成功={success_count}, 失败={failed_count}, total_sec={total_sec}s"
         )
         
+        # 更新任务状态：成功/失败
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation_id,
+            step_name="shotImageGeneration",
+            status="success" if success_count > 0 else "failed",
+            error=f"生成失败: {failed_count}/{total_count}" if success_count == 0 else None
+        )
+        
+        # 清除当前任务ID
+        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        if creation:
+            creation.current_task_id = None
+            # 如果成功生成了分镜，且当前状态是 CHARACTER_GENERATED，则更新状态
+            if success_count > 0 and creation.status == CreationStatus.CHARACTER_GENERATED:
+                creation.status = CreationStatus.SCENE_GENERATED
+            db.commit()
+        
         return {
             "success": failed_count == 0,
             "task_type": TaskType.BATCH_SHOT_IMAGE_GENERATION,
@@ -1020,6 +1173,17 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
             if creation:
                 creation.current_task_id = None
+                
+                # 更新状态为 failed
+                from app.services.creation_service import CreationService
+                CreationService.update_creation_step_status(
+                    db=db,
+                    creation_id=creation_id,
+                    step_name="shotImageGeneration",
+                    status="failed",
+                    error=str(e)
+                )
+                
                 db.commit()
         except Exception as cleanup_error:
             logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
@@ -1048,6 +1212,17 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
             if creation:
                 creation.current_task_id = None
+                
+                # 更新状态为 failed
+                from app.services.creation_service import CreationService
+                CreationService.update_creation_step_status(
+                    db=db,
+                    creation_id=creation_id,
+                    step_name="shotImageGeneration",
+                    status="failed",
+                    error=str(e)
+                )
+                
                 db.commit()
         except Exception as cleanup_error:
             logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))

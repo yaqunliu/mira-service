@@ -18,6 +18,7 @@ class Novel(Base):
     author = Column(String(100))
     chapter_count = Column(Integer, default=0)
     status = Column(String(20), default="uploaded")  # uploaded, processing, completed
+    type = Column(String(20), default="novel", nullable=False) # novel: 小说项目, script: 剧本/文案项目
     task_id = Column(String(100), nullable=True, index=True)  # Celery任务ID，用于关联任务状态查询
     
     # 外键
@@ -41,7 +42,12 @@ class Novel(Base):
         primaryjoin="and_(Novel.novel_id == Creation.novel_id, Creation.deleted_at.is_(None))"
     )
     characters = relationship(
-        "Character", 
+        "Character",
         back_populates="novel",
         primaryjoin="and_(Novel.novel_id == Character.novel_id, Character.deleted_at.is_(None))"
+    )
+    scenes = relationship(
+        "Scene",
+        back_populates="novel",
+        primaryjoin="and_(Novel.novel_id == Scene.novel_id, Scene.deleted_at.is_(None))"
     )

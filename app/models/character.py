@@ -1,5 +1,5 @@
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB
 from sqlalchemy.sql import func, text as sa_text
 from sqlalchemy.orm import relationship
 import uuid
@@ -15,7 +15,8 @@ class Character(Base):
                   default=lambda: str(uuid.uuid4()), 
                   server_default=sa_text('gen_random_uuid()'))
     name = Column(String(100), nullable=False, index=True)
-    status = Column(String(20), default="new")  # new, generated, confirmed
+    status = Column(String(20), default="pending")  # pending, generating, completed, failed
+    status_detail = Column(JSONB, nullable=True)  # 详细状态信息
     basic_info = Column(String(500))  # 基本信息描述
     
     # 特征描述 (JSON格式存储)
@@ -24,6 +25,7 @@ class Character(Base):
     hair = Column(Text)  # 发型描述
     clothing = Column(Text)  # 服装描述
     tags = Column(ARRAY(String))  # 标签 (字符串数组)
+    voice_description = Column(String(500))  # 声音描述
     
     # 图片相关
     image_prompt = Column(Text)  # 图片生成提示词

@@ -18,25 +18,26 @@ def success_response(
 ) -> Dict[str, Any]:
     """
     成功响应格式
-    
+
     Args:
         data: 业务数据
         message: 返回信息（可选）
         code: 状态码（可选，默认200）
-        
+
     Returns:
         统一格式的响应字典
     """
     response: Dict[str, Any] = {
+        "success": True,
         "data": data
     }
-    
+
     if message is not None:
         response["message"] = message
-    
+
     if code is not None:
         response["code"] = code
-    
+
     return response
 
 

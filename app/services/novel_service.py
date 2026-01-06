@@ -1,8 +1,9 @@
 import os
 import time
+import uuid
 from typing import List, Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import desc, asc
+from sqlalchemy import desc, asc, func
 from fastapi import UploadFile
 from app.models.novel import Novel
 from app.models.chapter import Chapter
@@ -15,8 +16,10 @@ from app.core.exceptions import (
     NotFoundError,
     PermissionError
 )
-from app.schemas.novel import NovelUpdate
-from app.schemas.chapter import ChapterUpdate
+from app.models.user import User
+from app.utils.upload_helper import upload_helper
+from app.schemas.novel import NovelUpdate, NovelCreate
+from app.schemas.chapter import ChapterUpdate, ChapterCreate
 
 # 文件大小限制：50MB
 MAX_NOVEL_FILE_SIZE = 50 * 1024 * 1024
@@ -114,7 +117,104 @@ class NovelService:
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
             logger.error(f"上传小说任务失败: {str(e)}")
-            raise DatabaseError(detail="上传小说任务失败")
+    @staticmethod
+    def create_project_service(
+        db: Session,
+        novel_in: NovelCreate,
+        user_id: int
+    ) -> Novel:
+        """
+        创建项目（generic project creation）
+        """
+        # Create DB record
+        new_project = Novel(
+            title=novel_in.title,
+            author=novel_in.author or "Unknown",
+            status="created",
+            type=novel_in.type,
+            chapter_count=0,
+            owner_id=user_id
+        )
+        try:
+            db.add(new_project)
+            db.commit()
+            db.refresh(new_project)
+            return new_project
+        except Exception as e:
+            logger.error(f"创建项目DB记录失败: {e}")
+            db.rollback()
+            raise DatabaseError(detail=f"创建项目失败: {e}")
+            
+    @staticmethod
+    def create_chapter_service(
+        db: Session,
+        novel_id: int,
+        chapter_in: ChapterCreate,
+        user_id: int
+    ) -> Chapter:
+        """
+        创建章节（generic chapter creation）
+        """
+        
+        # Get user for UUID
+        user = db.query(User).filter(User.user_id == user_id).first()
+        if not user:
+             raise DatabaseError(detail="User not found")
+             
+        # Upload content to US3
+        filename = f"chapter_{uuid.uuid4()}.txt"
+        
+        try:
+            # Encode content to bytes
+            content_bytes = chapter_in.content.encode('utf-8')
+            
+            upload_result = upload_helper.upload_file_stream(
+                file_data=content_bytes,
+                user_uuid=user.uuid,
+                file_type="chapters",
+                filename=filename
+            )
+            
+            if not upload_result.get('success'):
+                raise DatabaseError(detail=f"Upload to US3 failed: {upload_result.get('message')}")
+                
+            content_url = upload_result.get('external_url')
+            
+        except Exception as e:
+            logger.error(f"Failed to upload chapter to US3: {e}")
+            raise DatabaseError(detail=f"Failed to upload content: {e}")
+
+        # Auto-generate chapter_number if not provided
+        if chapter_in.chapter_number is None:
+            max_chapter_number = db.query(func.max(Chapter.chapter_number))\
+                .filter(Chapter.novel_id == novel_id, Chapter.deleted_at.is_(None))\
+                .scalar()
+            chapter_in.chapter_number = (max_chapter_number or 0) + 1
+
+        # Create DB record
+        new_chapter = Chapter(
+            title=chapter_in.title,
+            chapter_number=chapter_in.chapter_number,
+            word_count=len(chapter_in.content),
+            preview=chapter_in.content[:100],
+            content_url=content_url, 
+            novel_id=novel_id
+        )
+         
+        try:
+            db.add(new_chapter)
+            
+            # Update novel chapter count
+            novel = db.query(Novel).get(novel_id)
+            novel.chapter_count += 1
+            
+            db.commit()
+            db.refresh(new_chapter)
+            return new_chapter
+        except Exception as e:
+            logger.error(f"创建章节DB记录失败: {e}")
+            db.rollback()
+            raise DatabaseError(detail=f"创建章节失败: {e}")
     
     @staticmethod
     def get_novels_service(
@@ -126,6 +226,7 @@ class NovelService:
         owner_id: Optional[int] = None,
         search: Optional[str] = None,
         title_filter: Optional[str] = None,
+        type_filter: Optional[str] = None,
         order_by: str = "created_at",
         order: str = "desc"
     ) -> Tuple[List[Novel], int]:
@@ -183,6 +284,10 @@ class NovelService:
             if title_filter:
                 title_pattern = f"%{title_filter}%"
                 query = query.filter(Novel.title.like(title_pattern))
+            
+            # 按类型筛选
+            if type_filter:
+                query = query.filter(Novel.type == type_filter)
             
             # 排序
             order_column = None
@@ -366,7 +471,9 @@ class NovelService:
             
             # 分页
             skip = (page - 1) * page_size
-            chapters = query.offset(skip).limit(page_size).all()
+            chapters = query.options(
+                selectinload(Chapter.creation)
+            ).offset(skip).limit(page_size).all()
             
             logger.info(f"查询章节列表: novel_id={novel_id}, 页码={page}, 每页={page_size}, 总数={total}, 返回={len(chapters)}")
             

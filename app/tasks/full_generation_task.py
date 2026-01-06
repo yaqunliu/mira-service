@@ -517,6 +517,18 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
         
         creation.voice_id = voice_id
         creation.voice_speed = voice_speed
+        
+        # 更新步骤状态：处理中
+        from app.services.creation_service import CreationService
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation_id,
+            step_name="videoGeneration",
+            status="processing",
+            task_id=self.request.id,
+            commit=False
+        )
+        
         db.commit()
         
         # 检查是否已生成音频和字幕，如果已存在且不强制重新生成，则跳过音频生成阶段
@@ -898,6 +910,17 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
         creation.video_url = video_url
         creation.status = CreationStatus.COMPLETED
         creation.current_task_id = None
+        
+        # 更新步骤状态：成功
+        from app.services.creation_service import CreationService
+        CreationService.update_creation_step_status(
+            db=db,
+            creation_id=creation_id,
+            step_name="videoGeneration",
+            status="success",
+            commit=False
+        )
+        
         db.commit()
         
         logger.info(f"创作 {creation_id} 视频生成完成: {video_url}")
@@ -918,6 +941,18 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
             if creation:
                 creation.current_task_id = None
+                
+                # 更新步骤状态：失败
+                from app.services.creation_service import CreationService
+                CreationService.update_creation_step_status(
+                    db=db,
+                    creation_id=creation_id,
+                    step_name="videoGeneration",
+                    status="failed",
+                    error=str(e),
+                    commit=False
+                )
+                
                 db.commit()
         except Exception as cleanup_error:
             logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
@@ -948,6 +983,18 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
             creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
             if creation:
                 creation.current_task_id = None
+                
+                # 更新步骤状态：失败
+                from app.services.creation_service import CreationService
+                CreationService.update_creation_step_status(
+                    db=db,
+                    creation_id=creation_id,
+                    step_name="videoGeneration",
+                    status="failed",
+                    error=error_msg,
+                    commit=False
+                )
+                
                 db.commit()
         except Exception as cleanup_error:
             logger.opt(exception=True).error("清理 current_task_id 失败: {}", str(cleanup_error))
