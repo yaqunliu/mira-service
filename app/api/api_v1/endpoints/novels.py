@@ -113,7 +113,7 @@ async def create_project(
         logger.error(f"创建项目失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/", response_model=dict)
+@router.get("", response_model=dict)
 async def get_novels(
     page: int = Query(1, ge=1, description="页码，从1开始"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量，最大100"),
