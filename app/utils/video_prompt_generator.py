@@ -49,11 +49,7 @@ def generate_video_prompt(
 }
 """
 
-    # 构建用户提示词
-    narration_text = shot.narration if isinstance(shot.narration, str) else ""
-    dialogue_text = shot.dialogue if shot.dialogue else ""
-
-    # 格式化台词
+    # 格式化台词/旁白（从参数 dialogues 获取，已在调用方解析好）
     dialogues_str = ""
     if dialogues:
         dialogues_str = "\n".join([f"- {list(d.keys())[0]}: {list(d.values())[0]}" for d in dialogues])
@@ -86,8 +82,6 @@ def generate_video_prompt(
 
 分镜信息：
 - 画面描述：{script}
-- 旁白：{narration_text}
-- 台词：{dialogue_text}
 - 镜头类型：{shot.shot_type or '未指定'}
 - 运镜方式：{shot.camera_movement or '未指定'}
 
