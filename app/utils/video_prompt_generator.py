@@ -5,7 +5,7 @@
 import json
 from typing import List, Dict
 from app.core.logger import logger
-from app.services.llm_service import LLMService
+from app.utils.ai_client import AIClient
 
 
 def generate_video_prompt(
@@ -103,15 +103,31 @@ def generate_video_prompt(
 
     # 调用 LLM
     try:
-        llm_service = LLMService(model_name=llm_model or 'gpt-4')
-        response = llm_service.generate(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            response_format="json"
+        ai_client = AIClient(llm_model_name=llm_model)
+
+        # 构建消息
+        messages = [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": user_prompt
+            }
+        ]
+
+        # 调用 AI
+        response = ai_client.chat_completion(
+            messages=messages,
+            model=llm_model,
+            response_format={"type": "json_object"}
         )
 
+        ai_content = response.get("content", "")
+
         # 解析响应
-        result = json.loads(response)
+        result = json.loads(ai_content)
         video_prompt = result.get("video_prompt", "")
 
         logger.info(f"Generated video prompt: {video_prompt}")
@@ -123,7 +139,8 @@ def generate_video_prompt(
     except json.JSONDecodeError as e:
         # 如果LLM没有返回正确的JSON，直接使用响应文本
         logger.warning(f"LLM response is not valid JSON, using raw text: {e}")
-        return response.strip()
+        ai_content = response.get("content", "") if 'response' in locals() else ""
+        return ai_content.strip() if ai_content else f"{shot.camera_movement or '平稳移动'}，{script[:50]}"
     except Exception as e:
         logger.error(f"Error calling LLM for video prompt generation: {str(e)}")
         # 降级策略：使用简单的提示词
