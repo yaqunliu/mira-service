@@ -82,10 +82,7 @@ def generate_video_prompt(
 
 分镜信息：
 - 画面描述：{script}
-- 镜头类型：{shot.shot_type or '未指定'}
-- 运镜方式：{shot.camera_movement or '未指定'}
-
-场景氛围：{scene_atmosphere}
+- 场景氛围：{scene_atmosphere}
 
 角色信息：
 {characters_str if characters_str else '无'}
@@ -134,10 +131,11 @@ def generate_video_prompt(
         # 如果LLM没有返回正确的JSON，直接使用响应文本
         logger.warning(f"LLM response is not valid JSON, using raw text: {e}")
         ai_content = response.get("content", "") if 'response' in locals() else ""
-        return ai_content.strip() if ai_content else f"{shot.camera_movement or '平稳移动'}，{script[:50]}"
+        # 降级：使用简单的提示词
+        return ai_content.strip() if ai_content else f"平稳移动，{script[:50]}"
     except Exception as e:
         logger.error(f"Error calling LLM for video prompt generation: {str(e)}")
         # 降级策略：使用简单的提示词
-        fallback_prompt = f"{shot.camera_movement or '平稳移动'}，{script[:50]}"
+        fallback_prompt = f"平稳移动，{script[:50]}"
         logger.warning(f"Using fallback prompt: {fallback_prompt}")
         return fallback_prompt
