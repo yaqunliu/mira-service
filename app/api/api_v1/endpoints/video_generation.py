@@ -4,7 +4,9 @@ from app.db.session import SessionLocal
 from app.models.user import User
 from app.api import deps
 from app.core.celery_app import celery_app
-from app.video_generation_flow.video_generation_pipeline import VideoGenerationPipeline
+from app.core.logger import logger
+# 已废弃：video_generation_flow 目录已删除
+# from app.video_generation_flow.video_generation_pipeline import VideoGenerationPipeline
 import uuid
 from pathlib import Path
 from app.core.config import settings
@@ -173,11 +175,10 @@ def get_video_generation_status(task_id: str):
 
 @celery_app.task
 def generate_video_v2_task(input_path: str, output_path: str, task_id: str, status_path: str = None):
-    pipeline = VideoGenerationPipeline()
-    try:
-        pipeline.process_full_pipeline(input_path, output_path, status_path)
-    except Exception as e:
-        # Write error to output file or a status file
-        error_result = {"error": str(e), "status": "failed"}
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(error_result, f)
+    # 已废弃：此 V2 API 端点已不再使用
+    # VideoGenerationPipeline 已被删除
+    # 请使用新的步骤化 API（step1-step8）
+    logger.warning("generate_video_v2_task is deprecated and no longer supported")
+    error_result = {"error": "此 API 端点已废弃，请使用新的步骤化 API", "status": "failed"}
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(error_result, f)

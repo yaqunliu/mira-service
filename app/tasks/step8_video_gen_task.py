@@ -415,15 +415,11 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
             text_to_image_model = extra_data.get('text_to_image_model')
             image_to_image_model = extra_data.get('image_to_image_model')
 
-            # 生成video_prompt
-            from app.video_generation_flow.video_generation_pipeline import VideoGenerationPipeline
-            pipeline = VideoGenerationPipeline(
-                llm_model_name=llm_model,
-                text_to_image_model=text_to_image_model,
-                image_to_image_model=image_to_image_model
-            )
-            video_prompt = pipeline.generate_video_prompt(
-                image_prompt=image_prompt,
+            # 生成video_prompt - 使用独立的提示词生成函数
+            from app.utils.video_prompt_generator import generate_video_prompt
+            video_prompt = generate_video_prompt(
+                llm_model=llm_model,
+                shot=shot,
                 script=script,
                 dialogues=dialogues,
                 characters=characters

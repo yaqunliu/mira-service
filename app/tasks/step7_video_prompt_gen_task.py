@@ -7,8 +7,8 @@ from app.core.logger import logger
 from app.db.session import SessionLocal
 from app.models.creation import Creation
 from app.models.shot import Shot
-from app.video_generation_flow.video_generation_pipeline import VideoGenerationPipeline
 from app.services.points_service import PointsService
+from app.utils.video_prompt_generator import generate_video_prompt as generate_video_prompt_util
 import traceback
 
 
@@ -141,18 +141,12 @@ def generate_video_prompt_task(
 
         # 从creation获取模型配置
         extra_data = creation.extra_data or {} if creation else {}
-        llm_model = extra_data.get('llm_model')
-        text_to_image_model = extra_data.get('text_to_image_model')
-        image_to_image_model = extra_data.get('image_to_image_model')
+        llm_model = extra_data.get('llm_model', 'gpt-4')
 
-        # 调用视频提示词生成
-        pipeline = VideoGenerationPipeline(
-            llm_model_name=llm_model,
-            text_to_image_model=text_to_image_model,
-            image_to_image_model=image_to_image_model
-        )
-        video_prompt = pipeline.generate_video_prompt(
-            image_prompt=image_prompt,
+        # 生成视频提示词 - 使用独立的工具函数
+        video_prompt = generate_video_prompt_util(
+            llm_model=llm_model,
+            shot=shot,
             script=script,
             dialogues=dialogues,
             characters=characters
