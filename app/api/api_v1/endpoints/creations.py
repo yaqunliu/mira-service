@@ -135,7 +135,7 @@ async def create_creation_service(
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
-@router.get("/")
+@router.get("")
 async def get_creations_service(
     page: int = Query(1, ge=1, description="页码，从1开始"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量，最大100"),
