@@ -288,20 +288,24 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
         shot.status_detail['video_status'] = 'generating'
         shot.status_detail['video_updated_at'] = datetime.utcnow().isoformat()
         shot.video_status = 'generating'
+        flag_modified(shot, 'status_detail')
         db.commit()
 
         ai_client = AIClient()
         us3_client = US3Client()
 
-        # 检查是否有 video_prompt，如果没有则先生成
+        # 检查是否有 video_prompt，如果没有或太简单（降级提示词）则重新生成
         video_prompt = (shot.extra_data or {}).get("video_prompt")
-        if not video_prompt:
+        is_fallback_prompt = video_prompt and video_prompt.startswith("平稳移动，")
+
+        if not video_prompt or is_fallback_prompt:
             logger.info(f"No video_prompt found for shot {shot.shot_id}, generating now...")
 
             # 更新extra_data状态：生成提示词中
             if not shot.extra_data:
                 shot.extra_data = {}
             shot.extra_data['video_prompt_status'] = 'generating'
+            flag_modified(shot, 'extra_data')
             db.commit()
 
             # 准备输入数据
@@ -428,6 +432,7 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
             # 存储到shot.extra_data
             shot.extra_data['video_prompt'] = video_prompt
             shot.extra_data['video_prompt_status'] = 'completed'
+            flag_modified(shot, 'extra_data')
             db.commit()
             logger.info(f"Generated video prompt for shot {shot.shot_id}: {video_prompt[:100]}...")
 
@@ -512,11 +517,13 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
             # 更新 status_detail：视频生成成功
             shot.status_detail['video_status'] = 'completed'
             shot.status_detail['video_updated_at'] = datetime.utcnow().isoformat()
+            flag_modified(shot, 'status_detail')
 
             # 更新extra_data状态：视频生成成功
             if not shot.extra_data:
                 shot.extra_data = {}
             shot.extra_data['video_generation_status'] = 'completed'
+            flag_modified(shot, 'extra_data')
 
         except Exception as e:
             # 清理临时文件
@@ -574,14 +581,18 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
                 shot.status_detail['video_status'] = 'failed'
                 shot.status_detail['video_updated_at'] = datetime.utcnow().isoformat()
                 shot.status_detail['video_error'] = str(e)
+                flag_modified(shot, 'status_detail')
 
                 # 更新extra_data状态
                 if not shot.extra_data:
                     shot.extra_data = {}
                 shot.extra_data['video_generation_status'] = 'failed'
+                flag_modified(shot, 'extra_data')
+
                 db.commit()
-        except:
-            pass
+                logger.info(f"Shot {shot_id} video_status 和 status_detail 已更新为 failed")
+        except Exception as update_error:
+            logger.error(f"Failed to update shot status to failed: {str(update_error)}")
         raise e
     finally:
         db.close()
