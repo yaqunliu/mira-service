@@ -26,7 +26,10 @@ async def get_creation_characters(creation_uuid: str, db: Session = Depends(get_
         raise HTTPException(status_code=403, detail="无权限访问该创作项目")
     
     # 获取角色列表
-    characters = db.query(Character).filter(Character.creation_id == creation.creation_id).all()
+    characters = db.query(Character).filter(
+        Character.creation_id == creation.creation_id,
+        Character.deleted_at.is_(None)
+    ).order_by(Character.character_id.asc()).all()
     
     return success_response(
         data=[CharacterSchema.model_validate(char).model_dump() for char in characters],

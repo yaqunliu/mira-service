@@ -879,6 +879,37 @@ class AIClient:
         Returns:
             生成的图片URL
         """
+        # 检查是否为 Nano Banana2 模型 (Gemini)
+        if model == "gemini-3-pro-image-preview":
+            logger.info(f"使用 Nano Banana2 (Gemini) API 进行文生图")
+            
+            # 统一使用 2K
+            image_size = "2K"
+            
+            # 转换 aspectRatio 为 16:9 格式（Gemini 需要这种格式）
+            aspect_ratio = aspectRatio
+            if "x" in aspectRatio:
+                # 如果是 1024x576 这种格式，转换为 16:9
+                w, h = aspectRatio.split("x")
+                if int(w) > int(h):
+                    aspect_ratio = "16:9"
+                elif int(w) < int(h):
+                    aspect_ratio = "9:16"
+                else:
+                    aspect_ratio = "1:1"
+            
+            # 调用 Gemini API
+            image_base64 = self._call_gemini_image_api(
+                prompt=prompt,
+                reference_images_base64=[], # 文生图没有参考图
+                aspect_ratio=aspect_ratio,
+                image_size=image_size
+            )
+            
+            # 将 Base64 图片转换为临时文件并返回 URL
+            temp_url = self._save_base64_image_to_temp_url(image_base64)
+            return temp_url
+
         # 检查是否使用火山云AI模型
         if model == self.ark_image_model:
             return self._ark_generate_image(prompt, aspectRatio)
@@ -1527,13 +1558,8 @@ class AIClient:
             # 使用 Gemini API
             logger.info(f"使用 Nano Banana2 (Gemini) API 进行图生图")
             
-            # 从模型配置中获取 image_size（默认 2K）
-            try:
-                model_config = ModelConfigService.get_model_config(model, "image_to_image")
-                image_size = model_config.get("image_size", "2K") if model_config else "2K"
-            except Exception as e:
-                logger.warning(f"获取模型配置失败，使用默认 image_size: {e}")
-                image_size = "2K"
+            # 强制使用 2K
+            image_size = "2K"
             
             # 下载参考图片并转换为 Base64
             reference_images_base64 = []

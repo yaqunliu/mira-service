@@ -22,6 +22,14 @@ import uuid
 import os
 import time
 
+# 固定规范提示词文案
+CHARACTER_NORM_PROMPT = (
+    "横版构图，四视图布局(面部正面大特写、正面全身、侧面全身、背面全身)，日本动漫风格，纯白色背景，无文字水印。 "
+    "Composition: Horizontal landscape layout containing four independent parts: one large facial close-up, one full body front view, one full body side view, and one full body back view. "
+    "Background: Pure white background, clean and minimal. "
+    "Quality: 8k resolution, highly detailed, masterwork, no text, no letters, no words, no watermarks."
+)
+
 
 def _generate_single_character_image(character_id: int, visual_style: str, force_regenerate: bool = True, task_id: str = None) -> dict:
     """
@@ -66,31 +74,70 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
                 "image_url": character.image_url
             }
         
-        # 生成提示词
-        system_prompt = read_prompt_file("character.md")
-        image_prompt = (
-            f"{system_prompt}\n"
-            # f"视觉风格：{visual_style}，"
-            f"基本信息：{character.basic_info}，"
-            f"外貌特征：{character.appearance}，"
-            f"身材特征：{character.body}，"
-            f"发型：{character.hair}，"
-            f"服装：{character.clothing}，"
-            f"特征标签：{character.tags}。"
-        )
-        # logger.info(f"{character.name}生成图片提示词: {image_prompt}")
-        
         # 从创作配置中获取模型配置
         creation = character.creation
         extra_data = creation.extra_data or {} if creation else {}
         text_to_image_model = extra_data.get("text_to_image_model")
+        llm_model = extra_data.get("llm_model") or settings.LLM_MODEL_NAME
+
+        # 1. 使用 LLM 生成角色特定的提示词描述
+        ai_client = AIClient(llm_model_name=llm_model, text_to_image_model=text_to_image_model)
         
-        # 调用生图API（使用配置的模型，aspect_ratio 会从模型配置中自动获取）
-        ai_client = AIClient(text_to_image_model=text_to_image_model)
+        # 准备角色特征数据
+        character_features = (
+            f"角色姓名：{character.name}\n"
+            f"基础信息：{character.basic_info}\n"
+            f"容貌特征：{character.appearance}\n"
+            f"身材特征：{character.body}\n"
+            f"发型发色：{character.hair}\n"
+            f"服装配饰：{character.clothing}\n"
+            f"特征标签：{', '.join(character.tags) if character.tags and isinstance(character.tags, list) else character.tags}"
+        )
+
+        # 加载模板并替换变量
+        system_prompt_template = read_prompt_file("character.md")
+        system_prompt = system_prompt_template.replace("{{CHARACTER_FEATURES}}", character_features)
+        
+        # 准备用户消息
+        user_content = f"请根据上述特征，为角色 {character.name} 生成生图提示词。"
+        
+        try:
+            prompt_start = time.perf_counter()
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ]
+            
+            # 调用 LLM 生成描述部分
+            llm_res = ai_client.chat_completion(messages=messages, model=llm_model)
+            llm_output = llm_res.get("content", "").strip()
+            
+            # 提取 <提示词> 标签内的内容
+            import re
+            match = re.search(r"<提示词>(.*?)</提示词>", llm_output, re.DOTALL)
+            if match:
+                character_description = match.group(1).strip()
+            else:
+                character_description = llm_output
+                
+            timings["llm_prompt_sec"] = round(time.perf_counter() - prompt_start, 3)
+            logger.info(f"LLM 生成的角色描述: {character_description[:100]}...")
+            
+        except Exception as e:
+            logger.error(f"LLM 生成角色提示词失败，降级使用拼接方式: {str(e)}")
+            character_description = f"{character.name}, {character.appearance}, {character.clothing}"
+            timings["llm_prompt_sec"] = 0
+
+        # 2. 组合最终提示词：固定规范文案 + LLM 生成的角色描述
+        image_prompt = f"{CHARACTER_NORM_PROMPT} {character_description}"
+        logger.info(f"角色 {character.name}(ID: {character_id}) 最终生图提示词: {image_prompt}")
+        
+        # 调用生图API（明确设置横版 16:9 比例）
         image_start = time.perf_counter()
         temp_image_url = ai_client.generate_image_by_prompt(
             prompt=image_prompt,
-            model=text_to_image_model
+            model=text_to_image_model,
+            aspectRatio="1024x576"
         )
         timings["image_api_sec"] = round(time.perf_counter() - image_start, 3)
         

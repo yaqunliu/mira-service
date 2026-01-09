@@ -134,7 +134,7 @@ class ModelConfigFactory:
             model_type="image_to_image",
             display_name="Nano Banana2 (图生图)",
             description="Gemini 3 Pro Image (Nano Banana2) 图生图模型，支持中文提示词",
-            config={"aspect_ratio": "16:9", "image_size": "1K", "languages": ["zh"], "max_words": 300},
+            config={"aspect_ratio": "16:9", "image_size": "2K", "languages": ["zh"], "max_words": 300},
             is_enabled=True,
             is_default=True,
             sort_order=1,

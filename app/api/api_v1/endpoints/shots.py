@@ -233,6 +233,8 @@ async def update_shot(
         shot.image_prompt = shot_update.image_prompt
     if shot_update.image_url is not None:
         shot.image_url = shot_update.image_url
+    if shot_update.video_duration is not None:
+        shot.video_duration = shot_update.video_duration
     
     # 更新关联场景
     if shot_update.scene_id is not None:
