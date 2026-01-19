@@ -71,7 +71,7 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
         
         # 获取作品配置的模型
         creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
-        video_model = (creation.extra_data or {}).get('video_model', 'sora2')
+        video_model = (creation.extra_data or {}).get('video_model', 'doubao-seedance-1-5-pro-251215')
         
         generated_count = 0
         import uuid
@@ -595,7 +595,7 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
         elif video_model in ["viduq2-pro", "viduq2-turbo"]:
             # Vidu 支持 1-10秒
             video_duration = min(max(int(shot_duration), 1), 10)
-        elif video_model == "doubao-seedance-1-5-pro-251215":
+        elif "doubao" in video_model:
             # 火山 Seedance 1.5 Pro 支持 4-12 秒
             video_duration = min(max(int(shot_duration), 4), 12)
         else:
@@ -632,7 +632,7 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
                     model=video_model,
                     last_frame_image_url=last_frame_image_url
                 )
-            elif video_model == "doubao-seedance-1-5-pro-251215":
+            elif "doubao" in video_model:
                 # 获取分辨率和比例配置
                 aspect_ratio = (shot.extra_data or {}).get('aspect_ratio', '16:9')
                 resolution = (shot.extra_data or {}).get('video_resolution', '720p').lower()

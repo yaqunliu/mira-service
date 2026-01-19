@@ -1748,8 +1748,21 @@ class AIClient:
         max_retries = 3
         task_id = None
         # 找到图片  image_url 后者 url 为键的 如果是 base64 只显示前100
-        logger.info(f"[{model_name_log}] 准备提交任务，参数: {json.dumps(payload, ensure_ascii=False)}")
+        payload_input = []
+        for item in payload.get("input", {}).get("content", []):
+            if item["type"] == "text":
+                payload_input.append({"type": "text", "text": item["text"]})
+            if item["type"] == "image_url":
+                # 保留最多 150个字符
+                payload_input.append({"type": "image_url", "image_url": item["image_url"][:150]})
+        debug_payload = {
+            "model_name": payload.get("model"),
+            "prompt": payload.get("prompt"),
+            "parameters": payload.get("parameters"),
+            "input": payload_input,
+        }
         
+        logger.info(f"[{model_name_log}] 准备提交任务，参数: {debug_payload}")
         for attempt in range(max_retries):
             try:
                 response = requests.post(submit_url, headers=headers, json=payload, timeout=self.timeout)
