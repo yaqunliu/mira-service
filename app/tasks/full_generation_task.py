@@ -27,6 +27,8 @@ from app.utils.font_utils import ensure_font_exists
 from app.core.logger import logger
 from app.utils.us3 import US3Client
 from app.utils.upload_helper import upload_helper
+from app.utils.ai_client import AIClient
+from app.utils.ffmpeg_utils import FFmpegUtils
 from app.utils.points_deduction import deduct_points_for_video, deduct_points_for_audio
 from app.core.config import settings
 from app.models.user import User
@@ -307,14 +309,17 @@ def _generate_srt(audio_results: List[Dict], creation_id: int, user_uuid: str, t
 
 VIDEO_EFFECTS = [
     # 平移特效：使用基于帧数的线性插值，让移动更平滑
-    # 从左到右：从0平滑移动到 (iw-iw/zoom)，使用 on/duration 进行线性插值
-    {"name": "pan_left_to_right", "filter": "zoompan=z=1.3:d={duration}:x='(iw-iw/zoom)*on/{duration}':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30"},
-    # 从右到左：从 (iw-iw/zoom) 平滑移动到 0
-    {"name": "pan_right_to_left", "filter": "zoompan=z=1.3:d={duration}:x='(iw-iw/zoom)*(1-on/{duration})':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30"},
-    # 从上到下：从0平滑移动到 (ih-ih/zoom)
-    {"name": "pan_top_to_bottom", "filter": "zoompan=z=1.3:d={duration}:x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*on/{duration}':s=1920x1080:fps=30"},
-    # 从下到上：从 (ih-ih/zoom) 平滑移动到 0
-    {"name": "pan_bottom_to_top", "filter": "zoompan=z=1.3:d={duration}:x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*(1-on/{duration})':s=1920x1080:fps=30"},
+    # 先将图片缩放到 4K 级别再进行 zoompan，并以 4K 输出后再高质量降采样到 1080p
+    # 这样可以最大限度保留细节，减少 zoompan 滤镜产生的锯齿和模糊
+    # 使用 lanczos 算法进行高质量缩放
+    # 从左到右
+    {"name": "pan_left_to_right", "filter": "scale=3840:2160:flags=lanczos,zoompan=z=1.2:d={duration}:x='(iw-iw/zoom)*on/{duration}':y='ih/2-(ih/zoom/2)':s=3840x2160:fps=30,scale=1920:1080:flags=lanczos"},
+    # 从右到左
+    {"name": "pan_right_to_left", "filter": "scale=3840:2160:flags=lanczos,zoompan=z=1.2:d={duration}:x='(iw-iw/zoom)*(1-on/{duration})':y='ih/2-(ih/zoom/2)':s=3840x2160:fps=30,scale=1920:1080:flags=lanczos"},
+    # 从上到下
+    {"name": "pan_top_to_bottom", "filter": "scale=3840:2160:flags=lanczos,zoompan=z=1.2:d={duration}:x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*on/{duration}':s=3840x2160:fps=30,scale=1920:1080:flags=lanczos"},
+    # 从下到上
+    {"name": "pan_bottom_to_top", "filter": "scale=3840:2160:flags=lanczos,zoompan=z=1.2:d={duration}:x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*(1-on/{duration})':s=3840x2160:fps=30,scale=1920:1080:flags=lanczos"},
 ]
 
 
@@ -329,11 +334,91 @@ def _download_file(url: str, suffix: str = "") -> str:
         return path
 
 
-def _generate_shot_video(image_path: str, duration_ms: int, output_path: str) -> bool:
-    """从图片生成视频片段（带随机特效）"""
+def _generate_shot_video(image_path: str, duration_ms: int, output_path: str, video_model: str = "sora2", shot_id: int = 0, prompt: str = None, aspect_ratio: str = "16:9", resolution: str = "720p") -> bool:
+    """从图片生成视频片段（支持AI模型或本地FFmpeg特效）"""
     try:
-        effect = random.choice(VIDEO_EFFECTS)
         duration_seconds = duration_ms / 1000.0
+        
+        # 如果是 AI 视频模型
+        if video_model in ["doubao-seedance-1-5-pro-251215", "Wan-AI/Wan2.6-I2V", "viduq2-pro", "viduq2-turbo", "sora2", "openai/sora-2/image-to-video"]:
+            logger.info(f"使用 AI 模型 {video_model} 为分镜 {shot_id} 生成视频")
+            ai_client = AIClient()
+            
+            # 映射时长
+            if video_model == "doubao-seedance-1-5-pro-251215":
+                # 豆包支持 4-12 秒
+                video_duration = min(max(int(duration_seconds), 4), 12)
+            elif video_model == "Wan-AI/Wan2.6-I2V":
+                if duration_seconds <= 5: video_duration = 5
+                elif duration_seconds <= 10: video_duration = 10
+                else: video_duration = 15
+            elif video_model in ["viduq2-pro", "viduq2-turbo"]:
+                video_duration = min(max(int(duration_seconds), 1), 10)
+            elif video_model in ["sora2", "openai/sora-2/image-to-video"]:
+                # Sora 支持 4, 8, 12 秒
+                if duration_seconds <= 4: video_duration = 4
+                elif duration_seconds <= 8: video_duration = 8
+                else: video_duration = 12
+            else:
+                video_duration = 5
+                
+            # 调用 AI 接口
+            video_url = None
+            if video_model == "doubao-seedance-1-5-pro-251215":
+                video_url = ai_client.generate_video_by_image_doubao_modelverse(
+                    image_url=image_path, # 这里的 image_path 实际上是 URL（在 _generate_single_shot_video 中传入）
+                    prompt=prompt,
+                    duration=video_duration,
+                    aspect_ratio=aspect_ratio,
+                    resolution=resolution
+                )
+            elif video_model == "Wan-AI/Wan2.6-I2V":
+                video_url = ai_client.generate_video_by_image_wan_ai(
+                    image_url=image_path,
+                    prompt=prompt,
+                    duration=video_duration
+                )
+            elif video_model in ["viduq2-pro", "viduq2-turbo"]:
+                video_url = ai_client.generate_video_by_image_vidu(
+                    image_url=image_path,
+                    prompt=prompt,
+                    duration=video_duration,
+                    model=video_model
+                )
+            elif video_model in ["sora2", "openai/sora-2/image-to-video"]:
+                video_url = ai_client.generate_video_by_image_sora2(
+                    image_url=image_path,
+                    prompt=prompt,
+                    duration=video_duration
+                )
+            
+            if video_url:
+                # 下载生成的视频到临时路径
+                fd, temp_v = tempfile.mkstemp(suffix=".mp4")
+                os.close(fd)
+                with httpx.stream("GET", video_url) as response:
+                    if response.status_code == 200:
+                        with open(temp_v, 'wb') as f:
+                            for chunk in response.iter_bytes():
+                                f.write(chunk)
+                        
+                        # 强制调整视频时长、分辨率和帧率，确保音画同步及拼接兼容性
+                        # 使用 FFmpegUtils.normalize_video 进行高质量标准化处理
+                        if FFmpegUtils.normalize_video(temp_v, output_path, duration=duration_seconds):
+                            if os.path.exists(temp_v):
+                                os.remove(temp_v)
+                            return True
+                        else:
+                            logger.error(f"AI 视频标准化处理失败: {shot_id}")
+                            if os.path.exists(temp_v):
+                                os.remove(temp_v)
+                            return False
+            
+            logger.warning(f"AI 视频生成失败或返回为空，降级到 FFmpeg 特效")
+            # 如果 AI 生成失败，降级到 FFmpeg 特效（此时 image_path 必须是本地路径）
+
+        # FFmpeg 特效生成
+        effect = random.choice(VIDEO_EFFECTS)
         # 计算总帧数，确保特效持续整个视频时长
         # fps=30，所以总帧数 = 时长(秒) * 30
         duration_frames = int(round(duration_seconds * 30))
@@ -345,7 +430,8 @@ def _generate_shot_video(image_path: str, duration_ms: int, output_path: str) ->
         cmd = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path,
             "-vf", filter_str, "-t", str(duration_seconds),
-            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-an",
             output_path
         ]
         
@@ -359,20 +445,26 @@ def _generate_shot_video(image_path: str, duration_ms: int, output_path: str) ->
         return False
 
 
-def _generate_single_shot_video(shot_id: int, image_url: str, duration_ms: int, shot_number: int, scene_id: int = 0) -> dict:
+def _generate_single_shot_video(shot_id: int, image_url: str, duration_ms: int, shot_number: int, scene_id: int = 0, video_model: str = "sora2", prompt: str = None, aspect_ratio: str = "16:9", resolution: str = "720p") -> dict:
     """生成单个分镜的视频片段"""
     image_path = None
     video_path = None
     try:
-        # 下载图片
-        image_path = _download_file(image_url, suffix=".png")
+        # 如果是 AI 模型，直接传 image_url
+        ai_models = ["doubao-seedance-1-5-pro-251215", "Wan-AI/Wan2.6-I2V", "viduq2-pro", "viduq2-turbo", "sora2", "openai/sora-2/image-to-video"]
+        input_image = image_url if video_model in ai_models else None
+        
+        if not input_image:
+            # 下载图片供 FFmpeg 使用
+            image_path = _download_file(image_url, suffix=".png")
+            input_image = image_path
         
         # 创建临时视频文件
         fd, video_path = tempfile.mkstemp(suffix=".mp4")
         os.close(fd)
         
         # 生成视频
-        if _generate_shot_video(image_path, duration_ms, video_path):
+        if _generate_shot_video(input_image, duration_ms, video_path, video_model, shot_id, prompt, aspect_ratio, resolution):
             return {
                 "shot_id": shot_id,
                 "shot_number": shot_number,
@@ -381,6 +473,19 @@ def _generate_single_shot_video(shot_id: int, image_url: str, duration_ms: int, 
                 "video_path": video_path,
             }
         else:
+            # 如果 AI 失败且之前没下载图片，尝试下载并用 FFmpeg 重试
+            if not image_path:
+                image_path = _download_file(image_url, suffix=".png")
+                # 使用 local 模式强制使用 FFmpeg 生成特效视频作为兜底，确保分镜不丢失
+                if _generate_shot_video(image_path, duration_ms, video_path, "local", shot_id):
+                    return {
+                        "shot_id": shot_id,
+                        "shot_number": shot_number,
+                        "scene_id": scene_id,
+                        "success": True,
+                        "video_path": video_path,
+                    }
+
             return {
                 "shot_id": shot_id,
                 "shot_number": shot_number,
@@ -452,8 +557,9 @@ def _merge_video_audio_subtitle(video_path: str, audio_path: str, subtitle_path:
                 "-i", video_path, 
                 "-i", audio_path,
                 "-vf", vf_filter,
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-                "-c:a", "aac", "-b:a", "192k", "-shortest",
+                "-af", "volume=2.0",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
                 output_path
             ]
         else:
@@ -461,7 +567,9 @@ def _merge_video_audio_subtitle(video_path: str, audio_path: str, subtitle_path:
                 "ffmpeg", "-y", 
                 "-i", video_path, 
                 "-i", audio_path,
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-preset", "veryfast", "-shortest",
+                "-af", "volume=2.0",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
                 output_path
             ]
         
@@ -477,7 +585,15 @@ def _merge_video_audio_subtitle(video_path: str, audio_path: str, subtitle_path:
 
 # ============== 主任务 ==============
 
-@celery_app.task(bind=True, name="generate_full_video_task")
+@celery_app.task(
+    bind=True, 
+    name="generate_full_video_task",
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True
+)
 def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed: float = 1.0, force_regenerate: bool = False):
     """
     完整视频生成任务
@@ -558,11 +674,21 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
         for scene in scenes:
             for shot in sorted(scene.shots, key=lambda s: s.shot_number):
                 if shot.narration and shot.image_url:
+                    # 获取视频提示词和比例
+                    video_prompt = (shot.extra_data or {}).get("video_prompt")
+                    if not video_prompt:
+                        video_prompt = shot.narration
+                    aspect_ratio = (shot.extra_data or {}).get("aspect_ratio", "16:9")
+                    video_resolution = (shot.extra_data or {}).get("video_resolution", "720p").lower()
+
                     all_shots.append({
                         "shot_id": shot.shot_id,
                         "shot_number": shot.shot_number,
                         "scene_id": shot.scene_id,
                         "image_url": shot.image_url,
+                        "video_prompt": video_prompt,
+                        "aspect_ratio": aspect_ratio,
+                        "video_resolution": video_resolution,
                     })
         
         total_shots = len(all_shots)
@@ -705,6 +831,10 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
             "status": f"开始生成 {total_shots} 个视频片段"
         })
         
+        # 获取视频模型
+        video_model = (creation.extra_data or {}).get('video_model', 'sora2')
+        logger.info(f"创作 {creation_id} 使用视频模型: {video_model}")
+        
         # 按 (scene_id, shot_number) 排序音频结果
         # 如果跳过了音频生成，从数据库查询分镜的音频时长
         if not audio_results:
@@ -732,7 +862,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
             duration_ms = audio_result["duration_ms"]
             shot_number = audio_result["shot_number"]
             
-            # 找到对应的图片URL
+            # 找到对应的分镜信息
             shot_info = next((s for s in all_shots if s["shot_id"] == shot_id), None)
             if not shot_info:
                 continue
@@ -743,6 +873,9 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
                 "duration_ms": duration_ms,
                 "shot_number": shot_number,
                 "scene_id": audio_result.get("scene_id") or shot_info.get("scene_id"),
+                "video_prompt": shot_info.get("video_prompt"),
+                "aspect_ratio": shot_info.get("aspect_ratio", "16:9"),
+                "video_resolution": shot_info.get("video_resolution", "720p"),
             })
         
         if not video_tasks:
@@ -760,7 +893,11 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
                     task["image_url"],
                     task["duration_ms"],
                     task["shot_number"],
-                    task["scene_id"]
+                    task["scene_id"],
+                    video_model,
+                    task["video_prompt"],
+                    task["aspect_ratio"],
+                    task["video_resolution"]
                 ): task
                 for task in video_tasks
             }

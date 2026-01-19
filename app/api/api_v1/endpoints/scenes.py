@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm.attributes import flag_modified
 from typing import List
 
 from app.api.deps import get_db, get_current_user
@@ -11,7 +12,8 @@ from app.schemas.scene import (
     SceneUpdate, 
     SceneResponse,
     SceneListResponse,
-    SceneWithShotsResponse
+    SceneWithShotsResponse,
+    SceneRegenerateRequest
 )
 from app.utils.response import success_response
 
@@ -75,7 +77,7 @@ async def get_novel_scenes(
 
     return success_response(
         data={
-            "items": [scene.model_dump(by_alias=True) for scene in scene_responses],
+            "items": [scene.model_dump() for scene in scene_responses],
             "total": len(scene_responses)
         },
         message="获取小说场景列表成功"
@@ -116,7 +118,7 @@ async def get_creation_scenes(
     
     return success_response(
         data={
-            "items": [scene.model_dump(by_alias=True) for scene in scene_responses],
+            "items": [scene.model_dump() for scene in scene_responses],
             "total": len(scene_responses)
         },
         message="获取场景列表成功"
@@ -240,7 +242,7 @@ async def create_scene(
     scene_response = SceneResponse.from_db_model(scene)
     
     return success_response(
-        data=scene_response.model_dump(by_alias=True),
+        data=scene_response.model_dump(),
         message="场景创建成功"
     )
 
@@ -276,7 +278,7 @@ async def get_scene(
     scene_response = SceneResponse.from_db_model(scene)
     
     return success_response(
-        data=scene_response.model_dump(by_alias=True),
+        data=scene_response.model_dump(),
         message="获取场景成功"
     )
 
@@ -355,13 +357,20 @@ async def update_scene(
         if setting.atmosphere is not None:
             scene.atmosphere = setting.atmosphere
     
+    if scene_update.image_prompt is not None:
+        # 仅保存到 extra_data 中
+        if scene.extra_data is None:
+            scene.extra_data = {}
+        scene.extra_data["image_prompt"] = scene_update.image_prompt
+        flag_modified(scene, "extra_data")
+    
     db.commit()
     db.refresh(scene)
     
     scene_response = SceneResponse.from_db_model(scene)
     
     return success_response(
-        data=scene_response.model_dump(by_alias=True),
+        data=scene_response.model_dump(),
         message="场景更新成功"
     )
 
@@ -369,6 +378,7 @@ async def update_scene(
 @router.post("/{scene_uuid}/regenerate-image")
 async def regenerate_scene_image(
     scene_uuid: str,
+    request: SceneRegenerateRequest = SceneRegenerateRequest(),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -387,12 +397,24 @@ async def regenerate_scene_image(
     
     # 清空现有图片
     scene.image_url = None
+    if request.image_prompt is not None:
+        if scene.extra_data is None:
+            scene.extra_data = {}
+        # 如果传入了提示词（即使是空字符串），也更新到 extra_data
+        # 空字符串在 Task 中会被视为需要重新生成
+        scene.extra_data["image_prompt"] = request.image_prompt if request.image_prompt else None
+        flag_modified(scene, "extra_data")
+    elif request.refresh_prompt:
+        if scene.extra_data and "image_prompt" in scene.extra_data:
+            scene.extra_data["image_prompt"] = None
+            flag_modified(scene, "extra_data")
     db.commit()
     
     # 启动任务
     task = generate_single_scene_image_task.delay(
         scene_id=scene.scene_id,
-        creation_id=scene.creation_id
+        creation_id=scene.creation_id,
+        model_name=request.model_name
     )
     
     logger.info(f"Scene {scene_uuid} image regeneration started: task_id={task.id}")

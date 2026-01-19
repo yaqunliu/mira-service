@@ -394,6 +394,7 @@ class PointsService:
         creation_id: int = None,
         shot_id: int = None,
         character_id: int = None,
+        scene_id: int = None,
         time_window_hours: int = 1
     ) -> Optional[PointsRecord]:
         """
@@ -406,6 +407,7 @@ class PointsService:
             creation_id: 创作ID
             shot_id: 分镜ID（可选）
             character_id: 角色ID（可选）
+            scene_id: 场景ID（可选）
             time_window_hours: 时间窗口（小时），默认1小时
             
         Returns:
@@ -444,6 +446,17 @@ class PointsService:
                 and_(
                     PointsRecord.extra_data.isnot(None),
                     text("points_records.extra_data->>'character_id'") == str(character_id)
+                )
+            )
+
+        if scene_id:
+            # 通过 extra_data 查询 scene_id
+            # 使用 PostgreSQL 的 JSON 操作符 ->> 来获取文本值
+            # 需要确保 extra_data 不为 None 且包含 scene_id 字段
+            query = query.filter(
+                and_(
+                    PointsRecord.extra_data.isnot(None),
+                    text("points_records.extra_data->>'scene_id'") == str(scene_id)
                 )
             )
         
@@ -506,6 +519,7 @@ class PointsService:
         if check_duplicate:
             shot_id = extra_data.get('shot_id') if extra_data else None
             character_id = extra_data.get('character_id') if extra_data else None
+            scene_id = extra_data.get('scene_id') if extra_data else None
             
             existing_deduction = PointsService.check_deduction_exists(
                 db=db,
@@ -514,6 +528,7 @@ class PointsService:
                 creation_id=creation_id,
                 shot_id=shot_id,
                 character_id=character_id,
+                scene_id=scene_id,
                 time_window_hours=24  # 24小时内不重复扣除
             )
             
@@ -521,7 +536,7 @@ class PointsService:
                 logger.warning(
                     f"检测到重复扣除请求，跳过: user_id={user_id}, "
                     f"operation_type={operation_type}, creation_id={creation_id}, "
-                    f"shot_id={shot_id}, character_id={character_id}"
+                    f"shot_id={shot_id}, character_id={character_id}, scene_id={scene_id}"
                 )
                 return existing_deduction  # 返回已存在的记录，不重复扣除
         

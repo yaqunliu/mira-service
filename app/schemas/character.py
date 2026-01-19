@@ -43,6 +43,7 @@ class CharacterGenerateImagesRequest(BaseModel):
     visual_style: str
     creation_uuid: str  # 创作UUID，用于在Celery任务中获取creation
     force_regenerate: bool = False  # 是否强制重新生成（False: 跳过已有图片的角色，True: 强制生成所有）
+    model_name: Optional[str] = None  # 使用的模型名称
 
 
 class CharacterRegenerateImageRequest(BaseModel):
@@ -50,6 +51,9 @@ class CharacterRegenerateImageRequest(BaseModel):
     character_uuid: str
     visual_style: str
     creation_uuid: str
+    model_name: Optional[str] = None  # 使用的模型名称
+    image_prompt: Optional[str] = None  # 使用的自定义生图提示词
+    refresh_prompt: bool = False  # 是否重新生成提示词（忽略现有提示词）
 
 
 class Character(CharacterBase):

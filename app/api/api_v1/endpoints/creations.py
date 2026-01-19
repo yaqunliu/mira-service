@@ -280,6 +280,8 @@ async def get_creations_service(
                         "location": scene.location,
                         "space_type": scene.space_type,
                         "atmosphere": scene.atmosphere,
+                        "image_prompt": scene.extra_data.get("image_prompt") if scene.extra_data and isinstance(scene.extra_data, dict) else None,
+                        "extra_data": scene.extra_data,
                         "created_at": scene.created_at,
                         "updated_at": scene.updated_at,
                         "shots": [],
@@ -401,6 +403,8 @@ async def get_creation_by_chapter(
                 "space_type": scene.space_type,
                 "atmosphere": scene.atmosphere,
                 "image_url": scene.image_url,
+                "image_prompt": scene.extra_data.get("image_prompt") if scene.extra_data and isinstance(scene.extra_data, dict) else None,
+                "extra_data": scene.extra_data,
                 "created_at": scene.created_at,
                 "updated_at": scene.updated_at,
             }
@@ -584,6 +588,8 @@ async def get_creation(
                     "space_type": scene.space_type,
                     "atmosphere": scene.atmosphere,
                     "image_url": scene.image_url,
+                    "image_prompt": scene.extra_data.get("image_prompt") if scene.extra_data and isinstance(scene.extra_data, dict) else None,
+                    "extra_data": scene.extra_data,
                     "created_at": scene.created_at,
                     "updated_at": scene.updated_at,
                     "shots": [],
@@ -1366,6 +1372,13 @@ async def select_voice_and_generate_video(
         creation.voice_id = request.voice_id
         creation.voice_speed = request.voice_speed
         creation.status = CreationStatus.VOICE_SELECTED
+        
+        # 如果请求中指定了视频模型，更新到 extra_data
+        if request.video_model:
+            extra_data = creation.extra_data or {}
+            extra_data["video_model"] = request.video_model
+            creation.extra_data = extra_data
+            
         db.commit()
         
         # 启动完整视频生成任务

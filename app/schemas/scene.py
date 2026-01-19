@@ -37,6 +37,14 @@ class SceneUpdate(BaseModel):
     title: Optional[str] = None
     duration: Optional[str] = None
     scene_setting: Optional[SceneSetting] = None
+    image_prompt: Optional[str] = None
+
+
+class SceneRegenerateRequest(BaseModel):
+    """重新生成场景图片的请求体"""
+    model_name: Optional[str] = None  # 使用的模型名称
+    image_prompt: Optional[str] = None  # 使用的自定义生图提示词
+    refresh_prompt: bool = False  # 是否重新生成提示词（忽略现有提示词）
 
 
 class ShotBrief(BaseModel):
@@ -45,10 +53,10 @@ class ShotBrief(BaseModel):
     uuid: str
     title: str
     shot_number: int
-    image_prompt: str | None
-    image_url: str | None
+    image_prompt: Optional[str] = None
+    image_url: Optional[str] = None
     narration: List[NarrationItem] = Field(default_factory=list)
-    description: str | None
+    description: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -89,6 +97,7 @@ class ShotDetail(BaseModel):
     """镜头详细信息（用于场景响应中，包含图片URL）"""
     shot_id: int
     uuid: str
+    scene_id: int
     title: str
     shot_number: int
     image_url: Optional[str] = None
@@ -158,6 +167,7 @@ class ShotDetail(BaseModel):
         return cls(
             shot_id=shot.shot_id,
             uuid=shot.uuid,
+            scene_id=shot.scene_id,
             title=shot.title,
             shot_number=shot.shot_number,
             image_url=shot.image_url,
@@ -190,34 +200,43 @@ class Scene(SceneBase):
 
 class SceneResponse(BaseModel):
     """场景响应（前端格式）"""
-    scene_id: int = Field(..., alias="sceneId")
-    uuid: str = Field(..., alias="uuid")
+    scene_id: int
+    uuid: str
     title: str
     duration: Optional[str] = None
-    image_url: Optional[str] = Field(None, alias="imageUrl")
-    scene_setting: SceneSetting = Field(..., alias="sceneSetting")
-    shot_list: List[int] = Field(default_factory=list, alias="shotList")
+    image_url: Optional[str] = None
+    image_prompt: Optional[str] = None
+    time_setting: str
+    location: str
+    space_type: str
+    atmosphere: str
+    shot_list: List[int] = Field(default_factory=list)
+    extra_data: Optional[Dict[str, Any]] = None
     
     class Config:
         from_attributes = True
-        populate_by_name = True
     
     @classmethod
     def from_db_model(cls, scene) -> "SceneResponse":
         """从数据库模型转换"""
+        # 仅从 extra_data 中获取 image_prompt
+        image_prompt = None
+        if scene.extra_data and isinstance(scene.extra_data, dict):
+            image_prompt = scene.extra_data.get("image_prompt")
+            
         return cls(
-            sceneId=scene.scene_id,
+            scene_id=scene.scene_id,
             uuid=scene.uuid,
             title=scene.title,
             duration=scene.duration,
-            imageUrl=scene.image_url,
-            sceneSetting=SceneSetting(
-                time=scene.time_setting,
-                location=scene.location,
-                space=scene.space_type,
-                atmosphere=scene.atmosphere
-            ),
-            shotList=[shot.shot_id for shot in sorted(scene.shots, key=lambda s: s.shot_id)] if scene.shots else []
+            image_url=scene.image_url,
+            image_prompt=image_prompt,
+            time_setting=scene.time_setting,
+            location=scene.location,
+            space_type=scene.space_type,
+            atmosphere=scene.atmosphere,
+            shot_list=[shot.shot_id for shot in sorted(scene.shots, key=lambda s: s.shot_id)] if scene.shots else [],
+            extra_data=scene.extra_data
         )
 
 
@@ -233,8 +252,14 @@ class SceneWithShotsResponse(BaseModel):
     uuid: str
     title: str
     duration: Optional[str] = None
-    scene_setting: SceneSetting
+    image_url: Optional[str] = None
+    image_prompt: Optional[str] = None
+    time_setting: str
+    location: str
+    space_type: str
+    atmosphere: str
     shots: List[ShotDetail] = Field(default_factory=list)
+    extra_data: Optional[Dict[str, Any]] = None
     
     class Config:
         from_attributes = True
@@ -242,16 +267,22 @@ class SceneWithShotsResponse(BaseModel):
     @classmethod
     def from_db_model(cls, scene) -> "SceneWithShotsResponse":
         """从数据库模型转换"""
+        # 仅从 extra_data 中获取 image_prompt
+        image_prompt = None
+        if scene.extra_data and isinstance(scene.extra_data, dict):
+            image_prompt = scene.extra_data.get("image_prompt")
+
         return cls(
             scene_id=scene.scene_id,
             uuid=scene.uuid,
             title=scene.title,
             duration=scene.duration,
-            scene_setting=SceneSetting(
-                time=scene.time_setting,
-                location=scene.location,
-                space=scene.space_type,
-                atmosphere=scene.atmosphere
-            ),
-            shots=[ShotDetail.from_db_model(shot) for shot in sorted(scene.shots, key=lambda s: s.shot_id)] if scene.shots else []
+            image_url=scene.image_url,
+            image_prompt=image_prompt,
+            time_setting=scene.time_setting,
+            location=scene.location,
+            space_type=scene.space_type,
+            atmosphere=scene.atmosphere,
+            shots=[ShotDetail.from_db_model(shot) for shot in sorted(scene.shots, key=lambda s: s.shot_id)] if scene.shots else [],
+            extra_data=scene.extra_data
         )

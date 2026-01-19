@@ -115,6 +115,7 @@ async def generate_character_image(
             visual_style=request.visual_style,
             creation_uuid=request.creation_uuid,
             force_regenerate=request.force_regenerate,
+            model_name=request.model_name,
             db=db
         )
         return success_response(
@@ -161,6 +162,9 @@ async def regenerate_character_image(
             character_uuid=request.character_uuid,
             visual_style=request.visual_style,
             creation_uuid=request.creation_uuid,
+            model_name=request.model_name,
+            image_prompt=request.image_prompt,
+            refresh_prompt=request.refresh_prompt,
             db=db
         )
         return success_response(

@@ -12,7 +12,7 @@ import httpx
 import requests
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Callable
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from app.core.config import settings
 from app.core.logger import logger
@@ -305,6 +305,7 @@ class AIClient:
         user_id: int = None,
         creation_id: int = None,
         novel_id: int = None,
+        validator: Callable[[str], Any] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -316,10 +317,11 @@ class AIClient:
             user_id: 用户ID（用于积分扣除，可选）
             creation_id: 创作ID（用于积分扣除，可选）
             novel_id: 小说ID（用于积分扣除，可选）
+            validator: 验证器函数，用于验证/解析响应内容，如果抛出异常则触发重试
             **kwargs: 其他参数（如 temperature, max_tokens 等）
 
         Returns:
-            AI 响应内容
+            AI 响应内容，如果提供了 validator，则包含 'parsed_data' 字段
             
         Raises:
             AIContentModerationError: 内容审核失败（如涉及暴恐等敏感内容）
@@ -348,6 +350,21 @@ class AIClient:
                         response = future.result(timeout=self.timeout)
                     except FuturesTimeoutError:
                         raise TimeoutError(f"LLM 调用超时（{self.timeout}秒）")
+                
+                # 检查内容是否为空
+                content = response.get('content', '').strip()
+                if not content:
+                    raise ValueError("AI 返回内容为空")
+
+                # 如果提供了验证器，执行验证
+                if validator:
+                    try:
+                        logger.debug(f"执行响应验证器 (尝试 {attempt}/{self.max_retries})...")
+                        parsed_data = validator(content)
+                        response['parsed_data'] = parsed_data
+                    except Exception as ve:
+                        logger.warning(f"响应验证失败 (尝试 {attempt}/{self.max_retries}): {ve}")
+                        raise ve # 抛出异常以触发重试
                 
                 logger.debug(f"LLM 调用成功，模型: {model}")
                 
@@ -419,8 +436,13 @@ class AIClient:
             
             # 如果不是最后一次尝试，等待后重试
             if attempt < self.max_retries:
-                logger.info(f"等待 {self.retry_delay} 秒后重试...")
-                time.sleep(self.retry_delay)
+                # 如果是验证失败或 JSON 解析失败，增加额外的等待时间，让模型更有可能在下次返回正确结果
+                wait_time = self.retry_delay
+                if isinstance(last_error, (json.JSONDecodeError, ValueError)):
+                    wait_time *= 2
+                
+                logger.info(f"等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
         
         # 所有重试都失败
         if isinstance(last_error, TimeoutError):
@@ -554,9 +576,11 @@ class AIClient:
                 response_format={"type": "json_object"},
                 user_id=user_id,
                 creation_id=creation_id,
-                novel_id=novel_id
+                novel_id=novel_id,
+                validator=self._parse_json_response
             )
             ai_content = response.get("content", "")
+            parsed_data = response.get("parsed_data", {})
             logger.info(f"角色分析 AI 返回内容: {ai_content}")
 
             if not ai_content:
@@ -577,7 +601,6 @@ class AIClient:
                 }
             )
 
-            parsed_data = self._parse_json_response(ai_content)
             logger.info(f"角色分析完成，识别到 {len(parsed_data.get('人物特征库', {}))} 个角色")
             return parsed_data
 
@@ -627,9 +650,11 @@ class AIClient:
                 response_format={"type": "json_object"},
                 user_id=user_id,
                 creation_id=creation_id,
-                novel_id=novel_id
+                novel_id=novel_id,
+                validator=self._parse_json_response
             )
             ai_content = response.get("content", "")
+            parsed_data = response.get("parsed_data", {})
             logger.info(f"场景拆解 AI 返回内容: {ai_content}")
 
             if not ai_content:
@@ -649,7 +674,6 @@ class AIClient:
                 }
             )
 
-            parsed_data = self._parse_json_response(ai_content)
             logger.info(f"场景拆解完成，解析到 {len(parsed_data.get('场景列表', []))} 个场景")
             return parsed_data
 
@@ -702,9 +726,11 @@ class AIClient:
                 response_format={"type": "json_object"},
                 user_id=user_id,
                 creation_id=creation_id,
-                novel_id=novel_id
+                novel_id=novel_id,
+                validator=self._parse_json_response
             )
             ai_content = response.get("content", "")
+            parsed_data = response.get("parsed_data", {})
             logger.info(f"分镜拆分 AI 返回内容: {ai_content}")
 
             if not ai_content:
@@ -725,7 +751,6 @@ class AIClient:
                 }
             )
             
-            parsed_data = self._parse_json_response(ai_content)
             scenes_count = len(parsed_data.get('场景拆解', []))
             total_shots = sum(len(scene.get('分镜列表', [])) for scene in parsed_data.get('场景拆解', []))
             logger.info(f"分镜拆分完成，生成 {scenes_count} 个场景，{total_shots} 个分镜")
@@ -734,6 +759,42 @@ class AIClient:
         except Exception as e:
             logger.error(f"分镜拆分失败: {e}")
             raise
+
+    def _extract_shot_analysis_json(self, ai_content: str) -> Dict[str, Any]:
+        """
+        从 AI 返回内容中提取并解析分镜拆解的 JSON
+        """
+        ai_content = ai_content.strip()
+        
+        # 从返回内容中提取 <分镜拆解> 标签内的 JSON
+        json_str = None
+        json_match = re.search(r"<分镜拆解>(.*?)</分镜拆解>", ai_content, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1).strip()
+        else:
+            # 尝试提取 JSON 代码块
+            code_block_match = re.search(r"```(?:json|JSON)?\s*(.*?)\s*```", ai_content, re.DOTALL)
+            if code_block_match:
+                json_str = code_block_match.group(1).strip()
+            else:
+                # 查找完整的 JSON 对象
+                json_obj_match = re.search(r'\{.*\}', ai_content, re.DOTALL)
+                if json_obj_match:
+                    json_str = json_obj_match.group(0)
+                else:
+                    json_str = ai_content
+
+        # 清理 JSON 字符串（处理可能存在的尾部乱码或多余标签）
+        json_str = re.sub(r'</分镜拆解>.*$', '', json_str, flags=re.DOTALL)
+        json_str = re.sub(r'^```(?:json|JSON)?\s*', '', json_str)
+        json_str = re.sub(r'\s*```$', '', json_str)
+        json_str = json_str.strip()
+
+        # 处理中文标点符号（智能替换）
+        json_str = self._sanitize_json_content(json_str)
+        
+        # 解析并返回
+        return json.loads(json_str)
 
     def gen_shot_analysis(
         self,
@@ -807,36 +868,11 @@ class AIClient:
                 model=model,
                 user_id=user_id,
                 creation_id=creation_id,
-                novel_id=novel_id
+                novel_id=novel_id,
+                validator=self._extract_shot_analysis_json
             )
             ai_content = response.get("content", "").strip()
-            
-            # 从返回内容中提取 <分镜拆解> 标签内的 JSON
-            json_str = None
-            json_match = re.search(r"<分镜拆解>(.*?)</分镜拆解>", ai_content, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1).strip()
-            else:
-                # 尝试提取 JSON 代码块
-                code_block_match = re.search(r"```(?:json|JSON)?\s*(.*?)\s*```", ai_content, re.DOTALL)
-                if code_block_match:
-                    json_str = code_block_match.group(1).strip()
-                else:
-                    # 查找完整的 JSON 对象
-                    json_obj_match = re.search(r'\{.*\}', ai_content, re.DOTALL)
-                    if json_obj_match:
-                        json_str = json_obj_match.group(0)
-                    else:
-                        json_str = ai_content
-
-            # 清理 JSON 字符串（处理可能存在的尾部乱码或多余标签）
-            json_str = re.sub(r'</分镜拆解>.*$', '', json_str, flags=re.DOTALL)
-            json_str = re.sub(r'^```(?:json|JSON)?\s*', '', json_str)
-            json_str = re.sub(r'\s*```$', '', json_str)
-            json_str = json_str.strip()
-
-            # 处理中文标点符号（智能替换）
-            json_str = self._sanitize_json_content(json_str)
+            parsed_data = response.get("parsed_data", {})
 
             # 保存响应记录
             self._save_ai_response(
@@ -850,21 +886,123 @@ class AIClient:
                 }
             )
 
-            try:
-                result = json.loads(json_str)
-                # 验证数据结构
-                if "分镜列表" not in result:
-                    raise ValueError("缺少'分镜列表'字段")
-                return result
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON 解析失败: {e}")
-                logger.error(f"AI 返回内容: {ai_content}")
-                raise
+            total_shots = len(parsed_data.get('分镜列表', []))
+            logger.info(f"分镜解析完成，生成 {total_shots} 个分镜")
+            return parsed_data
 
         except Exception as e:
             logger.error(f"分镜拆解失败: {e}")
             raise
     
+    def _call_gemini_image_api(
+        self,
+        prompt: str,
+        model: str,
+        reference_images: List[str] = None,
+        aspect_ratio: str = "16:9"
+    ) -> str:
+        """
+        调用 Gemini 图像生成 API (generateContent)
+        支持 gemini-3-pro-image-preview 和 gemini-2.5-flash-image
+        """
+        api_url = f"https://api.modelverse.cn/v1beta/models/{model}:generateContent"
+        
+        # 转换 aspect_ratio 格式 "1024x576" -> "16:9"
+        gemini_ratio = aspect_ratio
+        if "x" in aspect_ratio:
+            w, h = aspect_ratio.split("x")
+            if w == h:
+                gemini_ratio = "1:1"
+            elif int(w) > int(h):
+                gemini_ratio = "16:9"
+            else:
+                gemini_ratio = "9:16"
+        
+        # 构建 parts
+        parts = [{"text": prompt}]
+        
+        # 如果有参考图，添加到 parts (图生图)
+        if reference_images:
+            for img_url in reference_images:
+                try:
+                    # 如果是 local:// 协议，直接读取
+                    if img_url.startswith("local://"):
+                        local_path = img_url.replace("local://", "")
+                        if os.path.exists(local_path):
+                            with open(local_path, 'rb') as f:
+                                img_data = base64.b64encode(f.read()).decode("utf-8")
+                        else:
+                            logger.warning(f"本地参考图不存在: {local_path}")
+                            continue
+                    else:
+                        with httpx.Client() as client:
+                            resp = client.get(img_url)
+                            resp.raise_for_status()
+                            img_data = base64.b64encode(resp.content).decode("utf-8")
+                    
+                    parts.append({
+                        "inlineData": {
+                            "mimeType": "image/png", # 简化处理
+                            "data": img_data
+                        }
+                    })
+                except Exception as e:
+                    logger.warning(f"获取参考图失败: {img_url}, error: {e}")
+
+        # 构建 imageConfig
+        image_config = {"aspectRatio": gemini_ratio}
+        
+        # Gemini 3 Pro 支持 imageSize, Gemini 2.5 Flash 不支持
+        if "flash" not in model.lower():
+            image_config["imageSize"] = "1K"
+
+        request_body = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "responseModalities": ["TEXT", "IMAGE"],
+                "imageConfig": image_config
+            }
+        }
+
+        headers = {
+            "x-goog-api-key": self.api_key,
+            "Content-Type": "application/json"
+        }
+
+        logger.info(f"调用 Gemini Image API: {api_url}, model: {model}")
+        
+        with httpx.Client(timeout=self.timeout) as client:
+            response = client.post(api_url, json=request_body, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+
+        # 解析响应中的 base64 图像
+        try:
+            candidates = result.get("candidates", [])
+            if not candidates:
+                raise Exception("Gemini API 返回空候选列表")
+            
+            parts = candidates[0].get("content", {}).get("parts", [])
+            for part in parts:
+                if "inlineData" in part:
+                    base64_data = part["inlineData"].get("data")
+                    if base64_data:
+                        # 模拟 Nano Banana 的返回方式，保存到本地临时文件并返回 local:// 协议
+                        import tempfile
+                        import os
+                        
+                        fd, temp_path = tempfile.mkstemp(suffix=".png")
+                        with os.fdopen(fd, 'wb') as f:
+                            f.write(base64.b64decode(base64_data))
+                        
+                        logger.info(f"Gemini 图像已保存至临时文件: {temp_path}")
+                        return f"local://{temp_path}"
+            
+            raise Exception("Gemini API 响应中未找到 inlineData 图像数据")
+        except Exception as e:
+            logger.error(f"解析 Gemini API 响应失败: {e}, 完整响应: {result}")
+            raise Exception(f"解析 Gemini API 响应失败: {e}")
+
     def _do_generate_image_by_prompt(
         self, prompt: str, model: str, aspectRatio: str, guidance_scale: float = None
     ) -> str:
@@ -879,36 +1017,29 @@ class AIClient:
         Returns:
             生成的图片URL
         """
-        # 检查是否为 Nano Banana2 模型 (Gemini)
-        if model == "gemini-3-pro-image-preview":
-            logger.info(f"使用 Nano Banana2 (Gemini) API 进行文生图")
-            
-            # 统一使用 2K
-            image_size = "2K"
-            
-            # 转换 aspectRatio 为 16:9 格式（Gemini 需要这种格式）
-            aspect_ratio = aspectRatio
-            if "x" in aspectRatio:
-                # 如果是 1024x576 这种格式，转换为 16:9
-                w, h = aspectRatio.split("x")
-                if int(w) > int(h):
-                    aspect_ratio = "16:9"
-                elif int(w) < int(h):
-                    aspect_ratio = "9:16"
-                else:
-                    aspect_ratio = "1:1"
-            
-            # 调用 Gemini API
-            image_base64 = self._call_gemini_image_api(
+        # 检查是否为 Gemini 模型
+        if "gemini" in model.lower():
+            return self._call_gemini_image_api(
                 prompt=prompt,
-                reference_images_base64=[], # 文生图没有参考图
-                aspect_ratio=aspect_ratio,
-                image_size=image_size
+                model=model,
+                aspect_ratio=aspectRatio
+            )
+
+        # 检查是否为 豆包 Seedream 4.5 模型
+        if model == "doubao-seedream-4.5":
+            logger.info(f"使用 豆包 Seedream 4.5 API 进行文生图")
+            
+            # 统一使用 2k
+            image_size = "2k"
+            
+            # 调用 Doubao API (文生图没有参考图)
+            image_url = self._call_doubao_seedream_api(
+                prompt=prompt,
+                reference_images=[],
+                size=image_size
             )
             
-            # 将 Base64 图片转换为临时文件并返回 URL
-            temp_url = self._save_base64_image_to_temp_url(image_base64)
-            return temp_url
+            return image_url
 
         # 检查是否使用火山云AI模型
         if model == self.ark_image_model:
@@ -942,6 +1073,7 @@ class AIClient:
         
         # 转换aspectRatio为火山云AI支持的格式
         aspect_ratio_mapping = {
+            "1536x864": "16:9",
             "1024x576": "16:9",
             "576x1024": "9:16",
             "1024x1024": "1:1",
@@ -999,7 +1131,7 @@ class AIClient:
                 # 任务失败
                 error_msg = task_result.get("error", {}).get("message", "未知错误")
                 raise Exception(f"火山云AI图片生成失败: {error_msg}")
-            elif status in ["pending", "running"]:
+            elif status in ["pending", "running", "queued"]:
                 # 任务进行中，继续轮询
                 time.sleep(self.ark_video_retry_delay)
             else:
@@ -1053,13 +1185,16 @@ class AIClient:
         # 构建请求体
         payload = {
             "model": model,
-            "content": {
-                "text": prompt
-            },
-            "params": {
-                "aspect_ratio": aspectRatio,
-                "duration": duration
-            }
+            "content": [
+                {
+                    "type": "text",
+                    "text": prompt
+                }
+            ],
+            "ratio": aspectRatio or "16:9",
+            "duration": duration,
+            "generate_audio": True,
+            "watermark": False
         }
         
         logger.info(f"调用火山云AI视频生成API，模型: {model}, 比例: {aspectRatio}, 时长: {duration}秒")
@@ -1101,7 +1236,126 @@ class AIClient:
                 # 任务失败
                 error_msg = task_result.get("error", {}).get("message", "未知错误")
                 raise Exception(f"火山云AI视频生成失败: {error_msg}")
-            elif status in ["pending", "running"]:
+            elif status in ["pending", "running", "queued"]:
+                # 任务进行中，继续轮询
+                time.sleep(self.ark_video_retry_delay)
+            else:
+                # 未知状态
+                raise Exception(f"火山云AI视频生成任务状态未知: {status}")
+        
+        # 超时
+        raise AITimeoutError(f"火山云AI视频生成超时，超过 {self.ark_video_timeout} 秒")
+
+    def generate_video_by_image_ark(self, image_url: str, prompt: str = None, duration: int = 5, aspect_ratio: str = "16:9") -> str:
+        """
+        使用火山云AI Seedance模型根据图片生成视频（图生视频）
+        
+        Args:
+            image_url: 图片URL
+            prompt: 提示词
+            duration: 视频时长（秒），默认5秒
+            aspect_ratio: 视频尺寸，默认16:9
+        Returns:
+            生成的视频URL
+        
+        Raises:
+            ValueError: 参数错误
+            AIContentModerationError: 内容审核失败
+            AITimeoutError: 调用超时
+            Exception: 其他错误
+        """
+        # 检查火山云AI配置
+        if not self.ark_api_key or not self.ark_base_url:
+            raise ValueError("火山云AI API配置未设置")
+        
+        # 使用火山云AI视频模型
+        model = self.ark_video_model
+        
+        logger.info(f"火山图生视频开始，模型: {model}, 比例: {aspect_ratio}, 时长: {duration}秒, 图片: {image_url}")
+        if prompt:
+            logger.info(f"【视频生成提示词】: {prompt}")
+        
+        # 构建火山云AI API请求
+        url = f"{self.ark_base_url}/contents/generations/tasks"
+        headers = {
+            "Authorization": f"Bearer {self.ark_api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # 构建请求体
+        payload = {
+            "model": model,
+            "content": [
+                {
+                    "type": "text",
+                    "text": prompt or "平稳移动"
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image_url
+                    }
+                }
+            ],
+            "generate_audio": True,
+            "ratio": aspect_ratio if aspect_ratio != "16:9" else "16:9", # 如果是 16:9 则保持，否则使用传入值
+            "duration": duration,
+            "watermark": False
+        }
+        
+        # 修正 ratio，如果是 adaptive 则使用
+        if aspect_ratio == "adaptive":
+            payload["ratio"] = "adaptive"
+        elif aspect_ratio == "16:9":
+            payload["ratio"] = "16:9"
+        elif aspect_ratio == "9:16":
+            payload["ratio"] = "9:16"
+        elif aspect_ratio == "1:1":
+            payload["ratio"] = "1:1"
+        
+        logger.info(f"调用火山云AI视频生成API，模型: {model}, 比例: {aspect_ratio}, 时长: {duration}秒")
+        logger.info(f"火山云AI请求Payload: {json.dumps(payload, ensure_ascii=False)}")
+        
+        # 发送请求
+        response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+        if response.status_code != 200:
+            logger.error(f"火山云AI视频生成请求失败: {response.status_code}, {response.text}")
+            response.raise_for_status()
+        
+        # 解析响应
+        result = response.json()
+        task_id = result.get("id")
+        
+        if not task_id:
+            raise Exception(f"火山云AI视频生成API返回的响应中没有任务ID: {result}")
+        
+        logger.info(f"火山云AI视频生成任务创建成功，任务ID: {task_id}")
+        
+        # 轮询任务状态
+        start_time = time.time()
+        while time.time() - start_time < self.ark_video_timeout:
+            task_url = f"{self.ark_base_url}/contents/generations/tasks/{task_id}"
+            task_response = requests.get(task_url, headers=headers, timeout=self.timeout)
+            task_response.raise_for_status()
+            
+            task_result = task_response.json()
+            status = task_result.get("status")
+            
+            logger.debug(f"火山云AI视频生成任务状态: {status}, 任务ID: {task_id}")
+            
+            if status == "succeeded":
+                # 任务成功，返回视频URL
+                video_url = task_result.get("content", {}).get("video_url")
+                if video_url:
+                    logger.info(f"火山云AI视频生成成功，URL: {video_url}")
+                    return video_url
+                else:
+                    raise Exception(f"火山云AI视频生成成功，但未返回视频URL: {task_result}")
+            elif status == "failed":
+                # 任务失败
+                error_msg = task_result.get("error", {}).get("message", "未知错误")
+                raise Exception(f"火山云AI视频生成失败: {error_msg}")
+            elif status in ["pending", "running", "queued"]:
                 # 任务进行中，继续轮询
                 time.sleep(self.ark_video_retry_delay)
             else:
@@ -1271,6 +1525,313 @@ class AIClient:
         logger.error(f"Sora2视频生成超时，超过 {self.sora2_timeout} 秒，任务ID: {task_id}")
         raise AITimeoutError(f"Sora2视频生成超时，超过 {self.sora2_timeout} 秒")
 
+    def generate_video_by_image_wan_ai(self, image_url: str, prompt: str = None, duration: int = 5, resolution: str = "1080P", last_frame_image_url: str = None) -> str:
+        """
+        使用 Wan-AI/Wan2.6-I2V 模型根据图片生成视频（图生视频）
+        """
+        return self.generate_video_by_image_wan(
+            image_url=image_url,
+            prompt=prompt,
+            duration=duration,
+            resolution=resolution,
+            last_frame_image_url=last_frame_image_url
+        )
+
+    def generate_video_by_image_vidu(self, image_url: str, prompt: str = None, duration: int = 5, resolution: str = "1080p", model: str = "viduq2-pro", last_frame_image_url: str = None) -> str:
+        """
+        使用 Vidu 模型根据图片生成视频（图生视频）
+
+        Args:
+            image_url: 首帧图片URL
+            prompt: 提示词，用于指导视频生成
+            duration: 视频生成时长（秒），默认为 5
+            resolution: 视频分辨率，可选值 540p, 720p, 1080p，默认为 1080p
+            model: 模型名称，viduq2-pro 或 viduq2-turbo
+            last_frame_image_url: 尾帧图片URL（可选）
+
+        Returns:
+            生成的视频URL
+        """
+        if not self.sora2_api_key or not self.sora2_base_url:
+            raise ValueError("Vidu API配置未设置（复用 OpenAI 配置）")
+
+        logger.info(f"Vidu 图生视频开始，模型: {model}, 时长: {duration}秒, 分辨率: {resolution}, 有尾帧: {bool(last_frame_image_url)}")
+        
+        # 处理图片URL，如果是local://协议，转换为base64
+        final_image_url = image_url
+        if image_url.startswith("local://"):
+            local_path = image_url.replace("local://", "")
+            if os.path.exists(local_path):
+                with open(local_path, 'rb') as f:
+                    img_data = base64.b64encode(f.read()).decode("utf-8")
+                    final_image_url = f"data:image/png;base64,{img_data}"
+            else:
+                logger.warning(f"Vidu 本地图片不存在: {local_path}")
+
+        # 处理尾帧图片URL
+        final_last_frame_url = last_frame_image_url
+        if last_frame_image_url and last_frame_image_url.startswith("local://"):
+            local_path = last_frame_image_url.replace("local://", "")
+            if os.path.exists(local_path):
+                with open(local_path, 'rb') as f:
+                    img_data = base64.b64encode(f.read()).decode("utf-8")
+                    final_last_frame_url = f"data:image/png;base64,{img_data}"
+
+        input_data = {
+            "first_frame_url": final_image_url,
+            "prompt": prompt or "make it dance"
+        }
+        if final_last_frame_url:
+            input_data["last_frame_url"] = final_last_frame_url
+
+        payload = {
+            "model": model,
+            "input": input_data,
+            "parameters": {
+                "vidu_type": "img2video" if not final_last_frame_url else "storytelling",
+                "duration": duration,
+                "resolution": resolution,
+                "movement_amplitude": "auto",
+                "bgm": False
+            }
+        }
+
+        return self._generate_video_modelverse(payload, "Vidu")
+
+    def generate_video_by_image_wan(self, image_url: str, prompt: str = None, duration: int = 5, resolution: str = "1080P", model: str = "Wan-AI/Wan2.6-I2V", last_frame_image_url: str = None) -> str:
+        """
+        使用 Wan-AI 模型根据图片生成视频（图生视频）
+
+        Args:
+            image_url: 首帧图片URL
+            prompt: 提示词，用于指导视频生成
+            duration: 视频生成时长（秒），可选值 5 或 10 或 15
+            resolution: 视频分辨率，可选值 720P, 1080P
+            model: 模型名称
+            last_frame_image_url: 尾帧图片URL（可选）
+
+        Returns:
+            生成的视频URL
+        """
+        if not self.sora2_api_key or not self.sora2_base_url:
+            raise ValueError("Wan-AI API配置未设置（复用 OpenAI 配置）")
+
+        logger.info(f"Wan-AI 图生视频开始，模型: {model}, 时长: {duration}秒, 分辨率: {resolution}, 有尾帧: {bool(last_frame_image_url)}")
+        
+        # 强制时长只能是 5, 10, 15
+        if duration <= 5:
+            duration = 5
+        elif duration <= 10:
+            duration = 10
+        else:
+            duration = 15
+        logger.info(f"Wan-AI 修正后时长: {duration}秒")
+        
+        # 处理图片URL
+        final_image_url = image_url
+        if image_url.startswith("local://"):
+            local_path = image_url.replace("local://", "")
+            if os.path.exists(local_path):
+                with open(local_path, 'rb') as f:
+                    img_data = base64.b64encode(f.read()).decode("utf-8")
+                    final_image_url = f"data:image/png;base64,{img_data}"
+
+        # 处理尾帧图片URL
+        final_last_frame_url = last_frame_image_url
+        if last_frame_image_url and last_frame_image_url.startswith("local://"):
+            local_path = last_frame_image_url.replace("local://", "")
+            if os.path.exists(local_path):
+                with open(local_path, 'rb') as f:
+                    img_data = base64.b64encode(f.read()).decode("utf-8")
+                    final_last_frame_url = f"data:image/png;base64,{img_data}"
+
+        input_data = {
+            "img_url": final_image_url,
+            "prompt": prompt or "cinematic style, high quality"
+        }
+        if final_last_frame_url:
+            input_data["last_frame_url"] = final_last_frame_url
+
+        payload = {
+            "model": model,
+            "input": input_data,
+            "parameters": {
+                "duration": duration,
+                "resolution": resolution,
+                "prompt_extend": True,
+                "shot_type": "single"
+            }   
+        }
+
+        return self._generate_video_modelverse(payload, "Wan-AI")
+
+    def generate_video_by_image_doubao_modelverse(self, image_url: str, prompt: str = None, duration: int = 5, aspect_ratio: str = "16:9", resolution: str = "720p", last_frame_image_url: str = None) -> str:
+        """
+        使用 Modelverse 协议生成豆包视频 (doubao-seedance-1-5-pro-251215)
+        """
+        model = "doubao-seedance-1-5-pro-251215"
+        
+        # 构建 input.content
+        content = []
+        if prompt:
+            content.append({
+                "type": "text",
+                "text": prompt
+            })
+        
+        content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": image_url
+            },
+            "role": "first_frame"
+        })
+
+        if last_frame_image_url:
+            content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": last_frame_image_url
+                },
+                "role": "last_frame"
+            })
+        
+        # 转换 aspect_ratio 格式 (从 "1536x864" 等格式转换为 "16:9")
+        ratio_mapping = {
+            "1536x864": "16:9",
+            "1280x720": "16:9",
+            "1024x576": "16:9",
+            "576x1024": "9:16",
+            "1024x1024": "1:1",
+            "adaptive": "adaptive"
+        }
+        final_ratio = ratio_mapping.get(aspect_ratio, aspect_ratio)
+        if ":" not in final_ratio and final_ratio != "adaptive":
+            final_ratio = "16:9" # 兜底
+
+        payload = {
+            "model": model,
+            "input": {
+                "content": content
+            },
+            "parameters": {
+                "generate_audio": True,
+                "duration": duration,
+                "resolution": resolution,
+                "execution_expires_after": 3600,
+                "camera_fixed": False,
+                "watermark": False,
+                "draft": False,
+                "ratio": final_ratio
+            }
+        }
+        
+        return self._generate_video_modelverse(payload, f"Doubao-Modelverse")
+
+    def _generate_video_modelverse(self, payload: Dict[str, Any], model_name_log: str) -> str:
+        """
+        通用的 Modelverse 视频生成调用（包含提交和轮询）
+        """
+        # 统一使用 Bearer Token
+        auth_token = self.sora2_api_key
+        if not auth_token.startswith("Bearer "):
+            auth_token = f"Bearer {auth_token}"
+
+        headers = {
+            "Authorization": auth_token,
+            "Content-Type": "application/json"
+        }
+
+        # 步骤1: 提交任务
+        submit_url = f"{self.sora2_base_url}/tasks/submit"
+        
+        max_retries = 3
+        task_id = None
+        logger.info(f"[{model_name_log}] 准备提交任务，参数: {json.dumps(payload, ensure_ascii=False)}")
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(submit_url, headers=headers, json=payload, timeout=self.timeout)
+                logger.info(f"[{model_name_log}] 提交任务响应码: {response.status_code}")
+                
+                if response.status_code != 200:
+                    logger.error(f"[{model_name_log}] 提交任务失败，响应内容: {response.text}")
+                
+                response.raise_for_status()
+                result = response.json()
+                logger.debug(f"[{model_name_log}] 提交任务返回结果: {json.dumps(result, ensure_ascii=False)}")
+                
+                task_id = result.get("output", {}).get("task_id")
+                if task_id:
+                    logger.info(f"[{model_name_log}] 成功获取任务ID: {task_id}")
+                    break
+                
+                logger.warning(f"[{model_name_log}] 提交响应成功但未发现 task_id，尝试重试 ({attempt+1}/{max_retries})")
+                time.sleep(2)
+            except Exception as e:
+                logger.error(f"[{model_name_log}] 提交任务发生异常 (尝试 {attempt+1}/{max_retries}): {str(e)}")
+                if attempt == max_retries - 1:
+                    raise Exception(f"提交 {model_name_log} 任务失败: {str(e)}")
+                time.sleep(2)
+
+        if not task_id:
+            raise Exception(f"未能获取 {model_name_log} 任务ID")
+
+        # 步骤2: 轮询任务状态
+        status_url = f"{self.sora2_base_url}/tasks/status"
+        start_time = time.time()
+        logger.info(f"[{model_name_log}] 开始轮询任务状态: {task_id}")
+        
+        check_count = 0
+        is_task_failed = False
+        task_error_msg = ""
+        
+        while time.time() - start_time < self.sora2_timeout:
+            check_count += 1
+            try:
+                status_response = requests.get(status_url, headers=headers, params={"task_id": task_id}, timeout=self.timeout)
+                
+                if status_response.status_code != 200:
+                    logger.warning(f"[{model_name_log}] 查询状态返回非200: {status_response.status_code}, 内容: {status_response.text}")
+                
+                status_response.raise_for_status()
+                status_result = status_response.json()
+                output = status_result.get("output", {})
+                task_status = output.get("task_status")
+
+                if check_count % 5 == 0: # 减少日志冗余，每5次打印一次进度
+                    logger.info(f"[{model_name_log}] 任务 {task_id} 当前状态: {task_status}")
+
+                if task_status == "Success":
+                    urls = output.get("urls", [])
+                    if urls:
+                        logger.info(f"[{model_name_log}] 任务成功，URL: {urls[0]}")
+                        return urls[0]
+                    logger.error(f"[{model_name_log}] 任务成功但 URL 列表为空: {json.dumps(status_result, ensure_ascii=False)}")
+                    raise Exception(f"{model_name_log} 任务成功但未返回 URL")
+                elif task_status == "Failure" or task_status == "failed":
+                    task_error_msg = output.get("error_message", "未知错误")
+                    logger.error(f"[{model_name_log}] 任务明确返回失败: {task_error_msg}")
+                    is_task_failed = True
+                    break
+                
+                # 如果状态既不是 Success 也不是 Failure/failed，说明还在处理中
+                time.sleep(self.sora2_retry_delay)
+            except Exception as e:
+                logger.warning(f"[{model_name_log}] 查询状态出现异常 (第 {check_count} 次): {str(e)}")
+                # 如果是 404 或者 401，可能需要检查 URL 或 Token
+                if hasattr(e, 'response') and e.response is not None:
+                    if e.response.status_code in [401, 404]:
+                        logger.error(f"[{model_name_log}] 查询状态返回关键错误 {e.response.status_code}，停止轮询")
+                        raise e
+                time.sleep(self.sora2_retry_delay)
+
+        if is_task_failed:
+            raise Exception(f"{model_name_log} 任务失败: {task_error_msg}")
+
+        logger.error(f"[{model_name_log}] 任务 {task_id} 轮询超时，已耗时: {time.time() - start_time:.2f}s")
+        raise AITimeoutError(f"{model_name_log} 视频生成超时")
+
     def generate_image_by_prompt(self, prompt: str, model: str = None, aspectRatio: str = None) -> str:
         """
         根据提示词生成图片（文生图，带重试机制）
@@ -1298,10 +1859,10 @@ class AIClient:
                 if model_config and "aspect_ratio" in model_config:
                     aspectRatio = model_config["aspect_ratio"]
                 else:
-                    aspectRatio = "1024x576"  # 默认值
+                    aspectRatio = "1536x864"  # 默认值
             except Exception as e:
                 logger.warning(f"获取模型配置失败，使用默认 aspectRatio: {e}")
-                aspectRatio = "1024x576"  # 默认值
+                aspectRatio = "1536x864"  # 默认值
         
         logger.info(f"生成图片开始（文生图），模型: {model}, aspectRatio: {aspectRatio}, 提示词长度: {len(prompt)}")
         logger.info(f"【文生图提示词】: {prompt}")
@@ -1374,104 +1935,46 @@ class AIClient:
             logger.error(error_msg)
             raise AIRetryExhaustedError(error_msg) from last_error
     
-    def _download_image_to_base64(self, image_url: str) -> str:
-        """
-        下载图片并转换为 Base64 编码（支持本地文件路径和URL）
-        
-        Args:
-            image_url: 图片URL或本地文件路径
-            
-        Returns:
-            Base64 编码的图片数据
-        """
-        try:
-            # 检查是否为本地文件路径
-            if os.path.exists(image_url) or image_url.startswith("file://"):
-                # 处理本地文件路径
-                file_path = image_url.replace("file://", "") if image_url.startswith("file://") else image_url
-                if not os.path.exists(file_path):
-                    raise FileNotFoundError(f"本地文件不存在: {file_path}")
-                with open(file_path, 'rb') as f:
-                    image_data = f.read()
-                # 转换为 Base64
-                base64_data = base64.b64encode(image_data).decode('utf-8')
-                logger.info(f"成功读取本地文件并转换为 Base64: {file_path}")
-                return base64_data
-            else:
-                # 从URL下载
-                timeout_config = httpx.Timeout(
-                    connect=10.0,  # 连接超时10秒
-                    read=settings.AI_IMAGE_DOWNLOAD_TIMEOUT,  # 读取超时使用配置的值（默认60秒）
-                    write=10.0,  # 写入超时10秒
-                    pool=10.0,  # 连接池超时10秒
-                )
-                with httpx.Client(timeout=timeout_config) as client:
-                    response = client.get(image_url)
-                    response.raise_for_status()
-                    image_data = response.content
-                    # 转换为 Base64
-                    base64_data = base64.b64encode(image_data).decode('utf-8')
-                    return base64_data
-        except httpx.TimeoutException as e:
-            logger.error(f"下载图片超时: {image_url}, timeout={settings.AI_IMAGE_DOWNLOAD_TIMEOUT}秒, error={e}")
-            raise
-        except Exception as e:
-            logger.error(f"下载图片并转换为 Base64 失败: {e}")
-            raise
-    
-    def _call_gemini_image_api(
+    def _call_doubao_seedream_api(
         self,
         prompt: str,
-        reference_images_base64: List[str],
-        aspect_ratio: str = "16:9",
-        image_size: str = "2K"
+        reference_images: List[str],
+        size: str = "2k",
+        watermark: bool = False
     ) -> str:
         """
-        调用 Gemini 3 Pro Image API（Nano Banana2）
+        调用 豆包 Seedream 4.5 API (Modelverse OpenAI 兼容版本)
         
         Args:
-            prompt: 图片生成提示词（中文）
-            reference_images_base64: 参考图片的 Base64 编码列表
-            aspect_ratio: 图片宽高比，默认 "16:9"
-            image_size: 图片分辨率，默认 "2K"
+            prompt: 图片生成提示词
+            reference_images: 参考图片列表 (URL)
+            size: 图片分辨率，默认 "2k"
+            watermark: 是否添加水印，默认 False
             
         Returns:
-            生成的图片 Base64 编码
+            生成的图片 URL
         """
         # 构建请求体
-        contents_parts = [{"text": prompt}]
-        
-        # 添加参考图片（输入图像）
-        for img_base64 in reference_images_base64:
-            contents_parts.append({
-                "inlineData": {
-                    "mimeType": "image/png",
-                    "data": img_base64
-                }
-            })
-        
         request_body = {
-            "contents": [{
-                "role": "user",
-                "parts": contents_parts
-            }],
-            "generationConfig": {
-                "responseModalities": ["TEXT", "IMAGE"],
-                "imageConfig": {
-                    "aspectRatio": aspect_ratio,
-                    "imageSize": image_size
-                }
-            }
+            "model": "doubao-seedream-4.5",
+            "prompt": prompt,
+            "images": reference_images,
+            "size": size,
+            "watermark": watermark,
+            "stream": False,
+            "response_format": "url"
         }
         
         # 构建 API URL
-        api_url = "https://api.modelverse.cn/v1beta/models/gemini-3-pro-image-preview:generateContent"
+        api_url = "https://api.modelverse.cn/v1/images/generations"
         
         # 发送请求
         headers = {
-            "x-goog-api-key": self.api_key,
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+        
+        logger.info(f"调用 Doubao Seedream API: {api_url}, model: doubao-seedream-4.5")
         
         with httpx.Client(timeout=self.timeout) as client:
             response = client.post(api_url, json=request_body, headers=headers)
@@ -1481,57 +1984,17 @@ class AIClient:
         # 解析响应
         if "error" in result:
             error_msg = result["error"].get("message", "未知错误")
-            raise Exception(f"Gemini API 错误: {error_msg}")
+            raise Exception(f"Doubao Seedream API 错误: {error_msg}")
         
-        # 从响应中提取图片数据
-        candidates = result.get("candidates", [])
-        if not candidates:
-            raise Exception("Gemini API 返回空结果")
+        data = result.get("data", [])
+        if not data:
+            raise Exception("Doubao Seedream API 返回空结果")
         
-        content = candidates[0].get("content", {})
-        parts = content.get("parts", [])
-        
-        # 查找图片数据
-        for part in parts:
-            if "inlineData" in part:
-                image_base64 = part["inlineData"]["data"]
-                return image_base64
-        
-        raise Exception("Gemini API 响应中未找到图片数据")
-    
-    def _save_base64_image_to_temp_url(self, image_base64: str) -> str:
-        """
-        将 Base64 编码的图片保存为临时文件并返回本地标识
-        
-        Args:
-            image_base64: Base64 编码的图片数据
+        image_url = data[0].get("url")
+        if not image_url:
+            raise Exception("Doubao Seedream API 响应中未找到图片 URL")
             
-        Returns:
-            本地文件标识（格式为 "local://<abs_path>"，调用方可直接上传）
-        """
-        # 解码 Base64 图片
-        image_data = base64.b64decode(image_base64)
-        
-        # 保存到临时文件
-        import tempfile
-        temp_fd, temp_file_path = tempfile.mkstemp(suffix='.png')
-        try:
-            with os.fdopen(temp_fd, 'wb') as tmp_file:
-                tmp_file.write(image_data)
-            # 返回本地文件标识，使用 "local://" 前缀以便调用方识别
-            return f"local://{temp_file_path}"
-        except Exception as e:
-            # 确保文件描述符和临时文件被清理，防止磁盘空间不足时残留空文件
-            try:
-                os.close(temp_fd)
-            except Exception:
-                pass
-            try:
-                if temp_file_path and os.path.exists(temp_file_path):
-                    os.remove(temp_file_path)
-            except Exception:
-                pass
-            raise Exception(f"保存临时图片失败: {e}")
+        return image_url
     
     def _do_generate_image_by_reference(
         self,
@@ -1543,51 +2006,34 @@ class AIClient:
     ) -> str:
         """
         执行图生图调用的内部方法（不包含重试逻辑）
-        
-        Args:
-            prompt: 图片生成提示词（英文或中文，根据模型决定）
-            reference_images: 参考图片URL列表
-            model: 模型名称
-            aspect_ratio: 图片宽高比
-            guidance_scale: 引导尺度（Nano Banana2 不支持此参数）
-        Returns:
-            生成的图片URL
         """
-        # 检查是否为 Nano Banana2 模型
-        if model == "gemini-3-pro-image-preview":
-            # 使用 Gemini API
-            logger.info(f"使用 Nano Banana2 (Gemini) API 进行图生图")
-            
-            # 强制使用 2K
-            image_size = "2K"
-            
-            # 下载参考图片并转换为 Base64
-            reference_images_base64 = []
-            for img_url in reference_images:
-                try:
-                    base64_data = self._download_image_to_base64(img_url)
-                    reference_images_base64.append(base64_data)
-                    logger.info(f"成功下载并转换参考图片: {img_url}")
-                except Exception as e:
-                    logger.warning(f"下载参考图片失败，跳过: {e}")
-            
-            # if not reference_images_base64:
-            #     raise Exception("Nano Banana2 图生图需要至少一张参考图片，但所有参考图片下载失败")
-            
-            # 调用 Gemini API
-            image_base64 = self._call_gemini_image_api(
+        # 检查是否为 Gemini 模型
+        if "gemini" in model.lower():
+            return self._call_gemini_image_api(
                 prompt=prompt,
-                reference_images_base64=reference_images_base64,
-                aspect_ratio=aspect_ratio,
-                image_size=image_size
+                model=model,
+                reference_images=reference_images,
+                aspect_ratio=aspect_ratio
+            )
+
+        # 检查是否为 豆包 Seedream 4.5 模型
+        if model == "doubao-seedream-4.5":
+            # 使用 Doubao Seedream API
+            logger.info(f"使用 豆包 Seedream 4.5 API 进行图生图")
+            
+            # 根据 aspect_ratio 映射 size
+            # Doubao 支持: 512x512, 768x512, 512x768, 1024x1024, 1280x720, 720x1280, 2k, 4k
+            # 我们这里统一使用 2k
+            image_size = "2k"
+            
+            # 调用 Doubao API
+            image_url = self._call_doubao_seedream_api(
+                prompt=prompt,
+                reference_images=reference_images,
+                size=image_size
             )
             
-            # 将 Base64 图片转换为临时文件并返回 URL
-            # 注意：这里返回的是临时文件路径，实际使用时需要上传到US3
-            # 为了保持接口一致性，我们创建一个临时URL
-            # 实际的上传逻辑在调用方（shot_task.py）中处理
-            temp_url = self._save_base64_image_to_temp_url(image_base64)
-            return temp_url
+            return image_url
         else:
             # 使用原有的 OpenAI 兼容 API
             # 构建extra_body参数
@@ -1641,10 +2087,10 @@ class AIClient:
                 if model_config and "aspect_ratio" in model_config:
                     aspect_ratio = model_config["aspect_ratio"]
                 else:
-                    aspect_ratio = "16:9"  # 默认值
+                    aspect_ratio = "1536x864"  # 默认值
             except Exception as e:
                 logger.warning(f"获取模型配置失败，使用默认 aspect_ratio: {e}")
-                aspect_ratio = "16:9"  # 默认值
+                aspect_ratio = "1536x864"  # 默认值
         
         logger.info(f"图生图开始，模型: {model}, aspect_ratio: {aspect_ratio}, 提示词长度: {len(prompt)}, 参考图片数量: {len(reference_images)}")
         logger.info(f"【图生图提示词】: {prompt}")
@@ -1880,6 +2326,10 @@ class AIClient:
             if isinstance(error, (TimeoutError, FuturesTimeoutError)):
                 return True
             
+            # JSON 解析错误或空内容错误可重试（针对解析长文本或不稳定输出的情况）
+            if isinstance(error, (json.JSONDecodeError, ValueError)):
+                return True
+            
             # 网络错误可重试
             if isinstance(error, (openai.APIConnectionError, openai.APITimeoutError)):
                 return True
@@ -1910,6 +2360,7 @@ class AIClient:
         character_profiles: List[str],
         previous_shot_description: Optional[str],
         current_shot_description: str,
+        environment_desc: str = "无",
         model: str = None,
         image_model: str = None
     ) -> str:
@@ -1920,6 +2371,7 @@ class AIClient:
             character_profiles: 角色档案列表（1-4个角色的外貌特征描述，中文）
             previous_shot_description: 上一分镜描述（中文，可选）
             current_shot_description: 当前分镜描述（中文）
+            environment_desc: 环境设定描述（JSON字符串或中文描述，默认"无"）
             model: LLM模型名称，默认使用 prompt_generation_model
             image_model: 图片模型名称（用于确定输出语言），默认使用 image_to_image_model
 
@@ -1931,25 +2383,49 @@ class AIClient:
 
         # 从文件加载prompt模板
         prompt_template = self._load_prompt_template("shot_image")
+        
+        # 替换模板中的占位符 (针对非 format 占位符)
+        if "{{SCENE_ENVIRONMENT}}" in prompt_template:
+            # 需要对 environment_desc 中的大括号进行转义，防止 format 报错
+            safe_env_desc = environment_desc.replace("{", "{{").replace("}", "}}")
+            prompt_template = prompt_template.replace("{{SCENE_ENVIRONMENT}}", safe_env_desc)
 
         # 确定输出语言：从图片模型配置中获取支持的语言
         image_model = image_model or self.image_to_image_model
-        output_language = "英文"  # 默认英文
-        word_unit = "单词"  # 默认单词
-        max_words = 150  # 默认字数上限
+        output_language = "中文"  # 默认使用中文
+        word_unit = "字"  # 默认单位
+        max_words = 300  # 默认字数上限
 
         try:
+            # 尝试获取模型配置
             model_config = ModelConfigService.get_model_config(image_model, "image_to_image")
+            
+            # 如果是 豆包模型、Nano Banana 或者 配置明确支持中文，则使用中文
+            is_chinese_preferred = image_model and (
+                "doubao" in image_model.lower() or 
+                "seedream" in image_model.lower() or
+                "banana" in image_model.lower()
+            )
+            
             if model_config and "languages" in model_config:
                 languages = model_config["languages"]
-                # 如果模型支持中文，使用中文输出
-                if "zh" in languages or "chinese" in [lang.lower() for lang in languages]:
-                    output_language = "中文"
-                    word_unit = "字"
+                # 只有当模型明确只支持英文时，才切换到英文
+                if "zh" not in languages and "chinese" not in [lang.lower() for lang in languages] and not is_chinese_preferred:
+                    output_language = "英文"
+                    word_unit = "单词"
+                    max_words = 150
+            elif not is_chinese_preferred and image_model and ("flux" in image_model.lower()):
+                # Flux 等模型默认使用英文
+                output_language = "英文"
+                word_unit = "单词"
+                max_words = 150
+            
             if model_config and "max_words" in model_config:
                 max_words = model_config.get("max_words", max_words)
         except Exception as e:
-            logger.warning(f"获取图片模型配置失败，使用默认英文输出: {e}")
+            logger.warning(f"获取图片模型配置失败，使用默认中文输出: {e}")
+
+        logger.info(f"分镜提示词生成：模型={image_model}, 目标语言={output_language}, 字数限制={max_words}{word_unit}")
 
         # 格式化角色档案
         character_profiles_text = "\n".join([f"- {profile}" for profile in character_profiles]) if character_profiles else "无"

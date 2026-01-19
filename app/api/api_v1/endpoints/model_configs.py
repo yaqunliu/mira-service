@@ -51,7 +51,7 @@ async def get_model_configs(
     try:
         if model_type:
             # 验证 model_type
-            valid_types = ["llm", "text_to_image", "image_to_image"]
+            valid_types = ["llm", "text_to_image", "image_to_image", "video"]
             if model_type not in valid_types:
                 raise HTTPException(
                     status_code=400,
@@ -106,7 +106,7 @@ async def get_default_model(
         }
     """
     try:
-        valid_types = ["llm", "text_to_image", "image_to_image"]
+        valid_types = ["llm", "text_to_image", "image_to_image", "video"]
         if model_type not in valid_types:
             raise HTTPException(
                 status_code=400,

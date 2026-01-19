@@ -18,6 +18,8 @@ from app.schemas.shot import (
     ShotRegenerateRequest,
     ShotCharactersUpdateRequest,
     ShotNarrationUpdateRequest,
+    ShotRegenerateVideoRequest,
+    ShotGenerateVideoRequest,
 )
 from app.utils.response import success_response
 from app.tasks.shot_task import generate_single_shot_image_task
@@ -69,7 +71,7 @@ async def get_scene_shots(
     
     return success_response(
         data={
-            "items": [shot.model_dump(by_alias=True) for shot in shot_responses],
+            "items": [shot.model_dump() for shot in shot_responses],
             "total": len(shot_responses)
         },
         message="获取分镜列表成功"
@@ -146,7 +148,7 @@ async def create_shot(
     shot_response = ShotResponse.from_db_model(shot)
     
     return success_response(
-        data=shot_response.model_dump(by_alias=True),
+        data=shot_response.model_dump(),
         message="分镜创建成功"
     )
 
@@ -182,7 +184,7 @@ async def get_shot(
     shot_response = ShotResponse.from_db_model(shot)
     
     return success_response(
-        data=shot_response.model_dump(by_alias=True),
+        data=shot_response.model_dump(),
         message="获取分镜成功"
     )
 
@@ -259,7 +261,7 @@ async def update_shot(
     shot_response = ShotResponse.from_db_model(shot)
     
     return success_response(
-        data=shot_response.model_dump(by_alias=True),
+        data=shot_response.model_dump(),
         message="分镜更新成功"
     )
 
@@ -295,7 +297,7 @@ async def update_shot_characters(
     
     shot_response = ShotResponse.from_db_model(shot)
     return success_response(
-        data=shot_response.model_dump(by_alias=True),
+        data=shot_response.model_dump(),
         message="分镜角色更新成功"
     )
 
@@ -328,13 +330,14 @@ async def update_shot_narration(
     
     shot_response = ShotResponse.from_db_model(shot)
     return success_response(
-        data=shot_response.model_dump(by_alias=True),
+        data=shot_response.model_dump(),
         message="分镜旁白更新成功"
     )
 
 @router.post("/{shot_uuid}/generate-image")
 async def generate_shot_image(
     shot_uuid: str,
+    request: ShotRegenerateRequest = ShotRegenerateRequest(),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -370,6 +373,12 @@ async def generate_shot_image(
     if shot.scene.creation.owner_id != user.user_id:
         raise HTTPException(status_code=403, detail="无权限操作该分镜")
     
+    # 如果提供了新的提示词，则更新
+    if request.image_prompt:
+        shot.image_prompt = request.image_prompt
+        db.commit()
+        db.refresh(shot)
+    
     # 检查是否有图片提示词
     if not shot.image_prompt:
         raise HTTPException(status_code=400, detail="分镜没有图片提示词，无法生成图片")
@@ -377,10 +386,11 @@ async def generate_shot_image(
     creation_id = shot.scene.creation.creation_id
     
     # 计算需要的积分（提交任务时立即冻结，防止多设备并发超额使用）
-    # 优先使用 creation.extra_data 中的 image_to_image_model（没有则回退 text_to_image_model，再回退 settings）
+    # 优先使用 request.model_name，其次 creation.extra_data 中的 image_to_image_model（没有则回退 text_to_image_model，再回退 settings）
     extra_data = shot.scene.creation.extra_data or {}
     image_model = (
-        extra_data.get("image_to_image_model")
+        request.model_name
+        or extra_data.get("image_to_image_model")
         or extra_data.get("text_to_image_model")
         or settings.IMAGE_MODEL_IMAGE_TO_IMAGE
         or settings.IMAGE_MODEL_TEXT_TO_IMAGE
@@ -433,6 +443,8 @@ async def generate_shot_image(
     task = generate_single_shot_image_task.delay(
         shot_id=shot.shot_id,
         creation_id=creation_id,
+        model_name=request.model_name,
+        custom_prompt=request.image_prompt,
         freeze_record_id=freeze_record.record_id  # 传递冻结记录ID
     )
     
@@ -496,17 +508,22 @@ async def regenerate_shot_image(
     if shot.scene.creation.owner_id != user.user_id:
         raise HTTPException(status_code=403, detail="无权限操作该分镜")
 
-    # 是否强制重新生成提示词：如果请求中没有提供新的提示词，则强制重新生成
-    force_regen_prompt = False
+    # 是否强制重新生成提示词：如果请求中没有提供新的提示词，且数据库中也没有提示词，则标记为重新生成
+    force_regen_prompt = request.refresh_prompt
     if request.image_prompt is not None:
         shot.image_prompt = request.image_prompt
-    else:
-        # 如果没有提供新的提示词，标记为需要重新生成
+        force_regen_prompt = False  # 提供了新提示词，不需要重新生成
+    elif not shot.image_prompt:
+        # 如果没有提供新的提示词，且数据库中也没有，标记为需要重新生成
+        force_regen_prompt = True
+    elif request.refresh_prompt:
+        # 如果明确要求刷新提示词
+        shot.image_prompt = None
         force_regen_prompt = True
 
     # 检查是否有分镜描述（如果提示词需要重新生成，必须有描述）
     if force_regen_prompt and not shot.description:
-        raise HTTPException(status_code=400, detail="分镜没有描述，无法重新生成提示词")
+        raise HTTPException(status_code=400, detail="分镜没有描述且没有现有提示词，无法生成提示词")
 
     # 如果既没有提示词，也不打算重新生成（这不应该发生），则报错
     if not force_regen_prompt and not shot.image_prompt:
@@ -579,6 +596,7 @@ async def regenerate_shot_image(
         shot_id=shot.shot_id,
         creation_id=creation_id,
         force_regen_prompt=force_regen_prompt,
+        model_name=request.model_name,
         freeze_record_id=freeze_record.record_id  # 传递冻结记录ID
     )
 
@@ -599,6 +617,7 @@ async def regenerate_shot_image(
 @router.post("/{shot_uuid}/regenerate-video")
 async def regenerate_shot_video(
     shot_uuid: str,
+    request: ShotRegenerateVideoRequest = ShotRegenerateVideoRequest(),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -624,10 +643,15 @@ async def regenerate_shot_video(
         raise HTTPException(status_code=403, detail="无权限操作该分镜")
         
     # 启动异步任务
-    task_id = generate_single_shot_video_task.delay(shot.shot_id)
+    task = generate_single_shot_video_task.delay(
+        shot_id=shot.shot_id,
+        creation_id=shot.scene.creation_id,
+        model_name=request.model_name,
+        last_frame_image_url=request.last_frame_image_url
+    )
     
     return success_response(
-        data={"task_id": str(task_id)},
+        data={"task_id": str(task.id)},
         message="分镜视频重新生成任务已提交"
     )
 
@@ -751,7 +775,7 @@ async def add_shot_characters(
     shot_response = ShotResponse.from_db_model(shot)
     
     return success_response(
-        data=shot_response.model_dump(by_alias=True),
+        data=shot_response.model_dump(),
         message="角色关联成功"
     )
 
@@ -800,7 +824,7 @@ async def remove_shot_character(
     shot_response = ShotResponse.from_db_model(shot)
     
     return success_response(
-        data=shot_response.model_dump(by_alias=True),
+        data=shot_response.model_dump(),
         message="角色移除成功"
     )
 
@@ -873,6 +897,7 @@ async def generate_video_prompt(
 @router.post("/{shot_uuid}/generate-video")
 async def generate_shot_video(
     shot_uuid: str,
+    request: ShotGenerateVideoRequest = ShotGenerateVideoRequest(),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -906,17 +931,28 @@ async def generate_shot_video(
 
     # 注意：video_prompt 将在视频生成任务中自动生成，无需在此等待
 
+    # 获取视频生成模型
+    video_model = request.model_name or (creation.extra_data or {}).get('video_model', 'sora2')
+
     # 计算视频生成积分
     shot_duration = shot.video_duration if shot.video_duration else 5
-    if shot_duration <= 4:
-        video_duration = 4
-    elif shot_duration <= 8:
-        video_duration = 8
+    
+    # 根据模型确定生成时长
+    if video_model == "doubao-seedance-1-5-pro-251215":
+        video_duration = 5
+    elif video_model == "Wan-AI/Wan2.6-I2V":
+        if shot_duration <= 5: video_duration = 5
+        elif shot_duration <= 10: video_duration = 10
+        else: video_duration = 15
+    elif video_model in ["viduq2-pro", "viduq2-turbo"]:
+        video_duration = min(max(int(shot_duration), 1), 10)
     else:
-        video_duration = 12
+        if shot_duration <= 4: video_duration = 4
+        elif shot_duration <= 8: video_duration = 8
+        else: video_duration = 12
 
     # 从ModelPrices获取视频成本
-    cost = ModelPrices.calculate_video_cost("sora2", video_duration)
+    cost = ModelPrices.calculate_video_cost(video_model, video_duration)
     required_points = int(math.ceil(cost * 100))
 
     # 冻结积分
@@ -928,11 +964,12 @@ async def generate_shot_video(
             operation_type="generate_video",
             creation_id=creation.creation_id,
             novel_id=creation.novel_id,
-            description=f"生成分镜视频（{shot.title}，{video_duration}秒）",
+            description=f"生成分镜视频（{shot.title}，{video_duration}秒，{video_model}）",
             extra_data={
                 "shot_id": shot.shot_id,
                 "shot_uuid": shot_uuid,
-                "video_duration": video_duration
+                "video_duration": video_duration,
+                "video_model": video_model
             }
         )
     except InsufficientPointsError as e:
@@ -951,7 +988,9 @@ async def generate_shot_video(
     task = generate_single_shot_video_task.delay(
         shot_id=shot.shot_id,
         creation_id=creation.creation_id,
-        freeze_record_id=freeze_record.record_id
+        freeze_record_id=freeze_record.record_id,
+        model_name=video_model,
+        last_frame_image_url=request.last_frame_image_url
     )
 
     return success_response(
@@ -959,7 +998,8 @@ async def generate_shot_video(
             "task_id": task.id,
             "shot_uuid": shot_uuid,
             "video_duration": video_duration,
-            "required_points": required_points
+            "required_points": required_points,
+            "video_model": video_model
         },
         message="视频生成任务已启动"
     )

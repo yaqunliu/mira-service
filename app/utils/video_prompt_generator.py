@@ -12,60 +12,142 @@ def generate_video_prompt(
     shot,
     script: str,
     dialogues: List[Dict[str, str]],
-    characters: List[Dict[str, str]] = None
+    characters: List[Dict[str, str]] = None,
+    image_prompt: str = None
 ) -> str:
     """
     使用 LLM 生成详细的视频提示词（纯文本，不是JSON）
-
-    Args:
-        llm_model: LLM模型名称
-        shot: Shot对象
-        script: 分镜描述
-        dialogues: 台词列表
-        characters: 角色列表
-
-    Returns:
-        video_prompt: 详细的中文视频提示词（纯文本）
     """
-    # 构建系统提示词 - 基于 video_generation_v2.md
-    system_prompt = """你是一个专业的视频运镜设计师。根据分镜的画面描述、角色信息和台词，生成详细的中文视频提示词。
+    # 默认调用基础范式
+    return _generate_video_prompt_internal(
+        llm_model=llm_model,
+        shot=shot,
+        script=script,
+        dialogues=dialogues,
+        characters=characters,
+        image_prompt=image_prompt,
+        paradigm="standard"
+    )
 
-## 输出格式
-- **必须返回详细的中文提示词**，用于视频生成
-- **必须包含以下所有要素**（按顺序描述）：
-  1. **风格与镜头类型**：动画风格，动态镜头，景别（全景/中景/近景/特写），视角（平视/俯视/仰视），时长
-  2. **剪辑结构**（重要！）：如果分镜时长较长（>6秒），建议拆分为多个小分镜
-     - 例如：0-3秒 远景建立画面 -> cut切 -> 3-7秒 近景特写表情 -> dissolve溶解 -> 7-10秒 中景+横移
-  3. **镜头运动**：推进/拉远/横移/旋转/固定/一镜到底，运动速度（缓慢/快速），镜头切换方式
-  4. **场景环境**：地点，时间，天气，环境细节，氛围
-  5. **光影效果**：光线类型，光影变化，色调，反射效果
-  6. **角色描述**（如有多个角色需逐一描述）：
-     - 角色标识（名字-年龄段）
-     - 外观特征（服装、发型、配饰等）
-     - 位置和姿态
-     - 动作变化（起始→过程→结束）
-     - 表情变化（起始→过程→结束）
-     - 音色特征（如有对话）：性别、年龄、音调、语速、情绪
-     - 说话内容（完整台词）
-  7. **动态元素**：环境动态（雨滴、风、烟雾等），物体运动，粒子效果
-  8. **细节强调**：面部表情细节，情绪传达，重点动作
-  9. **技术要求**：画质要求，动画风格，帧率要求，音频同步要求
 
-## 规则
-- **输出必须是中文**
-- **输出必须详细完整**，包含上述所有要素
-- 风格固定为动画/动漫风格；禁止写实/真人风格
-- **输出仅为一段详细的中文文本提示词**，不要使用JSON格式，不要添加额外解释
-- **优先使用复杂剪辑**：分镜时长>6秒时，应拆分为多个小分镜（不同景别+运镜组合）
-- 镜头运动描述要具体（例如："从全景缓慢推近到中景（约3秒），然后横移（约2秒）"）
-- 剪辑切换要明确（例如："cut快切到近景"、"dissolve溶解过渡到远景"）
-- 角色动作和表情变化要描述过程（例如："表情从紧张逐渐变得沮丧"）
-- 如有对话，必须包含完整的音色特征和说话内容
+def generate_video_only_prompt(
+    llm_model: str,
+    shot,
+    script: str,
+    characters: List[Dict[str, str]] = None,
+    image_prompt: str = None
+) -> str:
+    """
+    生成纯视频提示词（无声、无台词，专注于运镜和动作）
+    """
+    return _generate_video_prompt_internal(
+        llm_model=llm_model,
+        shot=shot,
+        script=script,
+        dialogues=[], # 强制无台词
+        characters=characters,
+        image_prompt=image_prompt,
+        paradigm="video_only"
+    )
+
+
+def _generate_video_prompt_internal(
+    llm_model: str,
+    shot,
+    script: str,
+    dialogues: List[Dict[str, str]],
+    characters: List[Dict[str, str]] = None,
+    image_prompt: str = None,
+    paradigm: str = "standard"
+) -> str:
+    """
+    内部统一生成函数
+    """
+    # 初始化 AIClient
+    ai_client = AIClient(llm_model_name=llm_model)
+
+    # 加载提示词模板
+    try:
+        system_prompt = ai_client._load_prompt_template("video_generation_v2")
+        logger.info("成功加载视频提示词模板 v2")
+        
+        # 如果是 video_only 模式，在系统提示词后面添加额外指令
+        if paradigm == "video_only":
+            system_prompt += "\n\n**重要：当前为纯视频模式，请忽略所有台词和声音描述，不要在输出中包含任何音频相关的特征或内容。**"
+    except Exception as e:
+        logger.warning(f"加载视频提示词模板 v2 失败，使用内置模板: {e}")
+        if paradigm == "video_only":
+            system_prompt = """你是一个顶级的视频导演、运镜设计师和 AI 视频提示词专家。
+请根据分镜描述和角色信息，按照以下“无声电影感视觉范式”生成提示词。
+此提示词专门用于生成纯视频内容，严禁包含任何关于声音、台词、对话或发声角色的描述。
+
+## 必须严格遵守的输出格式：
+
+Style：[描述视觉风格。默认兜底设定：电影质感动画风格，具备精细的线条与写实光影，强调戏剧性高对比和角色表情纹理细节。]
+
+[以自然语言撰写场景描述。描述角色、服装、场景、天气与其他细节。尽量具体一点，让生成出的影片更贴近想象。]
+
+Characters：
+On-screen Character：[描述画面中出现的角色及其视觉细节，需参考“图片提示词”以确保不遗漏画面中的关键人物。只需描述外观和神态，严禁描述声音。]
+
+Cinematography：
+Camera：[镜头类型与运动，如：中近景，缓慢推近 / 环绕镜头 / 低角度仰拍]
+Lens：[虚拟焦距与景深效果，如：35mm，浅景深]
+Lighting：[光影布局，如：侧逆光，暖色主光，强对比光影]
+Mood：[情绪氛围，如：温情、悬疑、热血、宁静]
+
+Actions：
+– [时长: Xs] [运镜方式]：[人物角色] [具体视觉动作描述]，[神态变化]。例如：人物猛地抬头，眼神中流露出惊恐，双手紧握。
+– [时长: Xs] [运镜方式]：[环境/特效/物体] [动态描述]。例如：背景中的火焰剧烈跳动，烟雾向右侧急速飘散。
+– [最终画面状态描述]
+
+## 输出规则：
+- **严禁包含台词/声音**：绝对不要出现“说”、“喊”、“台词”、“声音”、“音效”等任何与听觉相关的词汇。
+- **视觉驱动**：所有的情绪和剧情必须通过人物的【动作】、【神态】和【运镜】来表达。
+- **全员自然动态**：画面中所有元素必须有明确的动态描述，严禁 PPT 感。
+- **Style 保持一致**：默认使用电影质感动画风格。
+- **仅输出中文文本**。
+"""
+        else:
+            # 标准范式 (带声音) - 旧版兜底
+            system_prompt = """你是一个顶级的视频导演、运镜设计师和 Sora 2 提示词专家。
+请根据分镜描述、角色信息和台词，按照以下“结构化电影感范式”生成提示词。
+
+## 必须严格遵守的输出格式：
+
+Style：[描述视觉风格。默认兜底设定：电影质感动画风格，具备精细的线条与写实光影，强调戏剧性高对比和角色表情纹理细节。]
+
+[以自然语言撰寫場景描述。描述角色、服裝、場景、天氣與其他細節。盡量具體一點，讓生成出的影片更貼近想像。]
+
+Characters：
+On-screen Character：[描述画面中出现的角色及其视觉细节，需参考“图片提示词”以确保不遗漏画面中的任何人（如路人、敌对阵营等）]
+Voice Character：[描述发声的角色及其声音特质，如无说话角色则填：无]
+
+Cinematography：
+Camera：[镜头类型与运动，如：中近景，缓慢推近]
+Lens：[虚拟焦距与景深效果，如：35mm，浅景深]
+Lighting：[光影布局，如：侧逆光，暖色主光]
+Mood：[情绪氛围，如：温情、悬疑、热血]
+
+Actions：
+– [时长: Xs] [运镜方式，如：切换镜头至人物特写 / 俯视转正视 / 快速推近]：[人物角色] [具体动作描述]，[表情/神态]。人物开口说：“[台词内容]”。
+– [时长: Xs] [运镜方式]：[人物/环境/特效] [动态描述]，背景中的 [其他角色] 正在 [动作]。
+– [最终状态描述]
+
+Background Sound：
+[环境音效描述，如：雨声、脚步声、机械嗡鸣，严禁包含 BGM/背景音乐]
+
+## 输出规则
+- **全员自然动态（拒绝PPT感）**：画面中出现的**所有人物**（无论主角还是背景路人）必须保持自然的生理微动。
+- **Action 详情化**：每个 Action 必须包含明确的时长、运镜、人物、详尽动作、台词及表情。
+- **音画同步**：Background Sound 必须与 Actions 呼应。
+- **对话必现**：台词必须自然融入 Actions 的描述中。
+- **严禁 BGM**：不得描述任何背景音乐或乐器。
 """
 
-    # 格式化台词/旁白（从参数 dialogues 获取，已在调用方解析好）
+    # 格式化台词/旁白 (仅在非 video_only 模式下使用)
     dialogues_str = ""
-    if dialogues:
+    if paradigm != "video_only" and dialogues:
         dialogues_str = "\n".join([f"- {list(d.keys())[0]}: {list(d.values())[0]}" for d in dialogues])
 
     # 格式化角色信息
@@ -73,14 +155,11 @@ def generate_video_prompt(
     if characters:
         character_parts = []
         for char in characters:
-            # 优先使用智能角色标识（包含状态信息）
             identity = char.get('identity')
             if identity:
-                # 使用角色标识（如：张三-青年-雨天湿透）
                 appearance = char.get('appearance', '')
                 character_parts.append(f"{identity}，{appearance}" if appearance else identity)
             else:
-                # 兼容旧格式
                 name = char.get('name', '未知')
                 age_group = char.get('age_group', '未知')
                 appearance = char.get('appearance', '')
@@ -92,55 +171,55 @@ def generate_video_prompt(
     if hasattr(shot, 'scene') and shot.scene:
         scene_atmosphere = shot.scene.atmosphere or ""
 
-    # 获取分镜时长（用于指导剪辑结构）
+    # 获取分镜时长
     shot_duration = shot.video_duration if hasattr(shot, 'video_duration') and shot.video_duration else 5
 
-    user_prompt = f"""请为以下分镜生成详细的视频提示词：
+    if paradigm == "video_only":
+        user_prompt = f"""请根据以下数据，按照“无声电影感视觉范式”为 AI 视频生成器生成提示词：
 
-分镜信息：
-- 画面描述：{script}
-- 场景氛围：{scene_atmosphere}
-- 分镜时长：{shot_duration}秒
+### 1. 核心分镜数据
+- **画面描述**：{script}
+- **图片提示词（关键参考）**：{image_prompt if image_prompt else '无'}
+- **氛围基调**：{scene_atmosphere if scene_atmosphere else '未指定'}
+- **视频时长**：{shot_duration} 秒
 
-角色信息：
-{characters_str if characters_str else '无'}
+### 2. 登场角色
+{characters_str if characters_str else '（本分镜无特定角色）'}
 
-台词/旁白：
-{dialogues_str if dialogues_str else '无'}
+---
+**生成要求**：
+1. **彻底静音**：严禁出现任何台词、声音描述或声音角色。
+2. **纯视觉 Actions**：将总时长 {shot_duration} 秒拆解为动作节拍。必须包含：镜头移动、谁在做动作、动作细节、神态表情。
+3. **视觉风格**：电影质感动画风格。
+4. **Cinematography**：设计精妙的运镜和光影，通过视觉传达情绪。"""
+    else:
+        # 针对 video_generation_v2 模板优化的输入格式
+        user_prompt = f"""请根据以下分镜数据，生成详细的视频提示词：
 
-请按照要求生成一段详细完整的中文视频提示词。"""
+图片提示词：{image_prompt if image_prompt else '无'}
+分镜剧本：{script}
+台词/旁白：{dialogues_str if dialogues_str else '（本分镜无台词）'}
+角色信息：{characters_str if characters_str else '（本分镜无特定角色）'}
+分镜时长：{shot_duration}秒
+
+---
+**其他参考信息**：
+- 氛围基调：{scene_atmosphere if scene_atmosphere else '未指定'}"""
 
     # 调用 LLM
     try:
-        ai_client = AIClient(llm_model_name=llm_model)
-
-        # 构建消息
-        messages = [
-            {
-                "role": "system",
-                "content": system_prompt
-            },
-            {
-                "role": "user",
-                "content": user_prompt
-            }
-        ]
-
-        # 调用 AI（不使用 JSON 格式）
-        response = ai_client.chat_completion(
-            messages=messages,
-            model=llm_model
-        )
-
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+        
+        logger.info(f"[{paradigm}] AI INPUT PROMPT...")
+        response = ai_client.chat_completion(messages=messages, model=llm_model)
         video_prompt = response.get("content", "").strip()
 
         if not video_prompt:
             raise Exception("LLM 返回了空的视频提示词")
 
-        logger.info(f"Generated video prompt ({len(video_prompt)} chars): {video_prompt[:200]}...")
-
+        logger.info(f"[{paradigm}] AI OUTPUT PROMPT:\n{video_prompt}")
         return video_prompt
 
     except Exception as e:
-        logger.error(f"Error calling LLM for video prompt generation: {str(e)}")
+        logger.error(f"Error generating {paradigm} prompt: {str(e)}")
         raise Exception(f"视频提示词生成失败：{str(e)}")

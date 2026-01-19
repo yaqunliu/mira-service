@@ -19,7 +19,15 @@ from app.schemas.creation import CreationStatus
 from app.utils.task_types import TaskType
 from app.services.model_config_service import ModelConfigService
 
-@celery_app.task(bind=True, name="character_analysis_task")
+@celery_app.task(
+    bind=True, 
+    name="character_analysis_task",
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True
+)
 def character_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, chapter_content_url: str):
     """
     角色分析任务（第一步）
@@ -360,7 +368,15 @@ def character_analysis_task(self, novel_id: int, chapter_id: int, creation_id: i
                 logger.warning(f"删除临时文件失败: {str(e)}")
 
 
-@celery_app.task(bind=True, name="scene_analysis_task")
+@celery_app.task(
+    bind=True, 
+    name="scene_analysis_task",
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True
+)
 def scene_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, chapter_content_url: str):
     """
     场景分析任务（第二步）
@@ -710,7 +726,15 @@ def scene_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, 
                 logger.warning(f"删除临时文件失败: {str(e)}")
 
 
-@celery_app.task(bind=True, name="shot_analysis_task")
+@celery_app.task(
+    bind=True, 
+    name="shot_analysis_task",
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True
+)
 def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, chapter_content_url: str):
     """
     分镜分析任务（Step 3: 分镜拆解）

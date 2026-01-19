@@ -106,25 +106,25 @@ class ModelConfigFactory:
     # 文生图模型配置
     _TEXT_TO_IMAGE_MODELS = [
         ModelConfig(
-            model_name="Qwen/Qwen-Image",
+            model_name="gemini-3-pro-image-preview",
             model_type="text_to_image",
-            display_name="通义千问图像生成",
-            description="阿里云通义千问图像生成模型",
-            config={"aspect_ratio": "1024x576", "languages": ["zh"], "max_words": 150},
+            display_name="Gemini 3 Pro Image",
+            description="Gemini 3 Pro Image 图像生成模型 (Nano Banana 2)",
+            config={"aspect_ratio": "16:9", "languages": ["zh", "en"], "max_words": 300},
             is_enabled=True,
             is_default=True,
             sort_order=1,
         ),
-        # ModelConfig(
-        #     model_name="black-forest-labs/flux-kontext-pro/multi",
-        #     model_type="text_to_image",
-        #     display_name="Flux Kontext Pro",
-        #     description="Black Forest Labs Flux Kontext Pro 模型",
-        #     config={"aspect_ratio": "16:9", "languages": ["en"]},
-        #     is_enabled=True,
-        #     is_default=False,
-        #     sort_order=2,
-        # ),
+        ModelConfig(
+            model_name="doubao-seedream-4.5",
+            model_type="text_to_image",
+            display_name="豆包 Seedream 4.5",
+            description="字节跳动豆包 Seedream 4.5 图像生成模型",
+            config={"aspect_ratio": "16:9", "size": "2K", "languages": ["zh", "en"], "max_words": 300},
+            is_enabled=True,
+            is_default=False,
+            sort_order=3,
+        ),
     ]
     
     # 图生图模型配置
@@ -132,32 +132,66 @@ class ModelConfigFactory:
         ModelConfig(
             model_name="gemini-3-pro-image-preview",
             model_type="image_to_image",
-            display_name="Nano Banana2 (图生图)",
-            description="Gemini 3 Pro Image (Nano Banana2) 图生图模型，支持中文提示词",
-            config={"aspect_ratio": "16:9", "image_size": "2K", "languages": ["zh"], "max_words": 300},
+            display_name="Gemini 3 Pro Image",
+            description="Gemini 3 Pro Image 图像生成模型 (Nano Banana 2)",
+            config={"aspect_ratio": "16:9", "languages": ["zh", "en"], "max_words": 300},
             is_enabled=True,
             is_default=True,
             sort_order=1,
         ),
         ModelConfig(
-            model_name="black-forest-labs/flux-kontext-pro/multi",
+            model_name="doubao-seedream-4.5",
             model_type="image_to_image",
-            display_name="Flux Kontext Pro (图生图)",
-            description="Black Forest Labs Flux Kontext Pro 图生图模型",
-            config={"aspect_ratio": "16:9", "guidance_scale": 3.5, "languages": ["en"], "max_words": 150},
+            display_name="豆包 Seedream 4.5",
+            description="字节跳动豆包 Seedream 4.5 图像生成模型，支持单图或多图参考",
+            config={"aspect_ratio": "16:9", "size": "2K", "languages": ["zh", "en"], "max_words": 300},
             is_enabled=True,
             is_default=False,
             sort_order=2,
         ),
     ]
     
+    # 视频模型配置
+    _VIDEO_MODELS = [
+        ModelConfig(
+            model_name="doubao-seedance-1-5-pro-251215",
+            model_type="video",
+            display_name="豆包 Seedance 1.5 Pro",
+            description="火山引擎豆包图生视频模型，支持音频生成",
+            config={"aspect_ratio": "16:9", "resolutions": ["720p", "1080p"], "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12]},
+            is_enabled=True,
+            is_default=True,
+            sort_order=1,
+        ),
+        ModelConfig(
+            model_name="sora2",
+            model_type="video",
+            display_name="Sora",
+            description="OpenAI Sora 图生视频模型，支持 4/8/12 秒时长",
+            config={"aspect_ratio": "16:9", "resolutions": ["1080p"], "durations": [4, 8, 12]},
+            is_enabled=True,
+            is_default=False,
+            sort_order=2,
+        ),
+        ModelConfig(
+            model_name="Wan-AI/Wan2.6-I2V",
+            model_type="video",
+            display_name="Wan2.6 图生视频",
+            description="Wan-AI/Wan2.6-I2V 图生视频模型，支持 720P/1080P",
+            config={"aspect_ratio": "16:9", "resolutions": ["720P", "1080P"], "durations": [5, 10, 15]},
+            is_enabled=True,
+            is_default=False,
+            sort_order=4,
+        ),
+    ]
+
     @classmethod
     def get_models_by_type(cls, model_type: str) -> List[ModelConfig]:
         """
         根据模型类型获取启用的模型列表
         
         Args:
-            model_type: 模型类型（llm, text_to_image, image_to_image）
+            model_type: 模型类型（llm, text_to_image, image_to_image, video）
             
         Returns:
             模型配置列表，按 sort_order 排序
@@ -168,6 +202,8 @@ class ModelConfigFactory:
             models = cls._TEXT_TO_IMAGE_MODELS
         elif model_type == "image_to_image":
             models = cls._IMAGE_TO_IMAGE_MODELS
+        elif model_type == "video":
+            models = cls._VIDEO_MODELS
         else:
             return []
         
@@ -187,6 +223,7 @@ class ModelConfigFactory:
             "llm": [m.to_dict() for m in cls.get_models_by_type("llm")],
             "text_to_image": [m.to_dict() for m in cls.get_models_by_type("text_to_image")],
             "image_to_image": [m.to_dict() for m in cls.get_models_by_type("image_to_image")],
+            "video": [m.to_dict() for m in cls.get_models_by_type("video")],
         }
     
     @classmethod

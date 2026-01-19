@@ -22,7 +22,15 @@ from app.models.user import User
 import tempfile
 import requests
 
-@celery_app.task(bind=True, name="generate_scene_videos_task")
+@celery_app.task(
+    bind=True, 
+    name="generate_scene_videos_task",
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True
+)
 def generate_scene_videos_task(self, scene_id: int, creation_id: int):
     """
     场景视频生成任务（生成场景下所有分镜的视频）
@@ -61,6 +69,10 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
         ai_client = AIClient()
         us3_client = US3Client()
         
+        # 获取作品配置的模型
+        creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+        video_model = (creation.extra_data or {}).get('video_model', 'sora2')
+        
         generated_count = 0
         import uuid
         
@@ -83,25 +95,96 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
                     logger.warning(f"No video prompt for shot {shot.shot_id}, using image prompt")
                     video_prompt = shot.image_prompt
 
-                logger.info(f"Regenerating video for shot {shot.shot_id} in scene {scene_id}")
+                logger.info(f"Regenerating video for shot {shot.shot_id} in scene {scene_id} using model {video_model}")
 
-                # 根据 shot 的实际时长选择 Sora2 支持的时长（4/8/12秒）
+                # 根据模型选择时长映射
                 shot_duration = shot.video_duration if shot.video_duration else 5  # 默认5秒
-                if shot_duration <= 4:
-                    video_duration = 4
-                elif shot_duration <= 8:
-                    video_duration = 8
+                if video_model == "Wan-AI/Wan2.6-I2V":
+                    if shot_duration <= 5:
+                        video_duration = 5
+                    elif shot_duration <= 10:
+                        video_duration = 10
+                    else:
+                        video_duration = 15
+                elif video_model in ["viduq2-pro", "viduq2-turbo"]:
+                    video_duration = min(max(int(shot_duration), 1), 10)
+                elif video_model == "doubao-seedance-1-5-pro-251215":
+                    video_duration = 5
                 else:
-                    video_duration = 12
+                    # Sora2 支持 4/8/12秒
+                    if shot_duration <= 4:
+                        video_duration = 4
+                    elif shot_duration <= 8:
+                        video_duration = 8
+                    else:
+                        video_duration = 12
 
-                logger.info(f"Shot时长: {shot_duration}秒，选择Sora2时长: {video_duration}秒")
+                logger.info(f"Shot时长: {shot_duration}秒，选择时长: {video_duration}秒")
 
-                # 调用 Sora2 图生视频 API（size参数留空使用API默认值）
-                video_url = ai_client.generate_video_by_image_sora2(
-                    image_url=shot.image_url,
-                    prompt=video_prompt,
-                    duration=video_duration
-                )
+                # 调用对应的视频生成 API
+                try:
+                    if video_model == "Wan-AI/Wan2.6-I2V":
+                        resolution = (shot.extra_data or {}).get('video_resolution', '1080P')
+                        video_url = ai_client.generate_video_by_image_wan_ai(
+                            image_url=shot.image_url,
+                            prompt=video_prompt,
+                            duration=video_duration,
+                            resolution=resolution
+                        )
+                    elif video_model in ["viduq2-pro", "viduq2-turbo"]:
+                        resolution = (shot.extra_data or {}).get('video_resolution', '1080p').lower()
+                        video_url = ai_client.generate_video_by_image_vidu(
+                            image_url=shot.image_url,
+                            prompt=video_prompt,
+                            duration=video_duration,
+                            resolution=resolution,
+                            model=video_model
+                        )
+                    elif video_model == "doubao-seedance-1-5-pro-251215":
+                        aspect_ratio = (shot.extra_data or {}).get('aspect_ratio', '16:9')
+                        resolution = (shot.extra_data or {}).get('video_resolution', '720p').lower()
+                        video_url = ai_client.generate_video_by_image_doubao_modelverse(
+                            image_url=shot.image_url,
+                            prompt=video_prompt,
+                            duration=video_duration,
+                            aspect_ratio=aspect_ratio,
+                            resolution=resolution
+                        )
+                    else:
+                        video_url = ai_client.generate_video_by_image_sora2(
+                            image_url=shot.image_url,
+                            prompt=video_prompt,
+                            duration=video_duration
+                        )
+                except Exception as api_error:
+                    # 如果 API 调用失败（包括轮询发现 Failure），立即更新状态并抛出
+                    logger.error(f"API 调用失败: shot_id={shot.shot_id}, error={str(api_error)}")
+                    shot.video_status = "failed"
+                    if not shot.status_detail:
+                        shot.status_detail = {}
+                    shot.status_detail['video_status'] = 'failed'
+                    shot.status_detail['video_updated_at'] = datetime.utcnow().isoformat()
+                    shot.status_detail['video_error'] = str(api_error)
+                    flag_modified(shot, 'status_detail')
+                    
+                    # 更新步骤状态为失败
+                    try:
+                        from app.services.creation_service import CreationService
+                        CreationService.update_creation_step_status(
+                            db=db,
+                            creation_id=creation_id,
+                            step_name="videoGeneration",
+                            status="failed",
+                            commit=False
+                        )
+                        # 清除任务 ID
+                        if creation:
+                            creation.current_task_id = None
+                    except:
+                        pass
+                        
+                    db.commit()
+                    raise api_error
 
                 # 下载视频到临时文件
                 temp_video_fd, temp_video_path = tempfile.mkstemp(suffix='.mp4')
@@ -114,9 +197,41 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
                     with open(temp_video_path, 'wb') as f:
                         f.write(response.content)
 
-                    # 分离音视频
-                    logger.info(f"分离音视频: shot_id={shot.shot_id}")
-                    silent_video_path, audio_path = FFmpegUtils.separate_audio_video(temp_video_path)
+                    # 标准化视频：统一分辨率、帧率、编码参数
+                    # 提高视频清晰度：使用 CRF=18 和 Lanczos 高质量采样
+                    logger.info(f"标准化视频: shot_id={shot.shot_id}, model={video_model}")
+                    normalized_video_path = temp_video_path.replace(".mp4", "_normalized.mp4")
+                    
+                    # 只有 Sora 和 Doubao 会生成音频，其他模型生成的是静音视频
+                    has_audio_model = video_model not in ["Wan-AI/Wan2.6-I2V", "viduq2-pro", "viduq2-turbo"]
+                    
+                    if FFmpegUtils.normalize_video(temp_video_path, normalized_video_path, duration=float(video_duration), remove_audio=not has_audio_model):
+                        if has_audio_model:
+                            # 分离音视频 (使用标准化后的视频)
+                            logger.info(f"分离音视频: shot_id={shot.shot_id}")
+                            silent_video_path, audio_path = FFmpegUtils.separate_audio_video(normalized_video_path)
+                        else:
+                            # 非音频模型，标准化后的视频即为静音视频，无音频文件
+                            logger.info(f"非音频模型，跳过分离: shot_id={shot.shot_id}")
+                            silent_video_path = normalized_video_path
+                            audio_path = None
+                        
+                        # 清理标准化后的临时视频 (如果是音频模型，已经通过 separate_audio_video 复制/处理到了 silent_video_path)
+                        # 如果是非音频模型，silent_video_path 就是 normalized_video_path，所以不能在这里删除
+                        if has_audio_model:
+                            try:
+                                if os.path.exists(normalized_video_path):
+                                    os.remove(normalized_video_path)
+                            except:
+                                pass
+                    else:
+                        # 如果标准化失败，降级使用原始视频
+                        logger.warning(f"视频标准化失败，降级使用原始视频: shot_id={shot.shot_id}")
+                        if has_audio_model:
+                            silent_video_path, audio_path = FFmpegUtils.separate_audio_video(temp_video_path)
+                        else:
+                            silent_video_path = temp_video_path
+                            audio_path = None
 
                     # 上传静音视频到US3
                     video_filename = f"videos/{creation_id}/{shot.shot_id}_{uuid.uuid4().hex[:8]}_silent.mp4"
@@ -167,12 +282,18 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
                 # 扣除积分（视频生成成功后）
                 from app.utils.points_deduction import deduct_points_for_video
                 try:
+                    # 获取分辨率配置
+                    if video_model in ["viduq2-pro", "viduq2-turbo", "doubao-seedance-1-5-pro-251215"]:
+                        resolution = (shot.extra_data or {}).get('video_resolution', '1080p').lower()
+                    else:
+                        resolution = "720p"
+
                     deduct_points_for_video(
                         db=db,
                         user_id=creation.owner_id,
-                        model_name=ai_client.sora2_model,
+                        model_name=video_model,
                         duration_seconds=video_duration,
-                        resolution="720p",  # 720x1280 对应 720p
+                        resolution=resolution,
                         creation_id=creation_id,
                         novel_id=scene.novel_id,
                         shot_id=shot.shot_id
@@ -207,6 +328,16 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
                 shot.status_detail['video_status'] = 'failed'
                 shot.status_detail['video_updated_at'] = datetime.utcnow().isoformat()
                 shot.status_detail['video_error'] = str(e)
+                flag_modified(shot, 'status_detail')
+
+                # 更新 extra_data 状态
+                if not shot.extra_data:
+                    shot.extra_data = {}
+                shot.extra_data['video_generation_status'] = 'failed'
+                flag_modified(shot, 'extra_data')
+                
+                db.commit()
+                logger.info(f"Shot {shot.shot_id} 视频生成失败状态已实时保存到数据库")
 
                 # 继续处理下一个分镜
 
@@ -246,7 +377,7 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
 
 
 @celery_app.task(bind=True, name="generate_single_shot_video_task", soft_time_limit=1800, time_limit=1900)
-def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None):
+def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None, model_name: str = None, last_frame_image_url: str = None):
     """
     单个分镜视频生成任务
 
@@ -258,8 +389,12 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
         shot_id: 分镜ID
         creation_id: 作品ID
         freeze_record_id: 积分冻结记录ID（用于后续扣除）
+        model_name: 使用的模型名称
+        last_frame_image_url: 尾帧图片URL（可选）
     """
+    logger.info(f"开始分镜视频生成任务: shot_id={shot_id}, creation_id={creation_id}, model_name={model_name}, 有尾帧: {bool(last_frame_image_url)}")
     db: Session = SessionLocal()
+
     try:
         # 只在Celery上下文中更新状态（检查self.request是否存在）
         if self and hasattr(self, 'request') and self.request.id:
@@ -294,11 +429,14 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
         ai_client = AIClient()
         us3_client = US3Client()
 
-        # 检查是否有 video_prompt，如果没有或太简单（降级提示词）则重新生成
+        # 检查是否有 video_prompt，如果没有、或者是降级提示词、或者是重新生成请求，则重新生成
         video_prompt = (shot.extra_data or {}).get("video_prompt")
         is_fallback_prompt = video_prompt and video_prompt.startswith("平稳移动，")
+        
+        # 如果是重新生成任务（通常意味着用户对之前的视频不满意），强制重新生成提示词以获得不同的效果
+        force_regen = True 
 
-        if not video_prompt or is_fallback_prompt:
+        if not video_prompt or is_fallback_prompt or force_regen:
             logger.info(f"No video_prompt found for shot {shot.shot_id}, generating now...")
 
             # 更新extra_data状态：生成提示词中
@@ -426,7 +564,8 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
                 shot=shot,
                 script=script,
                 dialogues=dialogues,
-                characters=characters
+                characters=characters,
+                image_prompt=image_prompt
             )
 
             # 存储到shot.extra_data
@@ -438,23 +577,92 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
 
         logger.info(f"Generating video for shot {shot.shot_id}")
 
-        # 根据 shot 的实际时长选择 Sora2 支持的时长（4/8/12秒）
-        shot_duration = shot.video_duration if shot.video_duration else 5  # 默认5秒
-        if shot_duration <= 4:
-            video_duration = 4
-        elif shot_duration <= 8:
-            video_duration = 8
+        # 获取分镜时长
+        shot_duration = shot.video_duration if shot.video_duration else 5
+
+        # 根据作品配置或默认选择视频生成模型
+        video_model = model_name or (creation.extra_data or {}).get('video_model', 'sora2')
+        
+        # 根据模型选择时长映射
+        if video_model == "Wan-AI/Wan2.6-I2V":
+            # Wan-AI 支持 5/10/15秒
+            if shot_duration <= 5:
+                video_duration = 5
+            elif shot_duration <= 10:
+                video_duration = 10
+            else:
+                video_duration = 15
+        elif video_model in ["viduq2-pro", "viduq2-turbo"]:
+            # Vidu 支持 1-10秒
+            video_duration = min(max(int(shot_duration), 1), 10)
+        elif video_model == "doubao-seedance-1-5-pro-251215":
+            # 火山 Seedance 1.5 Pro 支持 4-12 秒
+            video_duration = min(max(int(shot_duration), 4), 12)
         else:
-            video_duration = 12
+            # Sora2 支持 4/8/12秒
+            if shot_duration <= 4:
+                video_duration = 4
+            elif shot_duration <= 8:
+                video_duration = 8
+            else:
+                video_duration = 12
 
-        logger.info(f"Shot时长: {shot_duration}秒，选择Sora2时长: {video_duration}秒")
+        logger.info(f"Shot时长: {shot_duration}秒，模型: {video_model}, 选择时长: {video_duration}秒")
 
-        # 调用 Sora2 图生视频 API（size参数留空使用API默认值）
-        video_url = ai_client.generate_video_by_image_sora2(
-            image_url=shot.image_url,
-            prompt=video_prompt,
-            duration=video_duration
-        )
+        # 调用对应的视频生成 API
+        try:
+            if video_model == "Wan-AI/Wan2.6-I2V":
+                # 获取分辨率配置，默认为 1080P
+                resolution = (shot.extra_data or {}).get('video_resolution', '1080P')
+                video_url = ai_client.generate_video_by_image_wan_ai(
+                    image_url=shot.image_url,
+                    prompt=video_prompt,
+                    duration=video_duration,
+                    resolution=resolution,
+                    last_frame_image_url=last_frame_image_url
+                )
+            elif video_model in ["viduq2-pro", "viduq2-turbo"]:
+                # 获取分辨率配置，默认为 1080p (注意 Vidu 是小写)
+                resolution = (shot.extra_data or {}).get('video_resolution', '1080p').lower()
+                video_url = ai_client.generate_video_by_image_vidu(
+                    image_url=shot.image_url,
+                    prompt=video_prompt,
+                    duration=video_duration,
+                    resolution=resolution,
+                    model=video_model,
+                    last_frame_image_url=last_frame_image_url
+                )
+            elif video_model == "doubao-seedance-1-5-pro-251215":
+                # 获取分辨率和比例配置
+                aspect_ratio = (shot.extra_data or {}).get('aspect_ratio', '16:9')
+                resolution = (shot.extra_data or {}).get('video_resolution', '720p').lower()
+                video_url = ai_client.generate_video_by_image_doubao_modelverse(
+                    image_url=shot.image_url,
+                    prompt=video_prompt,
+                    duration=video_duration,
+                    aspect_ratio=aspect_ratio,
+                    resolution=resolution,
+                    last_frame_image_url=last_frame_image_url
+                )
+            else:
+                # 调用 Sora2 图生视频 API（size参数留空使用API默认值）
+                video_url = ai_client.generate_video_by_image_sora2(
+                    image_url=shot.image_url,
+                    prompt=video_prompt,
+                    duration=video_duration
+                )
+        except Exception as api_error:
+            # 如果 API 调用失败（包括轮询发现 Failure），立即更新状态并抛出
+            logger.error(f"API 调用失败: shot_id={shot.shot_id}, error={str(api_error)}")
+            shot.video_status = "failed"
+            if not shot.status_detail:
+                shot.status_detail = {}
+            shot.status_detail['video_status'] = 'failed'
+            shot.status_detail['video_updated_at'] = datetime.utcnow().isoformat()
+            shot.status_detail['video_error'] = str(api_error)
+            flag_modified(shot, 'status_detail')
+            db.commit()
+            raise api_error
 
         # 下载视频到临时文件
         import uuid
@@ -589,8 +797,13 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
                 shot.extra_data['video_generation_status'] = 'failed'
                 flag_modified(shot, 'extra_data')
 
+                # 清除 creation 的 current_task_id
+                creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+                if creation:
+                    creation.current_task_id = None
+
                 db.commit()
-                logger.info(f"Shot {shot_id} video_status 和 status_detail 已更新为 failed")
+                logger.info(f"Shot {shot_id} video_status 和 status_detail 已更新为 failed，并清除了 current_task_id")
         except Exception as update_error:
             logger.error(f"Failed to update shot status to failed: {str(update_error)}")
         raise e
@@ -764,14 +977,35 @@ def generate_all_videos_task(self, creation_id: int, user_id: int):
             try:
                 # 计算视频时长和积分
                 shot_duration = shot.video_duration if shot.video_duration else 5
-                if shot_duration <= 4:
-                    video_duration = 4
-                elif shot_duration <= 8:
-                    video_duration = 8
+                
+                # 获取视频模型和分辨率
+                video_model = (creation.extra_data or {}).get('video_model', 'sora2')
+                video_resolution = (shot.extra_data or {}).get('video_resolution', '1080P')
+                
+                # 根据模型选择时长映射
+                if video_model == "Wan-AI/Wan2.6-I2V":
+                    if shot_duration <= 5:
+                        video_duration = 5
+                    elif shot_duration <= 10:
+                        video_duration = 10
+                    else:
+                        video_duration = 15
+                    # Wan-AI 使用分辨率计费 (720p/1080p)
+                    cost = ModelPrices.calculate_video_cost(video_model, video_duration, video_resolution.lower())
+                elif video_model == "doubao-seedance-1-5-pro-251215":
+                    video_duration = 5
+                    # 使用 1080p 计费
+                    cost = ModelPrices.calculate_video_cost(video_model, video_duration, "1080p")
                 else:
-                    video_duration = 12
+                    if shot_duration <= 4:
+                        video_duration = 4
+                    elif shot_duration <= 8:
+                        video_duration = 8
+                    else:
+                        video_duration = 12
+                    # Sora2 默认 720p 计费
+                    cost = ModelPrices.calculate_video_cost("sora2", video_duration)
 
-                cost = ModelPrices.calculate_video_cost("sora2", video_duration)
                 required_points = int(math.ceil(cost * 100))
 
                 # 冻结积分
@@ -785,6 +1019,8 @@ def generate_all_videos_task(self, creation_id: int, user_id: int):
                     description=f"批量生成视频（{shot.title}）",
                     extra_data={
                         "shot_id": shot.shot_id,
+                        "video_model": video_model,
+                        "video_resolution": video_resolution,
                         "video_duration": video_duration,
                         "batch": True
                     }
@@ -998,14 +1234,18 @@ def generate_all_videos_task(self, creation_id: int, user_id: int):
         # 批量生成完成，更新videoGeneration状态为success
         try:
             creation_final = db.query(Creation).filter(Creation.creation_id == creation_id).first()
-            if creation_final and creation_final.extra_data and 'steps' in creation_final.extra_data:
-                if 'videoGeneration' in creation_final.extra_data['steps']:
-                    creation_final.extra_data['steps']['videoGeneration']['status'] = 'success'
-                    creation_final.extra_data['steps']['videoGeneration']['progress']['current_shot_id'] = None
-                    creation_final.extra_data['steps']['videoGeneration']['updatedAt'] = int(datetime.utcnow().timestamp())
-                    flag_modified(creation_final, 'extra_data')
-                    db.commit()
-                    logger.info(f"Updated videoGeneration status to success")
+            if creation_final:
+                if creation_final.extra_data and 'steps' in creation_final.extra_data:
+                    if 'videoGeneration' in creation_final.extra_data['steps']:
+                        creation_final.extra_data['steps']['videoGeneration']['status'] = 'success'
+                        creation_final.extra_data['steps']['videoGeneration']['progress']['current_shot_id'] = None
+                        creation_final.extra_data['steps']['videoGeneration']['updatedAt'] = int(datetime.utcnow().timestamp())
+                        flag_modified(creation_final, 'extra_data')
+                
+                # 清除任务 ID
+                creation_final.current_task_id = None
+                db.commit()
+                logger.info(f"Updated videoGeneration status to success and cleared current_task_id")
         except Exception as final_error:
             logger.error(f"Failed to update final videoGeneration status: {str(final_error)}")
 
@@ -1026,13 +1266,18 @@ def generate_all_videos_task(self, creation_id: int, user_id: int):
         # 更新videoGeneration状态为failed
         try:
             creation_error = db.query(Creation).filter(Creation.creation_id == creation_id).first()
-            if creation_error and creation_error.extra_data and 'steps' in creation_error.extra_data:
-                if 'videoGeneration' in creation_error.extra_data['steps']:
-                    creation_error.extra_data['steps']['videoGeneration']['status'] = 'failed'
-                    creation_error.extra_data['steps']['videoGeneration']['error'] = str(e)
-                    creation_error.extra_data['steps']['videoGeneration']['updatedAt'] = int(datetime.utcnow().timestamp())
-                    flag_modified(creation_error, 'extra_data')
-                    db.commit()
+            if creation_error:
+                if creation_error.extra_data and 'steps' in creation_error.extra_data:
+                    if 'videoGeneration' in creation_error.extra_data['steps']:
+                        creation_error.extra_data['steps']['videoGeneration']['status'] = 'failed'
+                        creation_error.extra_data['steps']['videoGeneration']['error'] = str(e)
+                        creation_error.extra_data['steps']['videoGeneration']['updatedAt'] = int(datetime.utcnow().timestamp())
+                        flag_modified(creation_error, 'extra_data')
+                
+                # 清除任务 ID
+                creation_error.current_task_id = None
+                db.commit()
+                logger.info(f"Updated videoGeneration status to failed and cleared current_task_id")
         except Exception as update_error:
             logger.error(f"Failed to update videoGeneration to failed status: {str(update_error)}")
 

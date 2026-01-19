@@ -9,6 +9,7 @@ from app.core.celery_app import celery_app
 from app.core.logger import logger
 from app.db.session import SessionLocal
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from app.models.creation import Creation
 from app.models.scene import Scene
 from app.utils.task_types import TaskType
@@ -168,7 +169,7 @@ def batch_generate_scene_images_task(self, creation_id: int, force_regenerate: b
 
 
 @celery_app.task(bind=True, name="generate_single_scene_image_task")
-def generate_single_scene_image_task(self, scene_id: int, creation_id: int):
+def generate_single_scene_image_task(self, scene_id: int, creation_id: int, model_name: str = None):
     """
     单个场景图片生成任务
     """
@@ -188,51 +189,89 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int):
         if not scene:
             raise Exception(f"Scene not found: {scene_id}")
 
-        ai_client = AIClient()
-        prompt_template = read_prompt_file("scene_image.md")
-        us3_client = US3Client()
+        # 从创作配置中获取模型配置
+        creation = scene.creation
+        extra_data = creation.extra_data or {} if creation else {}
+        text_to_image_model = model_name or extra_data.get("text_to_image_model") or settings.IMAGE_MODEL_NAME
+        llm_model = extra_data.get("llm_model") or settings.LLM_MODEL_NAME
 
+        ai_client = AIClient(llm_model_name=llm_model, text_to_image_model=text_to_image_model)
+        us3_client = US3Client()
         logger.info(f"Regenerating image for scene: {scene.title}")
-        
-        # 构建环境设定描述
-        env_config = {
-            "时间": scene.time_setting,
-            "地点": scene.location,
-            "空间": scene.space_type,
-            "氛围": scene.atmosphere
-        }
-        environment_desc = json.dumps(env_config, ensure_ascii=False, indent=2)
-        
-        messages = [
-            {
-                "role": "user",
-                "content": f"{prompt_template}\n\n场景标题：{scene.title}\n\n环境设定：\n{environment_desc}"
+
+        # 优先从 extra_data 获取
+        image_prompt = None
+        if scene.extra_data and isinstance(scene.extra_data, dict):
+            image_prompt = scene.extra_data.get("image_prompt")
+            
+        if image_prompt:
+            pass # 已经获取到
+        else:
+            # 1. 获取图片提示词
+            prompt_template = read_prompt_file("scene_image.md")
+            
+            # 构建环境设定描述
+            env_config = {
+                "时间": scene.time_setting,
+                "地点": scene.location,
+                "空间": scene.space_type,
+                "氛围": scene.atmosphere
             }
-        ]
-        
-        # 1. 获取图片提示词
-        response = ai_client.chat_completion(messages=messages)
-        image_prompt = response.get("content", "").strip()
-        image_prompt = image_prompt.replace("```", "").strip()
-        
+            environment_desc = json.dumps(env_config, ensure_ascii=False, indent=2)
+            
+            # 替换模板中的占位符
+            system_prompt = prompt_template.replace("{{SCENE_ENVIRONMENT}}", environment_desc)
+            
+            messages = [
+                {
+                    "role": "user",
+                    "content": f"{system_prompt}\n\n场景标题：{scene.title}"
+                }
+            ]
+            logger.info(f"Scene image generation messages: {messages[0]['content']}")
+            
+            response = ai_client.chat_completion(messages=messages)
+            image_prompt = response.get("content", "").strip()
+            image_prompt = image_prompt.replace("```", "").strip()
+            
+            # 保存生成的提示词到 extra_data
+            if scene.extra_data is None:
+                scene.extra_data = {}
+            scene.extra_data["image_prompt"] = image_prompt
+            flag_modified(scene, "extra_data")
+
         # 2. 生成图片
         # 注意：Qwen-Image 等模型需要具体的宽x高格式，不能直接传 "16:9"
-        # 常用 16:9 分辨率: 1280x720, 1024x576
+        # 常用 16:9 分辨率: 1536x864, 1280x720, 1024x576
         temp_image_url = ai_client.generate_image_by_prompt(
             prompt=image_prompt,
             model=ai_client.text_to_image_model,
-            aspectRatio="1280x720"
+            aspectRatio="1536x864"
         )
         
         # 3. 上传 US3
         import uuid
         filename = f"scenes/{creation_id}/{scene.scene_id}_{uuid.uuid4().hex[:8]}.png"
         
-        # 下载图片
-        with httpx.Client(timeout=60.0) as client:
-            resp = client.get(temp_image_url)
-            resp.raise_for_status()
-            image_data = resp.content
+        # 处理图片下载（支持 local:// 协议）
+        image_data = None
+        if temp_image_url.startswith("local://"):
+            # 读取本地文件
+            temp_file_path = temp_image_url.replace("local://", "")
+            logger.info(f"使用本地文件路径: {temp_file_path}")
+            if not os.path.exists(temp_file_path):
+                raise Exception(f"本地文件不存在: {temp_file_path}")
+            with open(temp_file_path, 'rb') as f:
+                image_data = f.read()
+            logger.info(f"本地图像读取成功，大小: {len(image_data)} 字节")
+        else:
+            # 下载图片
+            logger.info(f"从URL下载图像: {temp_image_url}")
+            with httpx.Client(timeout=60.0) as client:
+                resp = client.get(temp_image_url)
+                resp.raise_for_status()
+                image_data = resp.content
+            logger.info(f"图像下载成功，大小: {len(image_data)} 字节")
         
         # 上传图片
         us3_client.upload_file_stream(image_data, put_key=filename, content_type="image/png")

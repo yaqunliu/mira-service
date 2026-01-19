@@ -8,11 +8,22 @@ from app.db.session import SessionLocal
 from app.models.creation import Creation
 from app.models.shot import Shot
 from app.services.points_service import PointsService
-from app.utils.video_prompt_generator import generate_video_prompt as generate_video_prompt_util
+from app.utils.video_prompt_generator import (
+    generate_video_prompt as generate_video_prompt_util,
+    generate_video_only_prompt as generate_video_only_prompt_util
+)
 import traceback
 
 
-@celery_app.task(bind=True, name="generate_video_prompt_task")
+@celery_app.task(
+    bind=True, 
+    name="generate_video_prompt_task",
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True
+)
 def generate_video_prompt_task(
     self,
     shot_id: int,
@@ -142,15 +153,36 @@ def generate_video_prompt_task(
         # 从creation获取模型配置
         extra_data = creation.extra_data or {} if creation else {}
         llm_model = extra_data.get('llm_model', 'gpt-4')
+        video_model = extra_data.get('video_model', 'sora2')
+        
+        # 判断是否使用“纯视频”提示词范式
+        # 1. 明确指定了 video_only 为 True
+        # 2. 或者使用的视频模型是纯视频模型（Wan-AI, Vidu）
+        video_only = extra_data.get('video_only', False)
+        if not video_only and video_model in ["Wan-AI/Wan2.6-I2V", "viduq2-pro", "viduq2-turbo"]:
+            video_only = True
+            logger.info(f"由于视频模型为 {video_model}，自动切换至纯视频提示词范式")
 
         # 生成视频提示词 - 使用独立的工具函数
-        video_prompt = generate_video_prompt_util(
-            llm_model=llm_model,
-            shot=shot,
-            script=script,
-            dialogues=dialogues,
-            characters=characters
-        )
+        if video_only:
+            logger.info(f"使用【纯视频】提示词范式生成提示词")
+            video_prompt = generate_video_only_prompt_util(
+                llm_model=llm_model,
+                shot=shot,
+                script=script,
+                characters=characters,
+                image_prompt=image_prompt
+            )
+        else:
+            logger.info(f"使用【标准】提示词范式生成提示词")
+            video_prompt = generate_video_prompt_util(
+                llm_model=llm_model,
+                shot=shot,
+                script=script,
+                dialogues=dialogues,
+                characters=characters,
+                image_prompt=image_prompt
+            )
 
         # 存储到shot.extra_data
         if not shot.extra_data:

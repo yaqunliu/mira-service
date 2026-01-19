@@ -27,6 +27,53 @@ class FFmpegUtils:
             return False
 
     @staticmethod
+    def normalize_video(input_path: str, output_path: str, duration: Optional[float] = None, target_width: int = 1920, target_height: int = 1080, remove_audio: bool = True) -> bool:
+        """
+        标准化视频：统一分辨率、帧率、编码参数和像素格式
+        使用 Lanczos 算法进行高质量缩放
+        """
+        try:
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', input_path
+            ]
+            
+            if duration:
+                cmd.extend(['-t', str(duration)])
+                
+            # 构建滤镜：高质量缩放 + 补黑边 + 统一帧率
+            filter_str = (
+                f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black,"
+                f"setsar=1,fps=30"
+            )
+            
+            cmd.extend([
+                '-vf', filter_str,
+                '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-crf', '18',
+                '-pix_fmt', 'yuv420p'
+            ])
+
+            if remove_audio:
+                cmd.append('-an')
+            else:
+                # 如果保留音频，统一使用 aac 编码
+                cmd.extend(['-c:a', 'aac', '-b:a', '192k'])
+            
+            cmd.append(output_path)
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if result.returncode != 0:
+                logger.error(f"视频标准化失败: {result.stderr}")
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"标准化视频异常: {str(e)}")
+            return False
+
+    @staticmethod
     def separate_audio_video(
         input_video_path: str,
         output_video_path: Optional[str] = None,
@@ -194,9 +241,9 @@ class FFmpegUtils:
             return False
 
     @staticmethod
-    def trim_video_clip(input_path: str, output_path: str, start: float, end: float, apply_opacity: float = 1.0) -> None:
+    def trim_video_clip(input_path: str, output_path: str, start: float, end: float, apply_opacity: float = 1.0, target_width: int = 1920, target_height: int = 1080) -> None:
         """
-        裁剪视频片段
+        裁剪视频片段并统一分辨率
 
         Args:
             input_path: 输入视频路径
@@ -204,10 +251,15 @@ class FFmpegUtils:
             start: 开始时间（秒）
             end: 结束时间（秒）
             apply_opacity: 透明度（0.0-1.0）
+            target_width: 目标宽度
+            target_height: 目标高度
         """
         try:
             duration = end - start
-            filter_complex = f"trim=start={start}:duration={duration},setpts=PTS-STARTPTS"
+            # 统一分辨率：使用 lanczos 高质量缩放，并使用 pad 补齐（黑边）以保持宽高比
+            scale_filter = f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease:flags=lanczos,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
+            
+            filter_complex = f"trim=start={start}:duration={duration},setpts=PTS-STARTPTS,{scale_filter},fps=30"
 
             if apply_opacity < 1.0:
                 filter_complex += f",colorchannelmixer=aa={apply_opacity}"
@@ -218,7 +270,8 @@ class FFmpegUtils:
                 '-vf', filter_complex,
                 '-c:v', 'libx264',
                 '-preset', 'medium',
-                '-crf', '23',
+                '-crf', '18',
+                '-pix_fmt', 'yuv420p',
                 '-y',
                 output_path
             ]
@@ -337,11 +390,11 @@ class FFmpegUtils:
                 'fontname': 'Arial',
                 'fontsize': 48,
                 'primary_colour': '&H00FFFFFF',  # 白色文字 (完全不透明)
-                'back_colour': 'B0000000',       # 黑色背景，透明度约30% (B0 ≈ 70%透明度)
-                'border_style': 4,                # 4 = 带圆角的盒子背景
-                'outline': 8,                     # 边框宽度（用于圆角半径）
-                'alignment': 2,                   # 底部居中
-                'margin_v': 50                    # 底部边距
+                'back_colour': '00000000',       # 黑色阴影
+                'border_style': 1,               # 1 = 描边 + 阴影 (去掉 4 的盒子背景)
+                'outline': 2,                    # 描边宽度
+                'alignment': 2,                  # 底部居中
+                'margin_v': 50                   # 底部边距
             }
 
             if style_config:
@@ -430,7 +483,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 '-vf', f"ass={subtitle_path_escaped}",
                 '-c:v', 'libx264',
                 '-preset', 'medium',
-                '-crf', '23',
+                '-crf', '18',
+                '-pix_fmt', 'yuv420p',
                 '-c:a', 'copy',  # 复制音频流
                 '-y',
                 output_path
@@ -487,91 +541,81 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     @staticmethod
     def concat_videos_with_timeline(clips_info: list, output_path: str, total_duration: float) -> None:
         """
-        根据时间轴配置合并多个视频片段
-
-        Args:
-            clips_info: 片段信息列表，每个包含 path, startInTimeline, duration
-            output_path: 输出视频路径
-            total_duration: 总时长（秒）
+        根据时间轴配置合并多个视频片段，自动填充黑屏间隙
         """
         try:
             if not clips_info:
-                raise ValueError("没有视频片段需要合并")
+                # 如果没有片段，生成全黑视频
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-f', 'lavfi', '-i', f"color=c=black:s=1920x1080:r=30:d={total_duration}",
+                    '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p',
+                    output_path
+                ]
+                subprocess.run(cmd, check=True)
+                return
 
             # 按时间轴位置排序
             sorted_clips = sorted(clips_info, key=lambda c: c.get('startInTimeline', 0))
-
-            # 构建filter_complex
-            filter_parts = []
+            
+            input_args = []
+            filter_complex = ""
+            concat_inputs = ""
             current_time = 0.0
+            segment_count = 0
+            file_idx = 0
 
             for i, clip in enumerate(sorted_clips):
                 clip_start = clip.get('startInTimeline', 0)
                 clip_duration = clip.get('duration', 0)
                 clip_path = clip.get('path', '')
 
-                # 如果当前时间和片段开始时间之间有间隙，插入黑屏
-                if clip_start > current_time:
+                # 1. 处理间隙：插入黑屏
+                if clip_start > current_time + 0.001: # 允许极小误差
                     gap_duration = clip_start - current_time
-                    filter_parts.append(
-                        f"color=c=black:s=1920x1080:d={gap_duration}:r=30[gap{i}]"
-                    )
+                    filter_complex += f"color=c=black:s=1920x1080:d={gap_duration}:r=30[gap{segment_count}];"
+                    concat_inputs += f"[gap{segment_count}]"
+                    segment_count += 1
 
+                # 2. 处理视频片段
+                input_args.extend(['-i', clip_path])
+                concat_inputs += f"[{file_idx}:v]"
+                file_idx += 1
+                segment_count += 1
+                
                 current_time = clip_start + clip_duration
 
-            # 使用concat协议连接所有片段
-            if len(sorted_clips) == 1:
-                # 单个片段，直接复制
-                cmd = [
-                    'ffmpeg',
-                    '-i', sorted_clips[0]['path'],
-                    '-c:v', 'libx264',
-                    '-preset', 'medium',
-                    '-crf', '23',
-                    '-y',
-                    output_path
-                ]
+            # 3. 处理末尾间隙
+            if current_time < total_duration - 0.001:
+                gap_duration = total_duration - current_time
+                filter_complex += f"color=c=black:s=1920x1080:d={gap_duration}:r=30[gap{segment_count}];"
+                concat_inputs += f"[gap{segment_count}]"
+                segment_count += 1
 
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            # 4. 组合最终命令
+            filter_complex += f"{concat_inputs}concat=n={segment_count}:v=1:a=0[outv]"
+            
+            cmd = [
+                'ffmpeg', '-y',
+                *input_args,
+                '-filter_complex', filter_complex,
+                '-map', '[outv]',
+                '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-crf', '18',
+                '-pix_fmt', 'yuv420p',
+                output_path
+            ]
 
-                if result.returncode != 0:
-                    raise Exception(f"视频复制失败: {result.stderr}")
-            else:
-                # 多个片段，需要concat
-                # 创建临时文件列表
-                import tempfile
-                fd, concat_file = tempfile.mkstemp(suffix='.txt')
-
-                try:
-                    with os.fdopen(fd, 'w') as f:
-                        for clip in sorted_clips:
-                            f.write(f"file '{clip['path']}'\n")
-
-                    cmd = [
-                        'ffmpeg',
-                        '-f', 'concat',
-                        '-safe', '0',
-                        '-i', concat_file,
-                        '-c:v', 'libx264',
-                        '-preset', 'medium',
-                        '-crf', '23',
-                        '-y',
-                        output_path
-                    ]
-
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-
-                    if result.returncode != 0:
-                        raise Exception(f"视频合并失败: {result.stderr}")
-
-                finally:
-                    if os.path.exists(concat_file):
-                        os.remove(concat_file)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            if result.returncode != 0:
+                logger.error(f"视频合并失败: {result.stderr}")
+                raise Exception(f"FFmpeg视频合并失败: {result.stderr}")
 
             logger.info(f"视频合并成功: {output_path}")
 
         except Exception as e:
-            logger.error(f"合并视频失败: {str(e)}")
+            logger.error(f"合并视频异常: {str(e)}")
             raise
 
     @staticmethod

@@ -146,23 +146,23 @@ class ShotResponse(BaseModel):
     """镜头响应（前端格式）"""
     shot_id: int
     uuid: str
+    scene_id: int
     title: str
     associated_characters: List[int] = Field(default_factory=list)
-    scene_description: Optional[str] = Field(None)
+    description: Optional[str] = None
     narration: List[NarrationItem] = Field(default_factory=list)
-    image_prompt: Optional[str] = Field(None)
-    image_url: Optional[str] = Field(None)
-    audio_url: Optional[str] = Field(None)
-    video_url: Optional[str] = Field(None)
-    video_status: Optional[str] = Field(None)
-    video_duration: Optional[int] = Field(None)
-    status_detail: Optional[Dict[str, Any]] = Field(None)
-    extra_data: Optional[Dict[str, Any]] = Field(None)
-    shot_number: int = Field(...)
+    image_prompt: Optional[str] = None
+    image_url: Optional[str] = None
+    audio_url: Optional[str] = None
+    video_url: Optional[str] = None
+    video_status: Optional[str] = None
+    video_duration: Optional[int] = None
+    status_detail: Optional[Dict[str, Any]] = None
+    extra_data: Optional[Dict[str, Any]] = None
+    shot_number: int
     
     class Config:
         from_attributes = True
-        populate_by_name = True
     
     @classmethod
     def from_db_model(cls, shot) -> "ShotResponse":
@@ -188,9 +188,10 @@ class ShotResponse(BaseModel):
         return cls(
             shot_id=shot.shot_id,
             uuid=shot.uuid,
+            scene_id=shot.scene_id,
             title=shot.title,
             associated_characters=[char.character_id for char in shot.characters] if shot.characters else [],
-            scene_description=shot.description,
+            description=shot.description,
             narration=narration_list,
             image_prompt=shot.image_prompt,
             image_url=shot.image_url,
@@ -213,6 +214,20 @@ class ShotListResponse(BaseModel):
 class ShotRegenerateRequest(BaseModel):
     """重新生成分镜图片的请求体"""
     image_prompt: Optional[str] = None  # 新的图片提示词（可选，不传则使用现有提示词）
+    model_name: Optional[str] = None  # 使用的模型名称
+    refresh_prompt: bool = False  # 是否重新生成提示词（忽略现有提示词）
+
+
+class ShotRegenerateVideoRequest(BaseModel):
+    """重新生成分镜视频的请求体"""
+    model_name: Optional[str] = None  # 使用的模型名称
+    last_frame_image_url: Optional[str] = None  # 尾帧图片URL
+
+
+class ShotGenerateVideoRequest(BaseModel):
+    """生成分镜视频的请求体"""
+    model_name: Optional[str] = None  # 使用的模型名称
+    last_frame_image_url: Optional[str] = None  # 尾帧图片URL
 
 
 class ShotCharactersUpdateRequest(BaseModel):

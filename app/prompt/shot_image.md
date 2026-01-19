@@ -13,6 +13,12 @@
 
 ## 输入信息
 
+### 场景环境
+以下是分镜所在场景的环境设定：
+<scene_environment>
+{{SCENE_ENVIRONMENT}}
+</scene_environment>
+
 ### 角色档案
 以下是出现在分镜中的角色特征：
 <character_profiles>

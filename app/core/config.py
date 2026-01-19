@@ -102,10 +102,10 @@ class Settings(BaseSettings):
     LLM_MODEL_PROMPT_GENERATION: str = "Qwen/Qwen-Plus"  # 提示词生成模型
 
     # 图片生成模型配置
-    IMAGE_MODEL_TEXT_TO_IMAGE: str = ""  # 文生图模型（用于生成角色图片）
-    IMAGE_MODEL_IMAGE_TO_IMAGE: str = ""  # 图生图模型（用于生成分镜图片）
+    IMAGE_MODEL_TEXT_TO_IMAGE: str = "gemini-3-pro-image-preview"  # 文生图模型（用于生成角色图片）
+    IMAGE_MODEL_IMAGE_TO_IMAGE: str = "gemini-3-pro-image-preview"  # 图生图模型（用于生成分镜图片）
     # 向后兼容：如果新配置未设置，使用旧配置
-    IMAGE_MODEL_NAME: str = ""  # 旧配置（已废弃，保留用于向后兼容）
+    IMAGE_MODEL_NAME: str = "gemini-3-pro-image-preview"  # 旧配置（已废弃，保留用于向后兼容）
     
     # 火山云AI配置
     ARK_API_KEY: str = ""  # 火山云AI API密钥
@@ -115,8 +115,8 @@ class Settings(BaseSettings):
     ARK_IMAGE_MODEL: str = "doubao-seedream-4-5-251128"  # Seedream 4.5模型
     
     # 火山云视频生成模型配置
-    ARK_VIDEO_MODEL: str = "doubao-seedance-1-0-pro-250528"  # Seedance 1.0 Pro模型
-    ARK_VIDEO_TIMEOUT: int = 300  # 视频生成超时时间（秒）
+    ARK_VIDEO_MODEL: str = "doubao-seedance-1-5-pro-251215"  # Seedance 1.5 Pro 模型
+    ARK_VIDEO_TIMEOUT: int = 600  # 视频生成超时时间（秒）
     ARK_VIDEO_RETRY_DELAY: int = 5  # 视频生成重试间隔（秒）
 
     # Sora2 视频生成配置（使用 OPENAI_API_KEY 和 OPENAI_BASE_URL）
@@ -179,10 +179,13 @@ class Settings(BaseSettings):
     
     # 模型价格配置（JSON格式字符串）
     MODEL_PRICES_LLM: str = '{"Qwen/Qwen-Plus": {"input": 0.8, "output": 2.0}}'  # LLM模型价格：输入/输出价格（元/百万tokens）
-    MODEL_PRICES_IMAGE: str = '{"gemini-3-pro-image-preview": 0.97, "black-forest-labs/flux-kontext-pro/multi": 0.35}'  # 图片模型价格：元/张（Nano Banana2: 0.97元/张，基于1张参考图+2K输出）
+    MODEL_PRICES_IMAGE: str = '{"gemini-3-pro-image-preview": 0.5, "gemini-2.5-flash-image": 0.1, "doubao-seedream-4.5": 0.5, "black-forest-labs/flux-kontext-pro/multi": 0.35}'  # 图片模型价格：元/张（Seedream 4.5: 0.5元/张）
     MODEL_PRICES_AUDIO: str = '{"s1": 120}'  # 音频模型价格：元/兆字节
     MODEL_PRICES_VIDEO: str = '''
     {
+        "viduq2-pro": {"1080p": 1.2, "720p": 0.8, "540p": 0.6},
+        "viduq2-turbo": {"1080p": 1.0, "720p": 0.6, "540p": 0.4},
+        "Wan-AI/Wan2.6-I2V": {"720p": 0.6, "1080p": 1.0},
         "Wan-AI/Wan2.2-I2V": {"720p": 0.35, "480p": 0.18},
         "Wan-AI/Wan2.2-T2V": {"720p": 0.35, "480p": 0.18},
         "Wan-AI/Wan2.5-I2V": {"1080p": 1.095, "720p": 0.73, "480p": 0.365},
@@ -190,7 +193,8 @@ class Settings(BaseSettings):
         "openai/sora-2/text-to-video": {"720p": 0.71},
         "openai/sora-2/text-to-video-pro": {"1080p": 3.56, "720p": 2.14},
         "openai/sora-2/image-to-video": {"720p": 0.71},
-        "openai/sora-2/image-to-video-pro": {"1080p": 3.56, "720p": 2.14}
+        "openai/sora-2/image-to-video-pro": {"1080p": 3.56, "720p": 2.14},
+        "doubao-seedance-1-5-pro-251215": {"1080p": 1.2, "720p": 0.8}
     }
     '''  # 视频模型价格：元/秒
     

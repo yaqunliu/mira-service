@@ -31,7 +31,7 @@ CHARACTER_NORM_PROMPT = (
 )
 
 
-def _generate_single_character_image(character_id: int, visual_style: str, force_regenerate: bool = True, task_id: str = None) -> dict:
+def _generate_single_character_image(character_id: int, visual_style: str, force_regenerate: bool = True, task_id: str = None, model_name: str = None) -> dict:
     """
     生成单个角色的图片（线程安全函数）
 
@@ -40,6 +40,7 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         visual_style: 视觉风格
         force_regenerate: 是否强制重新生成（True: 强制生成，False: 如果已有图片则跳过）
         task_id: Celery任务ID，用于检查current_task_id
+        model_name: 使用的模型名称
 
     Returns:
         包含角色ID和处理结果的字典
@@ -77,59 +78,77 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         # 从创作配置中获取模型配置
         creation = character.creation
         extra_data = creation.extra_data or {} if creation else {}
-        text_to_image_model = extra_data.get("text_to_image_model")
+        text_to_image_model = model_name or extra_data.get("text_to_image_model") or settings.IMAGE_MODEL_NAME
         llm_model = extra_data.get("llm_model") or settings.LLM_MODEL_NAME
 
-        # 1. 使用 LLM 生成角色特定的提示词描述
+        # 1. 获取提示词逻辑：
+        # 如果数据库中已有提示词，则直接使用；否则使用 LLM 生成
         ai_client = AIClient(llm_model_name=llm_model, text_to_image_model=text_to_image_model)
         
-        # 准备角色特征数据
-        character_features = (
-            f"角色姓名：{character.name}\n"
-            f"基础信息：{character.basic_info}\n"
-            f"容貌特征：{character.appearance}\n"
-            f"身材特征：{character.body}\n"
-            f"发型发色：{character.hair}\n"
-            f"服装配饰：{character.clothing}\n"
-            f"特征标签：{', '.join(character.tags) if character.tags and isinstance(character.tags, list) else character.tags}"
-        )
+        if character.image_prompt:
+            image_prompt = character.image_prompt
+            logger.info(f"Using existing prompt for character {character_id}: {image_prompt}")
+            character_description = ""
+        else:
+            # 准备角色特征数据
+            character_features = (
+                f"角色姓名：{character.name}\n"
+                f"基础信息：{character.basic_info}\n"
+                f"容貌特征：{character.appearance}\n"
+                f"身材特征：{character.body}\n"
+                f"发型发色：{character.hair}\n"
+                f"服装配饰：{character.clothing}\n"
+                f"特征标签：{', '.join(character.tags) if character.tags and isinstance(character.tags, list) else character.tags}"
+            )
 
-        # 加载模板并替换变量
-        system_prompt_template = read_prompt_file("character.md")
-        system_prompt = system_prompt_template.replace("{{CHARACTER_FEATURES}}", character_features)
-        
-        # 准备用户消息
-        user_content = f"请根据上述特征，为角色 {character.name} 生成生图提示词。"
-        
-        try:
-            prompt_start = time.perf_counter()
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content}
-            ]
+            # 加载模板并替换变量
+            system_prompt_template = read_prompt_file("character.md")
+            system_prompt = system_prompt_template.replace("{{CHARACTER_FEATURES}}", character_features)
             
-            # 调用 LLM 生成描述部分
-            llm_res = ai_client.chat_completion(messages=messages, model=llm_model)
-            llm_output = llm_res.get("content", "").strip()
+            # 准备用户消息
+            user_content = f"请根据上述特征，为角色 {character.name} 生成生图提示词。"
             
-            # 提取 <提示词> 标签内的内容
-            import re
-            match = re.search(r"<提示词>(.*?)</提示词>", llm_output, re.DOTALL)
-            if match:
-                character_description = match.group(1).strip()
-            else:
-                character_description = llm_output
+            try:
+                prompt_start = time.perf_counter()
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ]
                 
-            timings["llm_prompt_sec"] = round(time.perf_counter() - prompt_start, 3)
-            logger.info(f"LLM 生成的角色描述: {character_description[:100]}...")
-            
-        except Exception as e:
-            logger.error(f"LLM 生成角色提示词失败，降级使用拼接方式: {str(e)}")
-            character_description = f"{character.name}, {character.appearance}, {character.clothing}"
-            timings["llm_prompt_sec"] = 0
+                # 调用 LLM 生成描述部分
+                llm_res = ai_client.chat_completion(messages=messages, model=llm_model)
+                llm_output = llm_res.get("content", "").strip()
+                
+                # 提取 <提示词> 标签内的内容
+                import re
+                match = re.search(r"<提示词>(.*?)</提示词>", llm_output, re.DOTALL)
+                if match:
+                    character_description = match.group(1).strip()
+                else:
+                    character_description = llm_output
+                    
+                timings["llm_prompt_sec"] = round(time.perf_counter() - prompt_start, 3)
+                logger.info(f"LLM 生成的角色描述: {character_description[:100]}...")
+                
+            except Exception as e:
+                logger.error(f"LLM 生成角色提示词失败，降级使用拼接方式: {str(e)}")
+                character_description = f"{character.name}, {character.appearance}, {character.clothing}"
+                timings["llm_prompt_sec"] = 0
 
-        # 2. 组合最终提示词：固定规范文案 + LLM 生成的角色描述
-        image_prompt = f"{CHARACTER_NORM_PROMPT} {character_description}"
+            # 2. 组合最终提示词：固定规范文案 + LLM 生成的角色描述
+            image_prompt = f"{CHARACTER_NORM_PROMPT} {character_description}"
+            
+            # 3. 保存新生成的提示词到数据库
+            try:
+                character.image_prompt = image_prompt
+                db.add(character)
+                db.commit()
+                db.refresh(character)
+                logger.info(f"Generated and saved new prompt for character {character_id}")
+            except Exception as e:
+                logger.error(f"Failed to save character prompt: {e}")
+                db.rollback()
+        
         logger.info(f"角色 {character.name}(ID: {character_id}) 最终生图提示词: {image_prompt}")
         
         # 调用生图API（明确设置横版 16:9 比例）
@@ -137,26 +156,37 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         temp_image_url = ai_client.generate_image_by_prompt(
             prompt=image_prompt,
             model=text_to_image_model,
-            aspectRatio="1024x576"
+            aspectRatio="1536x864"
         )
         timings["image_api_sec"] = round(time.perf_counter() - image_start, 3)
         
-        # 从临时URL下载图像并上传到US3进行持久化（使用流式上传）
+        # 从临时URL/本地文件获取图像并上传到US3进行持久化（使用流式上传）
         persist_start = time.perf_counter()
         try:
-            logger.info(f"从URL下载图像: {temp_image_url}")
-            # 下载图像 - 使用配置的超时时间
-            timeout_config = httpx.Timeout(
-                connect=10.0,
-                read=settings.AI_IMAGE_DOWNLOAD_TIMEOUT,  # 使用配置的超时时间（默认60秒）
-                write=10.0,
-                pool=10.0,
-            )
-            with httpx.Client(timeout=timeout_config) as client:
-                response = client.get(temp_image_url)
-                response.raise_for_status()
-                image_data = response.content
-            logger.info(f"图像下载成功，大小: {len(image_data)} 字节")
+            image_data = None
+            if temp_image_url.startswith("local://"):
+                # 读取本地文件为字节流
+                temp_file_path = temp_image_url.replace("local://", "")
+                logger.info(f"使用本地文件路径: {temp_file_path}")
+                if not os.path.exists(temp_file_path):
+                    raise Exception(f"本地文件不存在: {temp_file_path}")
+                with open(temp_file_path, 'rb') as f:
+                    image_data = f.read()
+                logger.info(f"本地图像读取成功，大小: {len(image_data)} 字节")
+            else:
+                logger.info(f"从URL下载图像: {temp_image_url}")
+                # 下载图像 - 使用配置的超时时间
+                timeout_config = httpx.Timeout(
+                    connect=10.0,
+                    read=settings.AI_IMAGE_DOWNLOAD_TIMEOUT,  # 使用配置的超时时间（默认60秒）
+                    write=10.0,
+                    pool=10.0,
+                )
+                with httpx.Client(timeout=timeout_config) as client:
+                    response = client.get(temp_image_url)
+                    response.raise_for_status()
+                    image_data = response.content
+                logger.info(f"图像下载成功，大小: {len(image_data)} 字节")
             
             # 获取用户UUID用于构建上传路径
             user_id = None
@@ -311,14 +341,23 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         db.close()
 
 
-@celery_app.task(bind=True, name="generate_character_image_task")
+@celery_app.task(
+    bind=True, 
+    name="generate_character_image_task",
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True
+)
 def generate_character_image_task(
     self,
     character_ids: List[int],
     visual_style: str,
     creation_uuid: str,
     force_regenerate: bool = False,
-    update_creation_task: bool = True
+    update_creation_task: bool = True,
+    model_name: str = None
 ):
     """
     并发生成多个角色的图片
@@ -328,7 +367,8 @@ def generate_character_image_task(
         visual_style: 视觉风格
         creation_uuid: 创作UUID，用于获取creation并更新current_task_id
         force_regenerate: 是否强制重新生成（False: 跳过已有图片的角色，True: 强制生成所有）
-        update_creation_task: 是否更新creation的current_task_id（False: 不更新，避免触发页面跳转）
+        update_creation_task: 是否更新 creation 的 current_task_id（用于页面跳转控制）
+        model_name: 使用的模型名称
 
     Returns:
         包含所有角色处理结果的字典
@@ -424,7 +464,7 @@ def generate_character_image_task(
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # 提交所有任务
             future_to_character_id = {
-                executor.submit(_generate_single_character_image, cid, visual_style, force_regenerate, self.request.id): cid
+                executor.submit(_generate_single_character_image, cid, visual_style, force_regenerate, self.request.id, model_name): cid
                 for cid in character_ids
             }
             

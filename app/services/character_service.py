@@ -40,7 +40,8 @@ class CharacterService:
         visual_style: str,
         creation_uuid: str,
         force_regenerate: bool,
-        db: Session
+        db: Session,
+        model_name: Optional[str] = None
     ):
         """生成角色图片"""
         # 将UUID转换为整数ID
@@ -59,7 +60,8 @@ class CharacterService:
                 character_ids,
                 visual_style,
                 creation_uuid,
-                force_regenerate
+                force_regenerate,
+                model_name=model_name
             )
 
             return {"message": "角色图片生成任务已创建", "task_id": task.id}
@@ -71,7 +73,10 @@ class CharacterService:
         character_uuid: str,
         visual_style: str,
         creation_uuid: str,
-        db: Session
+        db: Session,
+        model_name: Optional[str] = None,
+        image_prompt: Optional[str] = None,
+        refresh_prompt: bool = False
     ):
         """重新生成单个角色图片（不触发页面跳转，不更新creation状态）"""
         # 将UUID转换为整数ID
@@ -84,6 +89,14 @@ class CharacterService:
         try:
             # 更新角色状态为 generating
             character.status = "generating"
+            
+            # 如果提供了新的提示词，则更新
+            if image_prompt:
+                character.image_prompt = image_prompt
+            # 如果明确要求刷新提示词，则清空现有提示词
+            elif refresh_prompt:
+                character.image_prompt = None
+                
             db.commit()
 
             # 传递 creation_uuid 到 Celery 任务
@@ -94,7 +107,8 @@ class CharacterService:
                 visual_style,
                 creation_uuid,
                 True,  # force_regenerate=True
-                False  # update_creation_task=False (不更新creation的current_task_id)
+                False,  # update_creation_task=False (不更新creation的current_task_id)
+                model_name=model_name
             )
 
             return {"message": "角色图片重新生成任务已创建", "task_id": task.id}

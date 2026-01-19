@@ -5,6 +5,7 @@
 import os
 import uuid
 import time
+import json
 from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
@@ -33,7 +34,7 @@ from app.services.model_config_service import ModelConfigService
 import math
 
 
-def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id: int = None, force_regen_prompt: bool = False) -> dict:
+def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id: int = None, force_regen_prompt: bool = False, model_name: str = None) -> dict:
     """
     生成单个分镜的图片（线程安全函数，使用图生图）
     
@@ -42,8 +43,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         creation_id: 创作ID（用于生成存储路径）
         freeze_record_id: 冻结记录ID
         force_regen_prompt: 是否强制重新生成提示词
-        
-    Returns:
+        model_name: 使用的模型名称
         包含分镜ID和处理结果的字典
         
     Raises:
@@ -153,11 +153,11 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         # 从创作配置中获取模型配置
         creation = shot.scene.creation
         extra_data = creation.extra_data or {}
-        image_to_image_model = extra_data.get("image_to_image_model")
-        text_to_image_model = extra_data.get("text_to_image_model")  # 兼容旧字段，实际不再区分
+        image_to_image_model = model_name or extra_data.get("image_to_image_model") or settings.IMAGE_MODEL_NAME
+        text_to_image_model = model_name or extra_data.get("text_to_image_model") or settings.IMAGE_MODEL_NAME # 兼容旧字段，实际不再区分
         
         # 使用LLM生成英文提示词
-        llm_model = extra_data.get("llm_model")
+        llm_model = extra_data.get("llm_model") or settings.LLM_MODEL_NAME
         ai_client = AIClient(
             llm_model_name=llm_model,
             image_to_image_model=image_to_image_model,
@@ -167,29 +167,41 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         # 提示词逻辑：
         # 1. 如果 force_regen_prompt 为 True，或者 shot.image_prompt 不存在，则调用 LLM 生成
         # 2. 否则直接使用已有的提示词
-        
-        english_prompt = ""
+        image_prompt = ""
         if not force_regen_prompt and shot.image_prompt:
-            english_prompt = shot.image_prompt
-            logger.info(f"分镜 {shot_id} 已有提示词，直接使用: {len(english_prompt)} chars")
+            image_prompt = shot.image_prompt
+            logger.info(f"分镜 {shot_id} 已有提示词，直接使用: {len(image_prompt)} chars")
             timings["prompt_sec"] = 0
         else:
             current_shot_description = shot.description or ""
+            
+            # 构建环境设定描述
+            environment_desc = "无"
+            if shot.scene:
+                env_config = {
+                    "时间": shot.scene.time_setting or "未知",
+                    "地点": shot.scene.location or "未知",
+                    "空间": shot.scene.space_type or "未知",
+                    "氛围": shot.scene.atmosphere or "未知"
+                }
+                environment_desc = json.dumps(env_config, ensure_ascii=False, indent=2)
+            
             # 生成提示词（即使没有参考图也用统一流程）
             logger.info(f"分镜 {shot_id} {'强制' if force_regen_prompt else '开始'}重新生成提示词（参考图数量: {len(character_images)}）")
             prompt_start = time.perf_counter()
-            english_prompt = ai_client.generate_shot_image_prompt(
+            image_prompt = ai_client.generate_shot_image_prompt(
                 character_profiles=character_profiles,
                 previous_shot_description=previous_shot_description,
                 current_shot_description=current_shot_description,
+                environment_desc=environment_desc,
                 image_model=image_to_image_model  # 传入图片模型以确定输出语言
             )
             timings["prompt_sec"] = round(time.perf_counter() - prompt_start, 3)
-            logger.info(f"生成的英文提示词长度: {len(english_prompt)}")
+            logger.info(f"生成的提示词长度: {len(image_prompt)}")
             
             # 保存生成的提示词到数据库
             try:
-                shot.image_prompt = english_prompt
+                shot.image_prompt = image_prompt
                 db.add(shot)
                 db.commit()
                 # 刷新对象以确保数据一致性
@@ -202,7 +214,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         # 打印详细的生图信息方便调试
         logger.info("=" * 50)
         logger.info(f"【分镜 {shot_id} 生图信息】")
-        logger.info(f"提示词 (Prompt): {english_prompt}")
+        logger.info(f"提示词 (Prompt): {image_prompt}")
         logger.info(f"参考图列表 ({len(character_images)}张):")
         for idx, img_url in enumerate(character_images):
             logger.info(f"  {idx + 1}. {img_url}")
@@ -212,7 +224,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         logger.info(f"开始为分镜 {shot_id} 调用图生图接口，参考图数量: {len(character_images)}")
         image_start = time.perf_counter()
         temp_image_url = ai_client.generate_image_by_reference(
-            prompt=english_prompt,
+            prompt=image_prompt,
             reference_images=character_images,  # 可为空
             model=image_to_image_model  # 使用配置的模型
         )
@@ -368,8 +380,14 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         db.close()
 
 
-@celery_app.task(bind=True, name="generate_single_shot_image_task")
-def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None, force_regen_prompt: bool = False) -> dict:
+@celery_app.task(
+    bind=True,
+    name="generate_single_shot_image_task",
+    autoretry_for=(Exception,),
+    max_retries=1,
+    retry_backoff=True,
+)
+def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None, force_regen_prompt: bool = False, model_name: str = None) -> dict:
     """
     Celery任务：生成单个分镜的图片
     
@@ -378,11 +396,13 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze
         creation_id: 创作ID
         freeze_record_id: 冻结记录ID（可选，如果提供则使用冻结机制）
         force_regen_prompt: 是否强制重新生成提示词
+        model_name: 使用的模型名称
+        custom_prompt: 自定义提示词
         
     Returns:
         包含分镜ID和处理结果的字典
     """
-    logger.info(f"开始执行分镜图片生成任务: shot_id={shot_id}, creation_id={creation_id}, freeze_record_id={freeze_record_id}, force_regen_prompt={force_regen_prompt}")
+    logger.info(f"开始执行分镜图片生成任务: shot_id={shot_id}, creation_id={creation_id}, freeze_record_id={freeze_record_id}, force_regen_prompt={force_regen_prompt}, model_name={model_name}")
     
     # 如未传入冻结记录，则在这里计算并冻结积分（单张生成）
     if not freeze_record_id:
@@ -413,7 +433,8 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze
             
             extra_data = creation.extra_data or {}
             image_model = (
-                extra_data.get("image_to_image_model")
+                model_name
+                or extra_data.get("image_to_image_model")
                 or extra_data.get("text_to_image_model")
                 or settings.IMAGE_MODEL_IMAGE_TO_IMAGE
                 or settings.IMAGE_MODEL_TEXT_TO_IMAGE
@@ -489,7 +510,13 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze
         }
     )
     
-    result = _generate_single_shot_image(shot_id, creation_id, freeze_record_id, force_regen_prompt=force_regen_prompt)
+    result = _generate_single_shot_image(
+        shot_id, 
+        creation_id, 
+        freeze_record_id, 
+        force_regen_prompt=force_regen_prompt, 
+        model_name=model_name
+    )
     
     # 清除 current_task_id
     db = SessionLocal()
@@ -507,7 +534,15 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze
     return result
 
 
-@celery_app.task(bind=True, name="generate_creation_shots_task")
+@celery_app.task(
+    bind=True, 
+    name="generate_creation_shots_task",
+    autoretry_for=(Exception,),
+    max_retries=2,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True
+)
 def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool = False):
     """
     生成创作下所有分镜的图片（主任务）
@@ -916,7 +951,15 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
         db.close()
 
 
-@celery_app.task(bind=True, name="generate_shots_by_ids_task")
+@celery_app.task(
+    bind=True, 
+    name="generate_shots_by_ids_task",
+    autoretry_for=(Exception,),
+    max_retries=2,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True
+)
 def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
     """
     并发生成指定分镜的图片
