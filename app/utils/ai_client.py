@@ -1747,6 +1747,7 @@ class AIClient:
         
         max_retries = 3
         task_id = None
+        # 找到图片  image_url 后者 url 为键的 如果是 base64 只显示前100
         logger.info(f"[{model_name_log}] 准备提交任务，参数: {json.dumps(payload, ensure_ascii=False)}")
         
         for attempt in range(max_retries):

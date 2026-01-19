@@ -112,8 +112,8 @@ class ModelConfigFactory:
             description="Gemini 3 Pro Image 图像生成模型 (Nano Banana 2)",
             config={"aspect_ratio": "16:9", "languages": ["zh", "en"], "max_words": 300},
             is_enabled=True,
-            is_default=True,
-            sort_order=1,
+            is_default=False,
+            sort_order=2,
         ),
         ModelConfig(
             model_name="doubao-seedream-4.5",
@@ -122,8 +122,8 @@ class ModelConfigFactory:
             description="字节跳动豆包 Seedream 4.5 图像生成模型",
             config={"aspect_ratio": "16:9", "size": "2K", "languages": ["zh", "en"], "max_words": 300},
             is_enabled=True,
-            is_default=False,
-            sort_order=3,
+            is_default=True,
+            sort_order=1,
         ),
     ]
     
@@ -136,8 +136,8 @@ class ModelConfigFactory:
             description="Gemini 3 Pro Image 图像生成模型 (Nano Banana 2)",
             config={"aspect_ratio": "16:9", "languages": ["zh", "en"], "max_words": 300},
             is_enabled=True,
-            is_default=True,
-            sort_order=1,
+            is_default=False,
+            sort_order=2,
         ),
         ModelConfig(
             model_name="doubao-seedream-4.5",
@@ -146,8 +146,8 @@ class ModelConfigFactory:
             description="字节跳动豆包 Seedream 4.5 图像生成模型，支持单图或多图参考",
             config={"aspect_ratio": "16:9", "size": "2K", "languages": ["zh", "en"], "max_words": 300},
             is_enabled=True,
-            is_default=False,
-            sort_order=2,
+            is_default=True,
+            sort_order=1,
         ),
     ]
     
