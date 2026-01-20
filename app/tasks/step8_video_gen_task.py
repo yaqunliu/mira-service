@@ -141,7 +141,13 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
                             model=video_model
                         )
                     elif video_model == "doubao-seedance-1-5-pro-251215":
-                        aspect_ratio = (shot.extra_data or {}).get('aspect_ratio', '16:9')
+                        # 优先从 shot 获取比例，如果没有则从 creation 获取
+                        aspect_ratio = (shot.extra_data or {}).get('aspect_ratio')
+                        if not aspect_ratio and creation:
+                            aspect_ratio = (creation.extra_data or {}).get('aspect_ratio')
+                        if not aspect_ratio:
+                            aspect_ratio = '16:9'
+                            
                         resolution = (shot.extra_data or {}).get('video_resolution', '720p').lower()
                         video_url = ai_client.generate_video_by_image_doubao_modelverse(
                             image_url=shot.image_url,
@@ -261,6 +267,22 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
                     shot.audio_url = audio_url
                     shot.video_duration = float(video_duration)
                     shot.video_status = "completed"
+
+                    # 记录版本历史
+                    if not shot.extra_data:
+                        shot.extra_data = {}
+                    if 'version_history' not in shot.extra_data:
+                        shot.extra_data['version_history'] = []
+                    
+                    shot.extra_data['version_history'].append({
+                        'version_id': str(uuid.uuid4()),
+                        'video_url': silent_video_url,
+                        'audio_url': audio_url,
+                        'video_duration': float(video_duration),
+                        'video_model': video_model,
+                        'created_at': datetime.utcnow().isoformat()
+                    })
+                    flag_modified(shot, 'extra_data')
 
                     # 更新 status_detail：视频生成成功
                     from datetime import datetime
@@ -721,6 +743,22 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
             shot.audio_url = audio_url
             shot.video_duration = float(video_duration)
             shot.video_status = "completed"
+
+            # 记录版本历史
+            if not shot.extra_data:
+                shot.extra_data = {}
+            if 'version_history' not in shot.extra_data:
+                shot.extra_data['version_history'] = []
+            
+            shot.extra_data['version_history'].append({
+                'version_id': str(uuid.uuid4()),
+                'video_url': silent_video_url,
+                'audio_url': audio_url,
+                'video_duration': float(video_duration),
+                'video_model': video_model,
+                'created_at': datetime.utcnow().isoformat()
+            })
+            flag_modified(shot, 'extra_data')
 
             # 更新 status_detail：视频生成成功
             shot.status_detail['video_status'] = 'completed'

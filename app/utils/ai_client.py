@@ -825,7 +825,7 @@ class AIClient:
         model = model or self.shot_analysis_model
 
         # 加载提示词模板
-        prompt_template = self._load_prompt_template("shot_decomposition_new")
+        prompt_template = self._load_prompt_template("shot_decomposition_V2")
 
         # 提取角色名称列表（合并出镜角色和声音角色）
         on_screen_characters = characters_data.get('出镜角色', {})
@@ -1754,7 +1754,14 @@ class AIClient:
                 payload_input.append({"type": "text", "text": item["text"]})
             if item["type"] == "image_url":
                 # 保留最多 150个字符
-                payload_input.append({"type": "image_url", "image_url": item["image_url"][:150]})
+                image_url_obj = item.get("image_url", {})
+                if isinstance(image_url_obj, dict):
+                    url = image_url_obj.get("url", "")
+                    payload_input.append({"type": "image_url", "image_url": f"{{'url': '{url[:150]}...'}}"})
+                elif isinstance(image_url_obj, str):
+                    payload_input.append({"type": "image_url", "image_url": image_url_obj[:150]})
+                else:
+                    payload_input.append({"type": "image_url", "image_url": str(image_url_obj)[:150]})
         debug_payload = {
             "model_name": payload.get("model"),
             "prompt": payload.get("prompt"),

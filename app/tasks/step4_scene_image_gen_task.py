@@ -241,12 +241,22 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
             flag_modified(scene, "extra_data")
 
         # 2. 生成图片
-        # 注意：Qwen-Image 等模型需要具体的宽x高格式，不能直接传 "16:9"
-        # 常用 16:9 分辨率: 1536x864, 1280x720, 1024x576
+        # 根据创作比例确定图片尺寸
+        extra_data = creation.extra_data or {}
+        aspect_ratio_type = extra_data.get("aspect_ratio", "16:9")
+        if aspect_ratio_type == "9:16":
+            # 常用 9:16 分辨率: 864x1536, 720x1280, 576x1024
+            image_size = "864x1536"
+        else:
+            # 默认 16:9
+            image_size = "1536x864"
+
+        logger.info(f"生成场景图片，比例: {aspect_ratio_type}, 尺寸: {image_size}")
+        
         temp_image_url = ai_client.generate_image_by_prompt(
             prompt=image_prompt,
             model=ai_client.text_to_image_model,
-            aspectRatio="1536x864"
+            aspectRatio=image_size
         )
         
         # 3. 上传 US3

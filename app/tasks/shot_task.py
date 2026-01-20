@@ -222,11 +222,24 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         
         # 使用同一模型生成图片；参考图可为空
         logger.info(f"开始为分镜 {shot_id} 调用图生图接口，参考图数量: {len(character_images)}")
+        
+        # 根据创作比例确定图片尺寸
+        creation = shot.scene.creation
+        extra_data = creation.extra_data or {}
+        aspect_ratio_type = extra_data.get("aspect_ratio", "16:9")
+        if aspect_ratio_type == "9:16":
+            image_size = "864x1536"
+        else:
+            image_size = "1536x864"
+            
+        logger.info(f"分镜图片生成，比例: {aspect_ratio_type}, 尺寸: {image_size}")
+
         image_start = time.perf_counter()
         temp_image_url = ai_client.generate_image_by_reference(
             prompt=image_prompt,
             reference_images=character_images,  # 可为空
-            model=image_to_image_model  # 使用配置的模型
+            model=image_to_image_model,  # 使用配置的模型
+            aspect_ratio=image_size
         )
         timings["image_api_sec"] = round(time.perf_counter() - image_start, 3)
         
