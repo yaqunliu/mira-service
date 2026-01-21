@@ -225,7 +225,7 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
                     character_profiles.append(profile)
 
             # 加载 V2 模板
-            prompt_template = read_prompt_file("scene_image_v2.md")
+            prompt_template = read_prompt_file("scene_image.md")
             
             # 构建环境设定描述
             env_config = {
