@@ -263,16 +263,11 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
 
         # 2. 生成图片
         # 根据创作比例确定图片尺寸
-        extra_data = creation.extra_data or {}
-        aspect_ratio_type = extra_data.get("aspect_ratio", "16:9")
-        if aspect_ratio_type == "9:16":
-            # 常用 9:16 分辨率: 864x1536, 720x1280, 576x1024
-            image_size = "864x1536"
-        else:
-            # 默认 16:9
-            image_size = "1536x864"
+        # 2. 生成图片
+        # 场景图统一使用 16:9 尺寸，不受全局 aspect_ratio 设置影响
+        image_size = "1536x864"
 
-        logger.info(f"生成场景图片，比例: {aspect_ratio_type}, 尺寸: {image_size}")
+        logger.info(f"生成场景图片，固定使用 16:9 尺寸: {image_size}")
         
         temp_image_url = ai_client.generate_image_by_prompt(
             prompt=image_prompt,
