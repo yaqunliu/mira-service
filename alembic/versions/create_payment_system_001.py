@@ -235,24 +235,33 @@ def upgrade() -> None:
     op.create_index(op.f('ix_subscription_points_history_payment_method'), 'subscription_points_history', ['payment_method'], unique=False)
     op.create_index(op.f('ix_subscription_points_history_invoice_id'), 'subscription_points_history', ['invoice_id'], unique=False)
     
-    # 9. 更新webhook_events表，添加source字段
-    op.add_column(
+    # 9. 创建webhook_events表
+    op.create_table(
         'webhook_events',
-        sa.Column('source', sa.String(length=20), nullable=True, server_default='webhook')
+        sa.Column('event_id', sa.Integer(), nullable=False),
+        sa.Column('uuid', postgresql.UUID(as_uuid=False), server_default=sa.text('gen_random_uuid()'), nullable=False),
+        sa.Column('event_type', sa.String(length=50), nullable=False),
+        sa.Column('creem_event_id', sa.String(length=100), nullable=True),
+        sa.Column('payload', postgresql.JSON(astext_type=sa.Text()), nullable=False),
+        sa.Column('source', sa.String(length=20), server_default='webhook', nullable=True),
+        sa.Column('processed', sa.Boolean(), server_default=sa.text('false'), nullable=True),
+        sa.Column('processed_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('error_message', sa.Text(), nullable=True),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+        sa.PrimaryKeyConstraint('event_id'),
+        sa.UniqueConstraint('uuid'),
+        sa.UniqueConstraint('creem_event_id')
     )
-    op.execute("UPDATE webhook_events SET source = 'webhook' WHERE source IS NULL")
-    op.create_index(
-        op.f('ix_webhook_events_source'),
-        'webhook_events',
-        ['source'],
-        unique=False
-    )
+    op.create_index(op.f('ix_webhook_events_event_id'), 'webhook_events', ['event_id'], unique=False)
+    op.create_index(op.f('ix_webhook_events_uuid'), 'webhook_events', ['uuid'], unique=True)
+    op.create_index(op.f('ix_webhook_events_event_type'), 'webhook_events', ['event_type'], unique=False)
+    op.create_index(op.f('ix_webhook_events_source'), 'webhook_events', ['source'], unique=False)
+    op.create_index(op.f('ix_webhook_events_processed'), 'webhook_events', ['processed'], unique=False)
 
 
 def downgrade() -> None:
-    # 删除webhook_events的source字段
-    op.drop_index(op.f('ix_webhook_events_source'), table_name='webhook_events')
-    op.drop_column('webhook_events', 'source')
+    # 删除webhook_events表
+    op.drop_table('webhook_events')
     
     # 删除订阅积分历史表
     op.drop_table('subscription_points_history')
