@@ -88,6 +88,7 @@ class ShotUpdate(BaseModel):
     video_duration: Optional[int] = None
     associated_characters: Optional[List[int]] = Field(None, alias="associated_characters")  # 更新关联的角色
     scene_id: Optional[int] = None  # 更新关联的场景
+    extra_data: Optional[Dict[str, Any]] = None  # 更新额外数据（如视频提示词）
 
     @field_validator('narration', mode='before')
     @classmethod

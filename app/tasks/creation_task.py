@@ -971,6 +971,7 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
                     "camera_movement": shot_data.get("运镜", ""),
                     "sound_effect": shot_data.get("音效", ""),
                     "script_content": shot_data.get("剧本正文", ""),
+                    "appearance_elements": shot_data.get("出镜元素", []),
                     "ai_output": shot_data,
                     "scene_title": target_scene.title # 冗余存储场景标题方便前端使用（尽管可以通过关联查）
                 }

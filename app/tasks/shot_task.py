@@ -146,7 +146,18 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             if previous_shot:
                 # 优先使用image_prompt（提示词），如果不存在则使用narration（旁白）
                 # 不使用description（描述）
-                previous_shot_description = previous_shot.image_prompt or previous_shot.narration
+                # 修改：对于上一个分镜，我们更需要它的最终提示词内容作为视觉参考，如果没有，则使用旁白。
+                # 同时我们不仅传递内容，还明确这是上一分镜的视觉描述
+                if previous_shot.image_prompt:
+                    previous_shot_description = f"上一分镜视觉描述：{previous_shot.image_prompt}"
+                elif previous_shot.narration:
+                    # narration 可能是一个 JSON 列表，需要处理
+                    if isinstance(previous_shot.narration, list):
+                        narration_text = " ".join([item.get("内容", "") for item in previous_shot.narration if isinstance(item, dict)])
+                    else:
+                        narration_text = str(previous_shot.narration)
+                    previous_shot_description = f"上一分镜内容描述：{narration_text}"
+                
                 if previous_shot_description:
                     logger.info(f"找到上一分镜上下文: {previous_shot.shot_id} (使用{'提示词' if previous_shot.image_prompt else '旁白'})")
         
@@ -186,14 +197,18 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 }
                 environment_desc = json.dumps(env_config, ensure_ascii=False, indent=2)
             
+            # 获取分镜中的出镜元素
+            appearance_elements = (shot.extra_data or {}).get("appearance_elements", [])
+            
             # 生成提示词（即使没有参考图也用统一流程）
-            logger.info(f"分镜 {shot_id} {'强制' if force_regen_prompt else '开始'}重新生成提示词（参考图数量: {len(character_images)}）")
+            logger.info(f"分镜 {shot_id} {'强制' if force_regen_prompt else '开始'}重新生成提示词（参考图数量: {len(character_images)}，出镜元素数量: {len(appearance_elements)}）")
             prompt_start = time.perf_counter()
             image_prompt = ai_client.generate_shot_image_prompt(
                 character_profiles=character_profiles,
                 previous_shot_description=previous_shot_description,
                 current_shot_description=current_shot_description,
                 environment_desc=environment_desc,
+                appearance_elements=appearance_elements,
                 image_model=image_to_image_model  # 传入图片模型以确定输出语言
             )
             timings["prompt_sec"] = round(time.perf_counter() - prompt_start, 3)

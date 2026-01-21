@@ -825,7 +825,7 @@ class AIClient:
         model = model or self.shot_analysis_model
 
         # 加载提示词模板
-        prompt_template = self._load_prompt_template("shot_decomposition_V2")
+        prompt_template = self._load_prompt_template("shot_decomposition_V3")
 
         # 提取角色名称列表（合并出镜角色和声音角色）
         on_screen_characters = characters_data.get('出镜角色', {})
@@ -2382,6 +2382,7 @@ class AIClient:
         previous_shot_description: Optional[str],
         current_shot_description: str,
         environment_desc: str = "无",
+        appearance_elements: List[str] = None,
         model: str = None,
         image_model: str = None
     ) -> str:
@@ -2393,6 +2394,7 @@ class AIClient:
             previous_shot_description: 上一分镜描述（中文，可选）
             current_shot_description: 当前分镜描述（中文）
             environment_desc: 环境设定描述（JSON字符串或中文描述，默认"无"）
+            appearance_elements: 出镜元素列表（关键物品、工具、道具等，可选）
             model: LLM模型名称，默认使用 prompt_generation_model
             image_model: 图片模型名称（用于确定输出语言），默认使用 image_to_image_model
 
@@ -2403,7 +2405,7 @@ class AIClient:
         model = model or self.prompt_generation_model
 
         # 从文件加载prompt模板
-        prompt_template = self._load_prompt_template("shot_image")
+        prompt_template = self._load_prompt_template("shot_image_v2")
         
         # 替换模板中的占位符 (针对非 format 占位符)
         if "{{SCENE_ENVIRONMENT}}" in prompt_template:
@@ -2451,12 +2453,16 @@ class AIClient:
         # 格式化角色档案
         character_profiles_text = "\n".join([f"- {profile}" for profile in character_profiles]) if character_profiles else "无"
 
+        # 格式化出镜元素
+        appearance_elements_text = "\n".join([f"- {item}" for item in appearance_elements]) if appearance_elements else "无"
+
         # 格式化上一分镜（如果为空则使用"无"）
         previous_shot_text = previous_shot_description if previous_shot_description else "无"
 
         # 格式化prompt（包含语言参数）
         formatted_prompt = prompt_template.format(
             character_profiles=character_profiles_text,
+            appearance_elements=appearance_elements_text,
             previous_shot=previous_shot_text,
             current_shot=current_shot_description,
             output_language=output_language,

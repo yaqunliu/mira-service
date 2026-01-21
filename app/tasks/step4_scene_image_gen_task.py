@@ -208,7 +208,24 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
             pass # 已经获取到
         else:
             # 1. 获取图片提示词
-            prompt_template = read_prompt_file("scene_image.md")
+            # V2 场景图生成逻辑：包含第一个分镜的信息
+            from app.models.shot import Shot
+            from app.models.character import Character
+            
+            # 获取该场景的第一个分镜
+            first_shot = db.query(Shot).filter(Shot.scene_id == scene_id).order_by(Shot.shot_number.asc()).first()
+            
+            character_profiles = []
+            current_shot_desc = "无"
+            if first_shot:
+                current_shot_desc = first_shot.description
+                # 获取该分镜中的角色档案
+                for char in first_shot.characters:
+                    profile = f"{char.name}（{char.role_type}）：{char.appearance_desc}"
+                    character_profiles.append(profile)
+
+            # 加载 V2 模板
+            prompt_template = read_prompt_file("scene_image_v2.md")
             
             # 构建环境设定描述
             env_config = {
@@ -221,6 +238,10 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
             
             # 替换模板中的占位符
             system_prompt = prompt_template.replace("{{SCENE_ENVIRONMENT}}", environment_desc)
+            system_prompt = system_prompt.replace("{character_profiles}", "\n".join(character_profiles) if character_profiles else "无")
+            system_prompt = system_prompt.replace("{previous_shot}", "无") # 场景建立图通常没有上一分镜
+            system_prompt = system_prompt.replace("{current_shot}", current_shot_desc)
+            system_prompt = system_prompt.replace("{output_language}", "中文")
             
             messages = [
                 {
@@ -228,7 +249,7 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
                     "content": f"{system_prompt}\n\n场景标题：{scene.title}"
                 }
             ]
-            logger.info(f"Scene image generation messages: {messages[0]['content']}")
+            logger.info(f"Scene image generation V2 messages: {messages[0]['content']}")
             
             response = ai_client.chat_completion(messages=messages)
             image_prompt = response.get("content", "").strip()

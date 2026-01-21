@@ -68,8 +68,11 @@ def _generate_video_prompt_internal(
 
     # 加载提示词模板
     try:
-        full_template = ai_client._load_prompt_template("video_generation_v3")
-        logger.info("成功加载视频提示词模板 v3")
+        # 默认使用 V3 模板，后续可配置为 V4
+        # 根据需求切换到 V4 模板
+        template_version = "video_generation_v4"
+        full_template = ai_client._load_prompt_template(template_version)
+        logger.info(f"成功加载视频提示词模板 {template_version}")
         
         # 将模板拆分为系统提示词和用户提示词模板
         if "## 待生成数据输入" in full_template:
@@ -78,7 +81,7 @@ def _generate_video_prompt_internal(
             user_prompt_template = parts[1].strip()
         else:
             system_prompt = full_template
-            user_prompt_template = """请根据以下数据生成 V3 格式的视频提示词：
+            user_prompt_template = """请根据以下数据生成 V4 格式的视频提示词：
 - **图片提示词**：{{IMAGE_PROMPT}}
 - **分镜剧本**：{{SCRIPT}}
 - **台词/旁白**：{{DIALOGUES}}
@@ -90,8 +93,8 @@ def _generate_video_prompt_internal(
             system_prompt += "\n\n**重要：当前为纯视频模式，请忽略所有台词和声音描述，不要在输出中包含任何音频相关的特征或内容。**"
             
     except Exception as e:
-        logger.error(f"加载视频提示词模板 v3 失败: {e}")
-        raise Exception(f"视频提示词模板加载失败，请检查 video_generation_v3.md 是否存在: {str(e)}")
+        logger.error(f"加载视频提示词模板 {template_version} 失败: {e}")
+        raise Exception(f"视频提示词模板加载失败，请检查 {template_version}.md 是否存在: {str(e)}")
 
     # 格式化数据
     dialogues_str = ""

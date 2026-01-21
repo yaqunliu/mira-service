@@ -237,6 +237,10 @@ async def update_shot(
         shot.image_url = shot_update.image_url
     if shot_update.video_duration is not None:
         shot.video_duration = shot_update.video_duration
+    if shot_update.extra_data is not None:
+        shot.extra_data = shot_update.extra_data
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(shot, 'extra_data')
     
     # 更新关联场景
     if shot_update.scene_id is not None:

@@ -451,14 +451,15 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
         ai_client = AIClient()
         us3_client = US3Client()
 
-        # 检查是否有 video_prompt，如果没有、或者是降级提示词、或者是重新生成请求，则重新生成
+        # 检查是否有 video_prompt，优先使用 extra_data 中的 video_prompt
+        # 只有在 video_prompt 为空、或者是降级提示词时才重新生成
         video_prompt = (shot.extra_data or {}).get("video_prompt")
-        is_fallback_prompt = video_prompt and video_prompt.startswith("平稳移动，")
         
-        # 如果是重新生成任务（通常意味着用户对之前的视频不满意），强制重新生成提示词以获得不同的效果
-        force_regen = True 
+        # 用户需求：如果有 video_prompt 且不为空，就不需要再次生成提示词，直接用提示词生成视频
+        # force_regen 现在默认为 False，只有在没有有效提示词时才进行生成
+        force_regen = False 
 
-        if not video_prompt or is_fallback_prompt or force_regen:
+        if not video_prompt or force_regen:
             logger.info(f"No video_prompt found for shot {shot.shot_id}, generating now...")
 
             # 更新extra_data状态：生成提示词中
@@ -936,10 +937,10 @@ def generate_all_videos_task(self, creation_id: int, user_id: int):
 
                 continue
 
-            # 第一步：确保该shot有video_prompt（如果没有则生成）
+            # 第一步：确保该shot有video_prompt（优先使用已有的，如果没有或者是降级提示词则生成）
             video_prompt = (shot.extra_data or {}).get('video_prompt') if shot.extra_data else None
             if not video_prompt:
-                logger.info(f"Generating video_prompt for shot {shot.shot_id}")
+                logger.info(f"Generating/Regenerating video_prompt for shot {shot.shot_id}")
                 try:
                     # 调用提示词生成任务
                     from app.tasks.step7_video_prompt_gen_task import generate_video_prompt_task
