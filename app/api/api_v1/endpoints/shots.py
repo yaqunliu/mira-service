@@ -513,28 +513,63 @@ async def regenerate_shot_image(
         raise HTTPException(status_code=403, detail="无权限操作该分镜")
 
     # 是否强制重新生成提示词：如果请求中没有提供新的提示词，且数据库中也没有提示词，则标记为重新生成
+    frame_type = request.frame_type or "both"
     force_regen_prompt = request.refresh_prompt
+    
     if request.image_prompt is not None:
-        shot.image_prompt = request.image_prompt
+        # 只有在生成首帧时才更新首帧提示词
+        if frame_type in ("start", "both"):
+            shot.image_prompt = request.image_prompt
+            logger.info(f"分镜 {shot_uuid} [{frame_type}] 更新首帧提示词")
         force_regen_prompt = False  # 提供了新提示词，不需要重新生成
-    elif not shot.image_prompt:
-        # 如果没有提供新的提示词，且数据库中也没有，标记为需要重新生成
+    elif frame_type in ("start", "both") and not shot.image_prompt:
+        # 只有在生成首帧时，且首帧提示词不存在，才标记为需要重新生成
+        force_regen_prompt = True
+    elif frame_type == "end" and not (shot.extra_data or {}).get("end_frame_image_prompt"):
+        # 只生成尾帧时，如果尾帧提示词不存在，才标记为需要重新生成
         force_regen_prompt = True
     elif request.refresh_prompt:
-        # 如果明确要求刷新提示词
-        shot.image_prompt = None
+        # 如果明确要求刷新提示词，根据 frame_type 决定清空哪些提示词
+        if frame_type in ("start", "both"):
+            shot.image_prompt = None
+            logger.info(f"分镜 {shot_uuid} [{frame_type}] 清空首帧提示词以便重新生成")
+        if frame_type in ("end", "both"):
+            # 清空尾帧提示词
+            if shot.extra_data and "end_frame_image_prompt" in shot.extra_data:
+                shot.extra_data["end_frame_image_prompt"] = None
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(shot, "extra_data")
+                logger.info(f"分镜 {shot_uuid} [{frame_type}] 清空尾帧提示词以便重新生成")
         force_regen_prompt = True
 
     # 检查是否有分镜描述（如果提示词需要重新生成，必须有描述）
     if force_regen_prompt and not shot.description:
         raise HTTPException(status_code=400, detail="分镜没有描述且没有现有提示词，无法生成提示词")
 
-    # 如果既没有提示词，也不打算重新生成（这不应该发生），则报错
-    if not force_regen_prompt and not shot.image_prompt:
-        raise HTTPException(status_code=400, detail="分镜没有图片提示词，无法生成图片")
+    # 检查是否有足够的提示词来生成图片
+    # - frame_type="start" 或 "both"：需要首帧提示词（或重新生成）
+    # - frame_type="end"：需要尾帧提示词（或重新生成）
+    if not force_regen_prompt:
+        if frame_type in ("start", "both") and not shot.image_prompt:
+            raise HTTPException(status_code=400, detail="分镜没有首帧提示词，无法生成首帧图片")
+        if frame_type in ("end", "both") and not (shot.extra_data or {}).get("end_frame_image_prompt"):
+            raise HTTPException(status_code=400, detail="分镜没有尾帧提示词，无法生成尾帧图片")
 
-    # 清空现有的 image_url
-    shot.image_url = None
+    # 根据 frame_type 决定清空哪些 URL
+    # - "start" 或 "both"：清空首帧 image_url
+    # - "end"：只清空尾帧 URL（在 extra_data 中），保留首帧 image_url
+    if frame_type in ("start", "both"):
+        # 清空首帧 image_url
+        shot.image_url = None
+        logger.info(f"分镜 {shot_uuid} [{frame_type}] 清空首帧 image_url")
+    
+    if frame_type in ("end", "both"):
+        # 清空尾帧 URL（如果存在）
+        if shot.extra_data and "end_frame_image_url" in shot.extra_data:
+            shot.extra_data["end_frame_image_url"] = None
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(shot, "extra_data")
+            logger.info(f"分镜 {shot_uuid} [{frame_type}] 清空尾帧 end_frame_image_url")
 
     # 保存更新
     db.commit()

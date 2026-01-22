@@ -70,7 +70,11 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         )
         if not shot:
             raise NotFoundError(detail=f"分镜不存在: shot_id={shot_id}")
-        logger.info(f"DEBUG: Shot loaded. shot_id={shot_id}, initial image_url={shot.image_url}")
+        # 记录初始加载状态
+        initial_image_url = shot.image_url
+        initial_image_prompt = shot.image_prompt
+        logger.info(f"DEBUG: Shot loaded. shot_id={shot_id}, frame_type={frame_type}")
+        logger.info(f"DEBUG: initial image_url={initial_image_url}, image_prompt_len={len(initial_image_prompt) if initial_image_prompt else 0}")
         
         # 注意：不再根据已有图片提前返回，因为用户可能想重新生成特定帧
         
@@ -201,8 +205,10 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         
         if not need_regen_prompt:
             logger.info(f"分镜 {shot_id} [{frame_type}] 提示词已存在，无需重新生成")
+            logger.info(f"DEBUG: 使用现有提示词，image_prompt_len={len(image_prompt)}, end_frame_prompt_len={len(end_frame_prompt) if end_frame_prompt else 0}")
             timings["prompt_sec"] = 0
         else:
+            logger.info(f"DEBUG: 需要重新生成提示词，当前 shot.image_url={shot.image_url}")
             # 重新生成提示词（首帧和尾帧同时生成）
             current_shot_description = shot.description or ""
             
@@ -245,8 +251,15 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 logger.info(f"V2 提示词生成成功：长度={len(image_prompt)}")
             
             # 保存生成的提示词到数据库
+            # 注意：根据 frame_type 决定更新哪些字段
             try:
-                shot.image_prompt = image_prompt
+                # 保存当前的 image_url，避免 refresh 后丢失
+                preserved_image_url = shot.image_url
+                
+                # 只有在 frame_type 为 "start" 或 "both" 时才更新首帧提示词
+                if frame_type in ("start", "both"):
+                    shot.image_prompt = image_prompt
+                    logger.info(f"分镜 {shot_id} [{frame_type}] 更新首帧提示词")
                 
                 # 如果有尾帧提示词，保存到 extra_data
                 if end_frame_prompt:
@@ -254,14 +267,38 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                         shot.extra_data = {}
                     shot.extra_data["end_frame_image_prompt"] = end_frame_prompt
                     flag_modified(shot, "extra_data")
+                    logger.info(f"分镜 {shot_id} [{frame_type}] 更新尾帧提示词")
+                
+                # 详细日志：commit 前的状态
+                logger.info(f"DEBUG [提示词commit前]: shot.image_url={shot.image_url}, shot.image_prompt长度={len(shot.image_prompt) if shot.image_prompt else 0}")
+                logger.info(f"DEBUG [提示词commit前]: preserved_image_url={preserved_image_url}, initial_image_url={initial_image_url}")
                 
                 db.add(shot)
                 db.commit()
+                
+                # 详细日志：commit 后、refresh 前的状态
+                logger.info(f"DEBUG [commit后refresh前]: shot.image_url={shot.image_url}")
+                
                 db.refresh(shot)
+                
+                # 详细日志：refresh 后的状态
+                logger.info(f"DEBUG [refresh后]: shot.image_url={shot.image_url}, shot.image_prompt长度={len(shot.image_prompt) if shot.image_prompt else 0}")
+                
+                # 恢复 preserved_image_url（防止 refresh 加载了错误值）
+                if preserved_image_url and shot.image_url != preserved_image_url:
+                    logger.warning(f"分镜 {shot_id} refresh 后 image_url 变化：{shot.image_url} -> {preserved_image_url}，恢复原值")
+                    shot.image_url = preserved_image_url
+                
+                # 额外保障：使用 initial_image_url
+                if initial_image_url and shot.image_url != initial_image_url:
+                    logger.warning(f"分镜 {shot_id} 使用 initial_image_url 恢复：{shot.image_url} -> {initial_image_url}")
+                    shot.image_url = initial_image_url
+                
                 logger.info(f"分镜 {shot_id} 提示词已保存到数据库（含尾帧提示词: {'是' if end_frame_prompt else '否'}）")
             except Exception as e:
                 logger.error(f"分镜 {shot_id} 提示词保存失败: {str(e)}")
                 # 保存失败不影响图片生成，继续执行
+
 
         # 打印详细的生图信息方便调试
         logger.info("=" * 50)
@@ -296,6 +333,15 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
 
         # 根据 frame_type 决定生成逻辑
         # 重要：保留现有的首帧 URL，避免在仅生成尾帧时丢失
+        # 关键修复：当 frame_type="end" 时，需要从数据库重新查询最新的 image_url
+        # 因为可能在当前任务加载 shot 后，其他任务已经更新了 image_url
+        if frame_type == "end":
+            # 强制从数据库获取最新的 image_url，避免使用过时的缓存值
+            db.expire(shot, ['image_url'])
+            db.refresh(shot, ['image_url'])
+            logger.info(f"分镜 {shot_id} [end] 刷新后 image_url={shot.image_url}")
+        
+        preserved_start_frame_url = shot.image_url  # 保存原始的首帧 URL
         image_url = shot.image_url  # 保留现有的首帧 URL
         logger.info(f"分镜 {shot_id} [{frame_type}] 开始生成图片，当前 image_url={image_url}")
         
@@ -459,7 +505,24 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         
         shot.status = "completed"
         
-        logger.info(f"Commit前的状态检查: shot.image_url={shot.image_url}, extra_data={shot.extra_data}")
+        # 确保 frame_type="end" 时首帧 URL 不丢失
+        # 关键修复：使用多个来源确保首帧 URL 不丢失
+        if frame_type == "end":
+            # 优先级：preserved_start_frame_url > initial_image_url > 当前 shot.image_url
+            # preserved_start_frame_url 是在生成图片前刷新数据库后保存的值，最可靠
+            if preserved_start_frame_url:
+                if shot.image_url != preserved_start_frame_url:
+                    logger.warning(f"分镜 {shot_id} [end] 使用 preserved_start_frame_url 恢复首帧 URL: {shot.image_url} -> {preserved_start_frame_url}")
+                    shot.image_url = preserved_start_frame_url
+            elif initial_image_url:
+                if shot.image_url != initial_image_url:
+                    logger.warning(f"分镜 {shot_id} [end] 使用 initial_image_url 恢复首帧 URL: {shot.image_url} -> {initial_image_url}")
+                    shot.image_url = initial_image_url
+            # 如果两个保存的值都是 None，说明首帧确实还没生成，保持 shot.image_url 不变
+            elif not shot.image_url:
+                logger.info(f"分镜 {shot_id} [end] 首帧 URL 为空，首帧可能尚未生成")
+        
+        logger.info(f"Commit前的状态检查: shot.image_url={shot.image_url}, preserved_start_frame_url={preserved_start_frame_url}, initial_image_url={initial_image_url}")
         
         db.commit()
         db.refresh(shot)
