@@ -596,12 +596,14 @@ async def regenerate_shot_image(
         raise HTTPException(status_code=402, detail=str(e))
 
     # 启动 Celery 任务（传递 freeze_record_id）
+    logger.info(f"Generate shot image request: shot_uuid={shot_uuid}, frame_type={request.frame_type}, model={request.model_name}")
     task = generate_single_shot_image_task.delay(
         shot_id=shot.shot_id,
         creation_id=creation_id,
         force_regen_prompt=force_regen_prompt,
         model_name=request.model_name,
-        freeze_record_id=freeze_record.record_id  # 传递冻结记录ID
+        freeze_record_id=freeze_record.record_id,  # 传递冻结记录ID
+        frame_type=request.frame_type  # 生成帧类型
     )
 
     logger.info(f"分镜 {shot_uuid} 重新生成任务已启动: task_id={task.id}, image_prompt已更新={request.image_prompt is not None}, freeze_record_id={freeze_record.record_id}")

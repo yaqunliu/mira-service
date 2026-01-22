@@ -13,6 +13,7 @@ import httpx
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm.attributes import flag_modified
 from app.models.creation import Creation
 from app.models.scene import Scene
 from app.models.shot import Shot
@@ -34,7 +35,8 @@ from app.services.model_config_service import ModelConfigService
 import math
 
 
-def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id: int = None, force_regen_prompt: bool = False, model_name: str = None) -> dict:
+
+def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id: int = None, force_regen_prompt: bool = False, model_name: str = None, frame_type: str = "both") -> dict:
     """
     生成单个分镜的图片（线程安全函数，使用图生图）
     
@@ -44,6 +46,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         freeze_record_id: 冻结记录ID
         force_regen_prompt: 是否强制重新生成提示词
         model_name: 使用的模型名称
+        frame_type: 生成帧类型 - "start"=仅首帧, "end"=仅尾帧, "both"=首尾帧
         包含分镜ID和处理结果的字典
         
     Raises:
@@ -67,19 +70,9 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         )
         if not shot:
             raise NotFoundError(detail=f"分镜不存在: shot_id={shot_id}")
+        logger.info(f"DEBUG: Shot loaded. shot_id={shot_id}, initial image_url={shot.image_url}")
         
-        # 检查是否已有图片
-        if shot.image_url:
-            total_sec = round(time.perf_counter() - start_time, 3)
-            logger.info(f"分镜 {shot_id} 已有图片，跳过生成 | total_sec={total_sec}s")
-            return {
-                "shot_id": shot_id,
-                "shot_title": shot.title,
-                "success": True,
-                "image_url": shot.image_url,
-                "skipped": True,
-                "duration_sec": total_sec,
-            }
+        # 注意：不再根据已有图片提前返回，因为用户可能想重新生成特定帧
         
         # 检查是否有分镜描述（用于生成prompt）
         if not shot.description and not shot.image_prompt:
@@ -175,15 +168,42 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             text_to_image_model=text_to_image_model
         )
         
+        # 获取创作的宽高比设置
+        creation = shot.scene.creation
+        extra_data = creation.extra_data or {}
+        aspect_ratio_type = extra_data.get("aspect_ratio", "16:9")
+        
         # 提示词逻辑：
-        # 1. 如果 force_regen_prompt 为 True，或者 shot.image_prompt 不存在，则调用 LLM 生成
-        # 2. 否则直接使用已有的提示词
-        image_prompt = ""
-        if not force_regen_prompt and shot.image_prompt:
-            image_prompt = shot.image_prompt
-            logger.info(f"分镜 {shot_id} 已有提示词，直接使用: {len(image_prompt)} chars")
+        # - both: 检查首帧和尾帧提示词是否都存在，有一个不存在则两个都重新生成
+        # - start: 检查首帧提示词是否存在，不存在则重新生成首尾帧提示词
+        # - end: 检查尾帧提示词是否存在，不存在则重新生成首尾帧提示词
+        image_prompt = shot.image_prompt or ""
+        end_frame_prompt = (shot.extra_data or {}).get("end_frame_image_prompt")
+        
+        # 根据 frame_type 决定是否需要重新生成提示词
+        need_regen_prompt = force_regen_prompt
+        if not need_regen_prompt:
+            if frame_type == "both":
+                # both: 首帧或尾帧提示词缺失则重新生成
+                if not image_prompt or not end_frame_prompt:
+                    need_regen_prompt = True
+                    logger.info(f"分镜 {shot_id} [both] 提示词不完整（首帧: {'有' if image_prompt else '无'}, 尾帧: {'有' if end_frame_prompt else '无'}），重新生成")
+            elif frame_type == "start":
+                # start: 首帧提示词缺失则重新生成
+                if not image_prompt:
+                    need_regen_prompt = True
+                    logger.info(f"分镜 {shot_id} [start] 首帧提示词缺失，重新生成")
+            elif frame_type == "end":
+                # end: 尾帧提示词缺失则重新生成
+                if not end_frame_prompt:
+                    need_regen_prompt = True
+                    logger.info(f"分镜 {shot_id} [end] 尾帧提示词缺失，重新生成")
+        
+        if not need_regen_prompt:
+            logger.info(f"分镜 {shot_id} [{frame_type}] 提示词已存在，无需重新生成")
             timings["prompt_sec"] = 0
         else:
+            # 重新生成提示词（首帧和尾帧同时生成）
             current_shot_description = shot.description or ""
             
             # 构建环境设定描述
@@ -200,28 +220,45 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             # 获取分镜中的出镜元素
             appearance_elements = (shot.extra_data or {}).get("appearance_elements", [])
             
-            # 生成提示词（即使没有参考图也用统一流程）
-            logger.info(f"分镜 {shot_id} {'强制' if force_regen_prompt else '开始'}重新生成提示词（参考图数量: {len(character_images)}，出镜元素数量: {len(appearance_elements)}）")
+            # 生成提示词
+            logger.info(f"分镜 {shot_id} [{frame_type}] 开始生成提示词（参考图数量: {len(character_images)}，出镜元素数量: {len(appearance_elements)}，宽高比: {aspect_ratio_type}）")
             prompt_start = time.perf_counter()
-            image_prompt = ai_client.generate_shot_image_prompt(
+            prompt_result = ai_client.generate_shot_image_prompt(
                 character_profiles=character_profiles,
                 previous_shot_description=previous_shot_description,
                 current_shot_description=current_shot_description,
                 environment_desc=environment_desc,
                 appearance_elements=appearance_elements,
-                image_model=image_to_image_model  # 传入图片模型以确定输出语言
+                image_model=image_to_image_model,
+                aspect_ratio=aspect_ratio_type
             )
             timings["prompt_sec"] = round(time.perf_counter() - prompt_start, 3)
-            logger.info(f"生成的提示词长度: {len(image_prompt)}")
+            
+            # 兼容处理：V2 返回字符串，V3 返回字典
+            if isinstance(prompt_result, dict):
+                image_prompt = prompt_result.get("prompt") or prompt_result.get("start_frame_prompt", "")
+                end_frame_prompt = prompt_result.get("end_frame_prompt")
+                logger.info(f"V3 提示词生成成功：首帧长度={len(image_prompt)}, 尾帧长度={len(end_frame_prompt) if end_frame_prompt else 0}")
+            else:
+                image_prompt = prompt_result
+                end_frame_prompt = None
+                logger.info(f"V2 提示词生成成功：长度={len(image_prompt)}")
             
             # 保存生成的提示词到数据库
             try:
                 shot.image_prompt = image_prompt
+                
+                # 如果有尾帧提示词，保存到 extra_data
+                if end_frame_prompt:
+                    if shot.extra_data is None:
+                        shot.extra_data = {}
+                    shot.extra_data["end_frame_image_prompt"] = end_frame_prompt
+                    flag_modified(shot, "extra_data")
+                
                 db.add(shot)
                 db.commit()
-                # 刷新对象以确保数据一致性
-                db.refresh(shot) 
-                logger.info(f"分镜 {shot_id} 提示词已保存到数据库")
+                db.refresh(shot)
+                logger.info(f"分镜 {shot_id} 提示词已保存到数据库（含尾帧提示词: {'是' if end_frame_prompt else '否'}）")
             except Exception as e:
                 logger.error(f"分镜 {shot_id} 提示词保存失败: {str(e)}")
                 # 保存失败不影响图片生成，继续执行
@@ -247,97 +284,182 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         else:
             image_size = "1536x864"
             
-        logger.info(f"分镜图片生成，比例: {aspect_ratio_type}, 尺寸: {image_size}")
+        logger.info(f"分镜图片生成，比例: {aspect_ratio_type}, 尺寸: {image_size}, 帧类型: {frame_type}")
 
-        image_start = time.perf_counter()
-        temp_image_url = ai_client.generate_image_by_reference(
-            prompt=image_prompt,
-            reference_images=character_images,  # 可为空
-            model=image_to_image_model,  # 使用配置的模型
-            aspect_ratio=image_size
-        )
-        timings["image_api_sec"] = round(time.perf_counter() - image_start, 3)
+        # 获取用户UUID和时间戳用于构建上传路径（供首帧和尾帧使用）
+        user_id = creation.owner_id
+        user = db.query(User).filter(User.user_id == user_id).first()
+        if not user:
+            raise ValueError(f"用户不存在: user_id={user_id}")
+        user_uuid = user.uuid
+        time_str = datetime.now().strftime('%Y%m%d')
+
+        # 根据 frame_type 决定生成逻辑
+        # 重要：保留现有的首帧 URL，避免在仅生成尾帧时丢失
+        image_url = shot.image_url  # 保留现有的首帧 URL
+        logger.info(f"分镜 {shot_id} [{frame_type}] 开始生成图片，当前 image_url={image_url}")
         
-        # 从本地/URL 获取图像并上传到US3进行持久化（使用流式上传）
-        try:
-            persist_start = time.perf_counter()
-            image_data = None
-            image_extension = ".png"
-            
-            # 检查是否为本地文件标识（Nano Banana2 返回格式为 "local://..."）
-            if temp_image_url.startswith("local://"):
-                # 读取本地文件为字节流
-                temp_file_path = temp_image_url.replace("local://", "")
-                logger.info(f"使用本地文件路径: {temp_file_path}")
-                if not os.path.exists(temp_file_path):
-                    raise Exception(f"本地文件不存在: {temp_file_path}")
-                # 从文件后缀推断扩展名，兜底为 .png
-                _, ext = os.path.splitext(temp_file_path)
-                image_extension = ext or ".png"
-                # 读取文件为字节流
-                with open(temp_file_path, 'rb') as f:
-                    image_data = f.read()
-                logger.info(f"本地图像读取成功，大小: {len(image_data)} 字节")
-            else:
-                # 从URL下载图像
-                logger.info(f"从URL下载图像: {temp_image_url}")
-                # 使用配置的超时时间，而不是硬编码的30秒
-                timeout_config = httpx.Timeout(
-                    connect=10.0,
-                    read=settings.AI_IMAGE_DOWNLOAD_TIMEOUT,  # 使用配置的超时时间（默认60秒）
-                    write=10.0,
-                    pool=10.0,
-                )
-                with httpx.Client(timeout=timeout_config) as client:
-                    response = client.get(temp_image_url)
-                    response.raise_for_status()
-                    image_data = response.content
-                logger.info(f"图像下载成功，大小: {len(image_data)} 字节")
-            
-            # 获取用户UUID用于构建上传路径
-            creation = shot.scene.creation
-            user_id = creation.owner_id
-            user = db.query(User).filter(User.user_id == user_id).first()
-            if not user:
-                raise ValueError(f"用户不存在: user_id={user_id}")
-            user_uuid = user.uuid
-            
-            # 获取时间戳
-            time_str = datetime.now().strftime('%Y%m%d')
-            
-            # 使用流式上传
-            # 文件名格式: shots/{creation_id}/{shot_id}/image_{uuid}{extension}
-            image_uuid = str(uuid.uuid4())
-            filename = f"shots/{creation_id}/{shot_id}/image_{image_uuid}{image_extension}"
-            
-            upload_result = upload_helper.upload_file_stream(
-                file_data=image_data,
-                user_uuid=user_uuid,
-                file_type="shots",  # 文件类型
-                filename=filename,
-                time_str=time_str
+        # 生成首帧图片（frame_type 为 "start" 或 "both"）
+        if frame_type in ("start", "both"):
+            image_start = time.perf_counter()
+            temp_image_url = ai_client.generate_image_by_reference(
+                prompt=image_prompt,
+                reference_images=character_images,  # 可为空
+                model=image_to_image_model,  # 使用配置的模型
+                aspect_ratio=image_size
             )
-            
-            if not upload_result.get('success'):
-                error_msg = f"图像上传US3失败: {upload_result.get('message')}"
-                logger.error(error_msg)
+            timings["image_api_sec"] = round(time.perf_counter() - image_start, 3)
+        
+            # 从本地/URL 获取图像并上传到US3进行持久化（使用流式上传）
+            try:
+                persist_start = time.perf_counter()
+                image_data = None
+                image_extension = ".png"
+                
+                # 检查是否为本地文件标识（Nano Banana2 返回格式为 "local://..."）
+                if temp_image_url.startswith("local://"):
+                    # 读取本地文件为字节流
+                    temp_file_path = temp_image_url.replace("local://", "")
+                    logger.info(f"使用本地文件路径: {temp_file_path}")
+                    if not os.path.exists(temp_file_path):
+                        raise Exception(f"本地文件不存在: {temp_file_path}")
+                    # 从文件后缀推断扩展名，兜底为 .png
+                    _, ext = os.path.splitext(temp_file_path)
+                    image_extension = ext or ".png"
+                    # 读取文件为字节流
+                    with open(temp_file_path, 'rb') as f:
+                        image_data = f.read()
+                    logger.info(f"本地图像读取成功，大小: {len(image_data)} 字节")
+                else:
+                    # 从URL下载图像
+                    logger.info(f"从URL下载图像: {temp_image_url}")
+                    # 使用配置的超时时间，而不是硬编码的30秒
+                    timeout_config = httpx.Timeout(
+                        connect=10.0,
+                        read=settings.AI_IMAGE_DOWNLOAD_TIMEOUT,  # 使用配置的超时时间（默认60秒）
+                        write=10.0,
+                        pool=10.0,
+                    )
+                    with httpx.Client(timeout=timeout_config) as client:
+                        response = client.get(temp_image_url)
+                        response.raise_for_status()
+                        image_data = response.content
+                    logger.info(f"图像下载成功，大小: {len(image_data)} 字节")
+                
+                
+                # 使用流式上传
+                # 文件名格式: shots/{creation_id}/{shot_id}/image_{uuid}{extension}
+                image_uuid = str(uuid.uuid4())
+                filename = f"shots/{creation_id}/{shot_id}/image_{image_uuid}{image_extension}"
+                
+                upload_result = upload_helper.upload_file_stream(
+                    file_data=image_data,
+                    user_uuid=user_uuid,
+                    file_type="shots",  # 文件类型
+                    filename=filename,
+                    time_str=time_str
+                )
+                
+                if not upload_result.get('success'):
+                    error_msg = f"图像上传US3失败: {upload_result.get('message')}"
+                    logger.error(error_msg)
+                    raise Exception(error_msg)
+                
+                # 使用外网URL保存到数据库
+                image_url = upload_result.get('external_url', upload_result.get('put_key'))
+                logger.info(f"首帧图像流式上传US3成功，持久化URL: {image_url}")
+                
+                timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
+                
+            except Exception as e:
+                # 如果US3上传失败，必须抛出异常，因为临时URL（特别是local://）无法被前端访问
+                error_msg = f"首帧图像上传US3失败: {str(e)}"
+                logger.error(error_msg, exc_info=True)
                 raise Exception(error_msg)
             
-            # 使用外网URL保存到数据库
-            image_url = upload_result.get('external_url', upload_result.get('put_key'))
-            logger.info(f"图像流式上传US3成功，持久化URL: {image_url}")
-            
-            timings["persist_sec"] = round(time.perf_counter() - persist_start, 3)
-            
-        except Exception as e:
-            # 如果US3上传失败，必须抛出异常，因为临时URL（特别是local://）无法被前端访问
-            error_msg = f"图像上传US3失败: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            raise Exception(error_msg)
+            # 更新分镜信息（首帧）
+            shot.image_url = image_url
+            logger.info(f"分镜 {shot_id} 首帧生成完成，image_url={image_url}")
         
-        # 更新分镜信息
-        shot.image_url = image_url
+        # ============ 尾帧图片生成（frame_type 为 "end" 或 "both" 且有尾帧提示词）============
+        end_frame_image_url = (shot.extra_data or {}).get("end_frame_image_url")  # 保留现有尾帧 URL
+        should_generate_end_frame = frame_type in ("end", "both") and end_frame_prompt
+        if should_generate_end_frame:
+            logger.info(f"DEBUG: 开始生成尾帧。当前 shot.image_url={shot.image_url}")
+            logger.info(f"分镜 {shot_id} 开始生成尾帧图片...")
+            try:
+                end_frame_start = time.perf_counter()
+                end_frame_temp_url = ai_client.generate_image_by_reference(
+                    prompt=end_frame_prompt,
+                    reference_images=character_images,
+                    model=image_to_image_model,
+                    aspect_ratio=image_size
+                )
+                timings["end_frame_image_api_sec"] = round(time.perf_counter() - end_frame_start, 3)
+                
+                # 下载并上传尾帧图片
+                end_frame_persist_start = time.perf_counter()
+                end_frame_image_data = None
+                end_frame_extension = ".png"
+                
+                if end_frame_temp_url.startswith("local://"):
+                    end_frame_temp_path = end_frame_temp_url.replace("local://", "")
+                    logger.info(f"尾帧使用本地文件路径: {end_frame_temp_path}")
+                    if os.path.exists(end_frame_temp_path):
+                        _, ext = os.path.splitext(end_frame_temp_path)
+                        end_frame_extension = ext or ".png"
+                        with open(end_frame_temp_path, 'rb') as f:
+                            end_frame_image_data = f.read()
+                        logger.info(f"尾帧本地图像读取成功，大小: {len(end_frame_image_data)} 字节")
+                else:
+                    logger.info(f"从URL下载尾帧图像: {end_frame_temp_url}")
+                    timeout_config = httpx.Timeout(
+                        connect=10.0,
+                        read=settings.AI_IMAGE_DOWNLOAD_TIMEOUT,
+                        write=10.0,
+                        pool=10.0,
+                    )
+                    with httpx.Client(timeout=timeout_config) as client:
+                        response = client.get(end_frame_temp_url)
+                        response.raise_for_status()
+                        end_frame_image_data = response.content
+                    logger.info(f"尾帧图像下载成功，大小: {len(end_frame_image_data)} 字节")
+                
+                if end_frame_image_data:
+                    # 上传尾帧图片
+                    end_frame_uuid = str(uuid.uuid4())
+                    end_frame_filename = f"shots/{creation_id}/{shot_id}/end_frame_{end_frame_uuid}{end_frame_extension}"
+                    
+                    end_frame_upload_result = upload_helper.upload_file_stream(
+                        file_data=end_frame_image_data,
+                        user_uuid=user_uuid,
+                        file_type="shots",
+                        filename=end_frame_filename,
+                        time_str=time_str
+                    )
+                    
+                    if end_frame_upload_result.get('success'):
+                        end_frame_image_url = end_frame_upload_result.get('external_url', end_frame_upload_result.get('put_key'))
+                        logger.info(f"尾帧图像上传US3成功: {end_frame_image_url}")
+                        
+                        # 保存尾帧 URL 到 extra_data
+                        if shot.extra_data is None:
+                            shot.extra_data = {}
+                        shot.extra_data["end_frame_image_url"] = end_frame_image_url
+                        flag_modified(shot, "extra_data")
+                    else:
+                        logger.warning(f"尾帧图像上传US3失败: {end_frame_upload_result.get('message')}")
+                
+                timings["end_frame_persist_sec"] = round(time.perf_counter() - end_frame_persist_start, 3)
+                
+            except Exception as e:
+                # 尾帧生成失败不影响整体任务，只记录警告
+                logger.warning(f"分镜 {shot_id} 尾帧图片生成失败: {str(e)}")
+                timings["end_frame_error"] = str(e)
+        
         shot.status = "completed"
+        
+        logger.info(f"Commit前的状态检查: shot.image_url={shot.image_url}, extra_data={shot.extra_data}")
         
         db.commit()
         db.refresh(shot)
@@ -358,13 +480,14 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         logger.info(
             f"分镜 {shot.title}(ID: {shot_id}) 图片生成成功 | "
             f"model={image_to_image_model} | refs={len(character_images)} | "
-            f"timings={timings} | total_sec={total_sec}s"
+            f"timings={timings} | total_sec={total_sec}s | 尾帧={'有' if end_frame_image_url else '无'}"
         )
         return {
             "shot_id": shot_id,
             "shot_title": shot.title,
             "success": True,
             "image_url": image_url,
+            "end_frame_image_url": end_frame_image_url,
             "duration_sec": total_sec,
             "timings": timings,
         }
@@ -415,7 +538,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
     max_retries=1,
     retry_backoff=True,
 )
-def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None, force_regen_prompt: bool = False, model_name: str = None) -> dict:
+def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None, force_regen_prompt: bool = False, model_name: str = None, frame_type: str = "both") -> dict:
     """
     Celery任务：生成单个分镜的图片
     
@@ -425,12 +548,12 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze
         freeze_record_id: 冻结记录ID（可选，如果提供则使用冻结机制）
         force_regen_prompt: 是否强制重新生成提示词
         model_name: 使用的模型名称
-        custom_prompt: 自定义提示词
+        frame_type: 生成帧类型 - "start"=仅首帧, "end"=仅尾帧, "both"=首尾帧
         
     Returns:
         包含分镜ID和处理结果的字典
     """
-    logger.info(f"开始执行分镜图片生成任务: shot_id={shot_id}, creation_id={creation_id}, freeze_record_id={freeze_record_id}, force_regen_prompt={force_regen_prompt}, model_name={model_name}")
+    logger.info(f"开始执行分镜图片生成任务: shot_id={shot_id}, creation_id={creation_id}, freeze_record_id={freeze_record_id}, force_regen_prompt={force_regen_prompt}, model_name={model_name}, frame_type={frame_type}")
     
     # 如未传入冻结记录，则在这里计算并冻结积分（单张生成）
     if not freeze_record_id:
@@ -543,7 +666,8 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze
         creation_id, 
         freeze_record_id, 
         force_regen_prompt=force_regen_prompt, 
-        model_name=model_name
+        model_name=model_name,
+        frame_type=frame_type
     )
     
     # 清除 current_task_id

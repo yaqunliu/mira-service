@@ -1697,17 +1697,19 @@ class AIClient:
             })
         
         # 转换 aspect_ratio 格式 (从 "1536x864" 等格式转换为 "16:9")
-        ratio_mapping = {
-            "1536x864": "16:9",
-            "1280x720": "16:9",
-            "1024x576": "16:9",
-            "576x1024": "9:16",
-            "1024x1024": "1:1",
-            "adaptive": "adaptive"
-        }
-        final_ratio = ratio_mapping.get(aspect_ratio, aspect_ratio)
-        if ":" not in final_ratio and final_ratio != "adaptive":
-            final_ratio = "16:9" # 兜底
+        # ratio_mapping = {
+        #     "1536x864": "16:9",
+        #     "1280x720": "16:9",
+        #     "1024x576": "16:9",
+        #     "864x1536": "9:16",
+        #     "720x1280": "9:16",
+        #     "576x1024": "9:16",
+        #     "1024x1024": "1:1",
+        #     "adaptive": "adaptive"
+        # }
+        # final_ratio = ratio_mapping.get(aspect_ratio, aspect_ratio)
+        # if ":" not in final_ratio and final_ratio != "adaptive":
+        #     final_ratio = "16:9" # 兜底
 
         payload = {
             "model": model,
@@ -1722,7 +1724,7 @@ class AIClient:
                 "camera_fixed": False,
                 "watermark": False,
                 "draft": False,
-                "ratio": final_ratio
+                "ratio": "adaptive"
             }
         }
         
@@ -2384,10 +2386,11 @@ class AIClient:
         environment_desc: str = "无",
         appearance_elements: List[str] = None,
         model: str = None,
-        image_model: str = None
-    ) -> str:
+        image_model: str = None,
+        aspect_ratio: str = "16:9"
+    ) -> Dict[str, Any]:
         """
-        生成分镜图片的提示词（支持英文/中文输出）
+        生成分镜图片的提示词（支持英文/中文输出，V3版本支持首尾帧）
 
         Args:
             character_profiles: 角色档案列表（1-4个角色的外貌特征描述，中文）
@@ -2397,15 +2400,28 @@ class AIClient:
             appearance_elements: 出镜元素列表（关键物品、工具、道具等，可选）
             model: LLM模型名称，默认使用 prompt_generation_model
             image_model: 图片模型名称（用于确定输出语言），默认使用 image_to_image_model
+            aspect_ratio: 宽高比（如 "16:9" 或 "9:16"），默认 "16:9"
 
         Returns:
-            提示词（英文或中文，根据图片模型配置决定）
+            字典格式，包含:
+            - prompt: 首帧提示词（兼容旧代码）
+            - start_frame_prompt: 首帧提示词
+            - end_frame_prompt: 尾帧提示词（V3），如果使用 V2 则为 None
         """
         # 默认使用提示词生成专用模型
         model = model or self.prompt_generation_model
 
-        # 从文件加载prompt模板
-        prompt_template = self._load_prompt_template("shot_image_v2")
+        # 确定使用 V2 还是 V3 模板
+        use_v3 = False
+        try:
+            # 尝试加载 V3 模板
+            prompt_template = self._load_prompt_template("shot_image_v3")
+            use_v3 = True
+            logger.info("使用 V3 分镜图片提示词模板（支持首尾帧）")
+        except FileNotFoundError:
+            # V3 不存在，回退到 V2
+            prompt_template = self._load_prompt_template("shot_image_v2")
+            logger.info("使用 V2 分镜图片提示词模板")
         
         # 替换模板中的占位符 (针对非 format 占位符)
         if "{{SCENE_ENVIRONMENT}}" in prompt_template:
@@ -2448,7 +2464,7 @@ class AIClient:
         except Exception as e:
             logger.warning(f"获取图片模型配置失败，使用默认中文输出: {e}")
 
-        logger.info(f"分镜提示词生成：模型={image_model}, 目标语言={output_language}, 字数限制={max_words}{word_unit}")
+        logger.info(f"分镜提示词生成：模型={image_model}, 目标语言={output_language}, 字数限制={max_words}{word_unit}, 宽高比={aspect_ratio}, 使用V3={use_v3}")
 
         # 格式化角色档案
         character_profiles_text = "\n".join([f"- {profile}" for profile in character_profiles]) if character_profiles else "无"
@@ -2459,16 +2475,25 @@ class AIClient:
         # 格式化上一分镜（如果为空则使用"无"）
         previous_shot_text = previous_shot_description if previous_shot_description else "无"
 
+        # 生成宽高比描述
+        aspect_ratio_desc = "16:9横版" if aspect_ratio == "16:9" else "9:16竖版"
+
         # 格式化prompt（包含语言参数）
-        formatted_prompt = prompt_template.format(
-            character_profiles=character_profiles_text,
-            appearance_elements=appearance_elements_text,
-            previous_shot=previous_shot_text,
-            current_shot=current_shot_description,
-            output_language=output_language,
-            word_unit=word_unit,
-            max_words=max_words
-        )
+        format_args = {
+            "character_profiles": character_profiles_text,
+            "appearance_elements": appearance_elements_text,
+            "previous_shot": previous_shot_text,
+            "current_shot": current_shot_description,
+            "output_language": output_language,
+            "word_unit": word_unit,
+            "max_words": max_words,
+        }
+        
+        # V3 特有参数
+        if use_v3:
+            format_args["aspect_ratio_desc"] = aspect_ratio_desc
+        
+        formatted_prompt = prompt_template.format(**format_args)
 
         messages = [
             {
@@ -2478,19 +2503,49 @@ class AIClient:
         ]
 
         try:
-            ##X## Debug 模式下抛出测试异常 - 测试角色分析LLM调用错误（生成分镜提示词）
-            # if settings.DEBUG:
-            #     raise Exception("测试角色分析LLM调用错误（生成分镜提示词）")
-
             response = self.chat_completion(messages=messages, model=model)
             prompt_text = response.get("content", "").strip()
 
-            # # 确保末尾包含强制后缀
-            # if not prompt_text.endswith("strictly preserve reference face and hairstyle"):
-            #     prompt_text += ", strictly preserve reference face and hairstyle"
-
             logger.info(f"生成的图片提示词长度: {len(prompt_text)}")
-            return prompt_text
+            
+            # V3 返回 JSON 格式，需要解析
+            if use_v3:
+                try:
+                    # 尝试解析 JSON
+                    # 去除可能的 markdown 代码块标记
+                    json_text = prompt_text
+                    if "```json" in json_text:
+                        json_text = json_text.split("```json")[1].split("```")[0].strip()
+                    elif "```" in json_text:
+                        json_text = json_text.split("```")[1].split("```")[0].strip()
+                    
+                    result = json.loads(json_text)
+                    start_frame_prompt = result.get("start_frame_prompt", "")
+                    end_frame_prompt = result.get("end_frame_prompt", "")
+                    
+                    logger.info(f"V3 解析成功：首帧提示词长度={len(start_frame_prompt)}, 尾帧提示词长度={len(end_frame_prompt)}")
+                    
+                    return {
+                        "prompt": start_frame_prompt,  # 兼容旧代码
+                        "start_frame_prompt": start_frame_prompt,
+                        "end_frame_prompt": end_frame_prompt
+                    }
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.warning(f"V3 JSON 解析失败，回退到单提示词模式: {e}")
+                    # 解析失败，将整个文本作为首帧提示词
+                    return {
+                        "prompt": prompt_text,
+                        "start_frame_prompt": prompt_text,
+                        "end_frame_prompt": None
+                    }
+            else:
+                # V2 只返回单个提示词
+                return {
+                    "prompt": prompt_text,
+                    "start_frame_prompt": prompt_text,
+                    "end_frame_prompt": None
+                }
+                
         except Exception as e:
             logger.error(f"生成图片提示词失败: {e}")
             raise

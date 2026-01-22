@@ -217,6 +217,7 @@ class ShotRegenerateRequest(BaseModel):
     image_prompt: Optional[str] = None  # 新的图片提示词（可选，不传则使用现有提示词）
     model_name: Optional[str] = None  # 使用的模型名称
     refresh_prompt: bool = False  # 是否重新生成提示词（忽略现有提示词）
+    frame_type: str = "both"  # 生成帧类型: "start"=仅首帧, "end"=仅尾帧, "both"=首尾帧
 
 
 class ShotRegenerateVideoRequest(BaseModel):
