@@ -473,6 +473,13 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
             image_prompt = shot.image_prompt or ""
             script = shot.description or ""
             dialogues = []
+            
+            # V5：获取首尾帧提示词
+            shot_extra_data = shot.extra_data or {}
+            start_frame_prompt = image_prompt  # 首帧提示词
+            end_frame_prompt = shot_extra_data.get("end_frame_image_prompt")  # 尾帧提示词
+            
+            logger.info(f"Shot {shot_id} (step8) 首尾帧提示词: start_frame={len(start_frame_prompt) if start_frame_prompt else 0}字, end_frame={len(end_frame_prompt) if end_frame_prompt else 0}字")
 
             # 解析 narration 字段 (可能是JSON字符串或已经是list)
             narration_list = []
@@ -580,23 +587,32 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
             text_to_image_model = extra_data.get('text_to_image_model')
             image_to_image_model = extra_data.get('image_to_image_model')
 
-            # 生成video_prompt - 使用独立的提示词生成函数
+            # 生成video_prompt - 使用独立的提示词生成函数（V5版本）
             from app.utils.video_prompt_generator import generate_video_prompt
-            video_prompt = generate_video_prompt(
+            prompt_result = generate_video_prompt(
                 llm_model=llm_model,
                 shot=shot,
                 script=script,
                 dialogues=dialogues,
                 characters=characters,
-                image_prompt=image_prompt
+                start_frame_prompt=start_frame_prompt,
+                end_frame_prompt=end_frame_prompt
             )
+
+            # V5：从返回的字典中提取数据
+            video_prompt = prompt_result.get("video_prompt", "")
+            cut_method = prompt_result.get("cut_method", "smooth_transition")
+            cut_reason = prompt_result.get("cut_reason", "")
 
             # 存储到shot.extra_data
             shot.extra_data['video_prompt'] = video_prompt
+            shot.extra_data['cut_method'] = cut_method
+            shot.extra_data['cut_reason'] = cut_reason
             shot.extra_data['video_prompt_status'] = 'completed'
             flag_modified(shot, 'extra_data')
             db.commit()
             logger.info(f"Generated video prompt for shot {shot.shot_id}: {video_prompt[:100]}...")
+            logger.info(f"Cut method: {cut_method}, reason: {cut_reason}")
 
         logger.info(f"Generating video for shot {shot.shot_id}")
 

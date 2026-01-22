@@ -49,6 +49,13 @@ def generate_video_prompt_task(
         image_prompt = shot.image_prompt or ""
         script = shot.description or ""
         dialogues = []
+        
+        # V5：获取首尾帧提示词
+        extra_data = shot.extra_data or {}
+        start_frame_prompt = image_prompt  # 首帧提示词（兼容旧版，使用 image_prompt）
+        end_frame_prompt = extra_data.get("end_frame_image_prompt")  # 尾帧提示词
+        
+        logger.info(f"Shot {shot_id} 首尾帧提示词: start_frame={len(start_frame_prompt) if start_frame_prompt else 0}字, end_frame={len(end_frame_prompt) if end_frame_prompt else 0}字")
 
         # 解析 narration 字段 (可能是JSON字符串或已经是list)
         narration_list = []
@@ -163,34 +170,44 @@ def generate_video_prompt_task(
             video_only = True
             logger.info(f"由于视频模型为 {video_model}，自动切换至纯视频提示词范式")
 
-        # 生成视频提示词 - 使用独立的工具函数
+        # 生成视频提示词 - 使用独立的工具函数（V5版本返回字典）
         if video_only:
-            logger.info(f"使用【纯视频】提示词范式生成提示词")
-            video_prompt = generate_video_only_prompt_util(
+            logger.info(f"使用【纯视频】提示词范式生成提示词 (V5)")
+            prompt_result = generate_video_only_prompt_util(
                 llm_model=llm_model,
                 shot=shot,
                 script=script,
                 characters=characters,
-                image_prompt=image_prompt
+                start_frame_prompt=start_frame_prompt,
+                end_frame_prompt=end_frame_prompt
             )
         else:
-            logger.info(f"使用【标准】提示词范式生成提示词")
-            video_prompt = generate_video_prompt_util(
+            logger.info(f"使用【标准】提示词范式生成提示词 (V5)")
+            prompt_result = generate_video_prompt_util(
                 llm_model=llm_model,
                 shot=shot,
                 script=script,
                 dialogues=dialogues,
                 characters=characters,
-                image_prompt=image_prompt
+                start_frame_prompt=start_frame_prompt,
+                end_frame_prompt=end_frame_prompt
             )
+
+        # V5：从返回的字典中提取数据
+        video_prompt = prompt_result.get("video_prompt", "")
+        cut_method = prompt_result.get("cut_method", "smooth_transition")
+        cut_reason = prompt_result.get("cut_reason", "")
 
         # 存储到shot.extra_data
         if not shot.extra_data:
             shot.extra_data = {}
         shot.extra_data['video_prompt'] = video_prompt
+        shot.extra_data['cut_method'] = cut_method
+        shot.extra_data['cut_reason'] = cut_reason
         db.commit()
 
         logger.info(f"Generated video prompt for shot {shot_id}: {video_prompt[:100]}...")
+        logger.info(f"Cut method: {cut_method}, reason: {cut_reason}")
 
         # 扣除冻结的积分（如果有冻结记录）
         if freeze_record_id:
@@ -199,7 +216,9 @@ def generate_video_prompt_task(
         return {
             "status": "success",
             "shot_id": shot_id,
-            "video_prompt": video_prompt
+            "video_prompt": video_prompt,
+            "cut_method": cut_method,
+            "cut_reason": cut_reason
         }
 
     except Exception as e:
