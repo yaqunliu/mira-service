@@ -2387,7 +2387,8 @@ class AIClient:
         appearance_elements: List[str] = None,
         model: str = None,
         image_model: str = None,
-        aspect_ratio: str = "16:9"
+        aspect_ratio: str = "16:9",
+        chapter_costume: str = None
     ) -> Dict[str, Any]:
         """
         生成分镜图片的提示词（支持英文/中文输出，V3版本支持首尾帧）
@@ -2401,6 +2402,7 @@ class AIClient:
             model: LLM模型名称，默认使用 prompt_generation_model
             image_model: 图片模型名称（用于确定输出语言），默认使用 image_to_image_model
             aspect_ratio: 宽高比（如 "16:9" 或 "9:16"），默认 "16:9"
+            chapter_costume: 当前章节的服装设定（可选，如果未指定则使用角色档案中的默认服装）
 
         Returns:
             字典格式，包含:
@@ -2492,6 +2494,8 @@ class AIClient:
         # V3 特有参数
         if use_v3:
             format_args["aspect_ratio_desc"] = aspect_ratio_desc
+            # 章节服装设定（如果未提供则使用默认提示）
+            format_args["chapter_costume"] = chapter_costume if chapter_costume else "无特定章节服装设定，请使用角色档案中的默认服装"
         
         formatted_prompt = prompt_template.format(**format_args)
 
