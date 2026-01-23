@@ -950,7 +950,7 @@ class AIClient:
                     logger.warning(f"获取参考图失败: {img_url}, error: {e}")
 
         # 构建 imageConfig
-        image_config = {"aspectRatio": gemini_ratio}
+        image_config = {"aspectRatio": gemini_ratio, "imageSize": "2K"}
         
         # Gemini 3 Pro 支持 imageSize, Gemini 2.5 Flash 不支持
         if "flash" not in model.lower():
@@ -1029,8 +1029,8 @@ class AIClient:
         if model == "doubao-seedream-4.5":
             logger.info(f"使用 豆包 Seedream 4.5 API 进行文生图")
             
-            # 统一使用 2k
-            image_size = "2k"
+            # 根据 aspectRatio 映射对应的 size
+            image_size = self._get_doubao_image_size(aspectRatio)
             
             # 调用 Doubao API (文生图没有参考图)
             image_url = self._call_doubao_seedream_api(
@@ -1958,6 +1958,44 @@ class AIClient:
             logger.error(error_msg)
             raise AIRetryExhaustedError(error_msg) from last_error
     
+    def _get_doubao_image_size(self, aspect_ratio_str: str) -> str:
+        """
+        将比例字符串映射为 豆包 Seedream 4.5 支持的具体像素尺寸
+        """
+        # 1. 预处理：将常见的 WxH 格式映射为 比例格式
+        aspect_ratio_to_ratio = {
+            "1536x864": "16:9",
+            "1024x576": "16:9",
+            "576x1024": "9:16",
+            "1024x1024": "1:1",
+            "1280x720": "16:9",
+            "720x1280": "9:16",
+            "1024x768": "4:3",
+            "768x1024": "3:4",
+            "864x1536": "9:16",
+            "2496x1664": "3:2",
+            "1664x2496": "2:3",
+            "3024x1296": "21:9"
+        }
+        
+        # 获取比例标识 (如 "16:9")
+        ratio = aspect_ratio_to_ratio.get(aspect_ratio_str, aspect_ratio_str)
+        
+        # 2. 豆包 Seedream 4.5 尺寸映射表
+        doubao_size_mapping = {
+            "1:1": "2048x2048",
+            "4:3": "2304x1728",
+            "3:4": "1728x2304",
+            "16:9": "2560x1440",
+            "9:16": "1440x2560",
+            "3:2": "2496x1664",
+            "2:3": "1664x2496",
+            "21:9": "3024x1296"
+        }
+        
+        # 返回映射后的尺寸，默认返回 "2k"
+        return doubao_size_mapping.get(ratio, "2k")
+
     def _call_doubao_seedream_api(
         self,
         prompt: str,
@@ -2045,10 +2083,7 @@ class AIClient:
             logger.info(f"使用 豆包 Seedream 4.5 API 进行图生图")
             
             # 根据 aspect_ratio 映射 size
-            # Doubao 支持: 512x512, 768x512, 512x768, 1024x1024, 1280x720, 720x1280, 2k, 4k
-            # 我们这里统一使用 2k
-            image_size = "2k"
-            
+            image_size = self._get_doubao_image_size(aspect_ratio)
             # 调用 Doubao API
             image_url = self._call_doubao_seedream_api(
                 prompt=prompt,

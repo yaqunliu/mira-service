@@ -973,7 +973,7 @@ async def generate_shot_video(
     # 注意：video_prompt 将在视频生成任务中自动生成，无需在此等待
 
     # 获取视频生成模型
-    video_model = request.model_name or (creation.extra_data or {}).get('video_model', 'sora2')
+    video_model = request.model_name or (creation.extra_data or {}).get('video_model', 'doubao-seedance-1-5-pro-251215')
 
     # 计算视频生成积分
     shot_duration = shot.video_duration if shot.video_duration else 5

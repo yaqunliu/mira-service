@@ -102,10 +102,10 @@ class Settings(BaseSettings):
     LLM_MODEL_PROMPT_GENERATION: str = "Qwen/Qwen-Plus"  # 提示词生成模型
 
     # 图片生成模型配置
-    IMAGE_MODEL_TEXT_TO_IMAGE: str = "gemini-3-pro-image-preview"  # 文生图模型（用于生成角色图片）
-    IMAGE_MODEL_IMAGE_TO_IMAGE: str = "gemini-3-pro-image-preview"  # 图生图模型（用于生成分镜图片）
+    IMAGE_MODEL_TEXT_TO_IMAGE: str = "doubao-seedream-4.5"  # 文生图模型（用于生成角色图片）
+    IMAGE_MODEL_IMAGE_TO_IMAGE: str = "doubao-seedream-4.5"  # 图生图模型（用于生成分镜图片）
     # 向后兼容：如果新配置未设置，使用旧配置
-    IMAGE_MODEL_NAME: str = "gemini-3-pro-image-preview"  # 旧配置（已废弃，保留用于向后兼容）
+    IMAGE_MODEL_NAME: str = "doubao-seedream-4.5"  # 旧配置（已废弃，保留用于向后兼容）
     
     # 火山云AI配置
     ARK_API_KEY: str = ""  # 火山云AI API密钥

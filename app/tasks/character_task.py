@@ -156,7 +156,6 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         temp_image_url = ai_client.generate_image_by_prompt(
             prompt=image_prompt,
             model=text_to_image_model,
-            aspectRatio="1536x864"
         )
         timings["image_api_sec"] = round(time.perf_counter() - image_start, 3)
         

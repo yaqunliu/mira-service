@@ -304,7 +304,7 @@ async def check_points_availability(
                 image_model = request.image_model_name
             else:
                 # 默认使用图生图模型（分镜图片），如果没有配置则使用文生图模型
-                image_model = settings.IMAGE_MODEL_IMAGE_TO_IMAGE or settings.IMAGE_MODEL_TEXT_TO_IMAGE or settings.IMAGE_MODEL_NAME or "black-forest-labs/flux-kontext-pro/multi"
+                image_model = settings.IMAGE_MODEL_IMAGE_TO_IMAGE or settings.IMAGE_MODEL_TEXT_TO_IMAGE or settings.IMAGE_MODEL_NAME or "doubao-seedream-4.5"
             
             cost = ModelPrices.calculate_image_cost(image_model, request.image_count)
             required_points = int(math.ceil(cost * 100))  # 每1元=100积分，向上取整
