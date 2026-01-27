@@ -229,6 +229,9 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             # 生成提示词
             logger.info(f"分镜 {shot_id} [{frame_type}] 开始生成提示词（参考图数量: {len(character_images)}，出镜元素数量: {len(appearance_elements)}，宽高比: {aspect_ratio_type}）")
             prompt_start = time.perf_counter()
+            # 获取创作风格
+            visual_style = extra_data.get("visual_style")
+            
             prompt_result = ai_client.generate_shot_image_prompt(
                 character_profiles=character_profiles,
                 previous_shot_description=previous_shot_description,
@@ -236,7 +239,8 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 environment_desc=environment_desc,
                 appearance_elements=appearance_elements,
                 image_model=image_to_image_model,
-                aspect_ratio=aspect_ratio_type
+                aspect_ratio=aspect_ratio_type,
+                visual_style=visual_style
             )
             timings["prompt_sec"] = round(time.perf_counter() - prompt_start, 3)
             
@@ -526,6 +530,38 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         
         db.commit()
         db.refresh(shot)
+        
+        # 保存图片生成历史到 shot.extra_data
+        try:
+            if shot.extra_data is None:
+                shot.extra_data = {}
+            
+            image_history = shot.extra_data.get('image_history', [])
+            
+            new_image_record = {
+                "version_id": str(uuid.uuid4()),
+                "image_url": image_url,
+                "end_frame_image_url": end_frame_image_url,
+                "image_prompt": shot.image_prompt,
+                "model_name": image_to_image_model,
+                "visual_style": visual_style,
+                "generated_at": datetime.now().isoformat(),
+                "success": True,
+                "file_size": len(image_data) if image_data else None,
+                "duration_sec": total_sec,
+                "character_refs": len(character_images),
+                "is_current": False  # 标记为非当前版本
+            }
+            
+            image_history.append(new_image_record)
+            shot.extra_data['image_history'] = image_history
+            
+            db.commit()
+            db.refresh(shot)
+            logger.info(f"分镜 {shot_id} 图片生成历史保存成功")
+        except Exception as e:
+            logger.error(f"保存分镜 {shot_id} 图片生成历史失败: {str(e)}")
+            # 历史保存失败不影响主流程
         
         # 确认扣除冻结的积分（任务成功）
         if freeze_record_id:

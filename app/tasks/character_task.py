@@ -22,9 +22,18 @@ import uuid
 import os
 import time
 
+# 风格映射
+STYLE_MAPPING = {
+    "realism": "写实摄影,摄影作品，真实的光影和材质，逼真的人物形象",
+    "cyberpunk": "赛博朋克风格，霓虹灯效果，高科技与低生活的结合，未来主义",
+    "ukiyoe": "浮世绘风格，传统日本绘画风格，平面化，鲜明的色彩",
+    "watercolor": "水彩画风格，柔和的色彩过渡，透明感，自然的笔触",
+    "anime": "日漫风格，典型的日本动画美学，夸张的表情和动作"
+}
+
 # 固定规范提示词文案
 CHARACTER_NORM_PROMPT = (
-    "横版构图，四视图布局(面部正面大特写、正面全身、侧面全身、背面全身)，日本动漫风格，纯白色背景，无文字水印。 "
+    "横版构图，四视图布局(面部正面大特写、正面全身、侧面全身、背面全身)，纯白色背景，无文字水印。 "
     "Composition: Horizontal landscape layout containing four independent parts: one large facial close-up, one full body front view, one full body side view, and one full body back view. "
     "Background: Pure white background, clean and minimal. "
     "Quality: 8k resolution, highly detailed, masterwork, no text, no letters, no words, no watermarks."
@@ -81,6 +90,9 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         text_to_image_model = model_name or extra_data.get("text_to_image_model") or settings.IMAGE_MODEL_NAME
         llm_model = extra_data.get("llm_model") or settings.LLM_MODEL_NAME
 
+        # 获取风格描述
+        style_description = STYLE_MAPPING.get(visual_style, STYLE_MAPPING["anime"])
+
         # 1. 获取提示词逻辑：
         # 如果数据库中已有提示词，则直接使用；否则使用 LLM 生成
         ai_client = AIClient(llm_model_name=llm_model, text_to_image_model=text_to_image_model)
@@ -99,14 +111,16 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
                 f"发型发色：{character.hair}\n"
                 f"服装配饰：{character.clothing}\n"
                 f"特征标签：{', '.join(character.tags) if character.tags and isinstance(character.tags, list) else character.tags}"
+                f"视觉风格：{style_description}\n"
             )
 
             # 加载模板并替换变量
             system_prompt_template = read_prompt_file("character.md")
             system_prompt = system_prompt_template.replace("{{CHARACTER_FEATURES}}", character_features)
+            system_prompt = system_prompt.replace("{{VISUAL_STYLE}}", style_description)
             
             # 准备用户消息
-            user_content = f"请根据上述特征，为角色 {character.name} 生成生图提示词。"
+            user_content = f"请根据上述特征和指定的视觉风格，为角色 {character.name} 生成生图提示词。"
             
             try:
                 prompt_start = time.perf_counter()
@@ -135,8 +149,8 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
                 character_description = f"{character.name}, {character.appearance}, {character.clothing}"
                 timings["llm_prompt_sec"] = 0
 
-            # 2. 组合最终提示词：固定规范文案 + LLM 生成的角色描述
-            image_prompt = f"{CHARACTER_NORM_PROMPT} {character_description}"
+            # 2. 组合最终提示词：固定规范文案 + 风格描述 + LLM 生成的角色描述
+            image_prompt = f"{CHARACTER_NORM_PROMPT} {style_description} {character_description}"
             
             # 3. 保存新生成的提示词到数据库
             try:
@@ -252,6 +266,37 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         character.image_prompt = image_prompt
         # character.image_base64 = image_base64
         character.status = "completed"
+
+        # 保存图片生成历史到 character.status_detail
+        try:
+            if character.status_detail is None:
+                character.status_detail = {}
+            
+            image_history = character.status_detail.get('image_history', [])
+            
+            # 添加新的历史记录
+            new_image_record = {
+                "version_id": str(uuid.uuid4()),
+                "image_url": image_url,
+                "image_prompt": image_prompt,
+                "model_name": text_to_image_model,
+                "visual_style": visual_style,
+                "generated_at": datetime.now().isoformat(),
+                "success": True,
+                "file_size": len(image_data) if image_data else None,
+                "duration_sec": total_sec,
+                "is_current": False  # 标记为非当前版本
+            }
+            
+            image_history.append(new_image_record)
+            character.status_detail['image_history'] = image_history
+            
+            db.commit()
+            db.refresh(character)
+            logger.info(f"角色 {character_id} 图片生成历史保存成功")
+        except Exception as e:
+            logger.error(f"保存角色 {character_id} 图片生成历史失败: {str(e)}")
+            # 历史保存失败不影响主流程
 
         # 用户ID和相关信息已在上面获取，这里不需要重复获取
         

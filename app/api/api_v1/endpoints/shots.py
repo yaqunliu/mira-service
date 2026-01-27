@@ -3,7 +3,8 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func
-from typing import List
+from typing import List, Optional
+from pydantic import BaseModel
 
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
@@ -1043,4 +1044,122 @@ async def generate_shot_video(
             "video_model": video_model
         },
         message="视频生成任务已启动"
+    )
+
+
+@router.get("/{shot_uuid}/image-history")
+async def get_shot_image_history(
+    shot_uuid: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    获取分镜图片生成历史
+    
+    Args:
+        shot_uuid: 分镜UUID
+        
+    Returns:
+        图片生成历史列表
+    """
+    # 获取分镜
+    shot = db.query(Shot).options(
+        selectinload(Shot.scene).selectinload(Scene.creation)
+    ).filter(Shot.uuid == shot_uuid).first()
+    
+    if not shot:
+        raise HTTPException(status_code=404, detail="分镜不存在")
+    
+    # 验证权限
+    if shot.scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限访问该分镜")
+    
+    # 获取图片历史
+    image_history = []
+    if shot.extra_data and "image_history" in shot.extra_data:
+        image_history = shot.extra_data["image_history"]
+    
+    # 标记当前使用的版本
+    current_image_url = shot.image_url
+    current_end_frame_url = None
+    if shot.extra_data:
+        current_end_frame_url = shot.extra_data.get("end_frame_image_url")
+    
+    for item in image_history:
+        # 检查是否为当前使用的版本
+        if item.get("image_url") == current_image_url and \
+           item.get("end_frame_image_url") == current_end_frame_url:
+            item["is_current"] = True
+        else:
+            item["is_current"] = False
+    
+    return success_response(
+        data={"image_history": image_history},
+        message="获取分镜图片历史成功"
+    )
+
+
+class ApplyImageVersionRequest(BaseModel):
+    version_id: str
+    image_url: str
+    end_frame_image_url: Optional[str] = None
+    image_prompt: Optional[str] = None
+
+
+@router.post("/{shot_uuid}/apply-image-version")
+async def apply_shot_image_version(
+    shot_uuid: str,
+    request: ApplyImageVersionRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    应用分镜历史图片版本为最终效果
+    
+    Args:
+        shot_uuid: 分镜UUID
+        request: 应用版本请求
+            - version_id: 版本ID
+            - image_url: 图片URL
+            - end_frame_image_url: 尾帧图片URL（可选）
+            - image_prompt: 图片提示词（可选）
+    """
+    # 获取分镜
+    shot = db.query(Shot).options(
+        selectinload(Shot.scene).selectinload(Scene.creation)
+    ).filter(Shot.uuid == shot_uuid).first()
+    
+    if not shot:
+        raise HTTPException(status_code=404, detail="分镜不存在")
+    
+    # 验证权限
+    if shot.scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限操作该分镜")
+    
+    # 更新分镜信息
+    shot.image_url = request.image_url
+    if request.image_prompt:
+        shot.image_prompt = request.image_prompt
+    
+    # 更新尾帧信息
+    if not shot.extra_data:
+        shot.extra_data = {}
+    
+    if request.end_frame_image_url:
+        shot.extra_data["end_frame_image_url"] = request.end_frame_image_url
+    else:
+        # 如果没有尾帧URL，从extra_data中删除
+        if "end_frame_image_url" in shot.extra_data:
+            del shot.extra_data["end_frame_image_url"]
+    
+    # 标记字段为已修改
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(shot, "extra_data")
+    
+    db.commit()
+    db.refresh(shot)
+    
+    return success_response(
+        data={"shot_uuid": shot_uuid, "image_url": shot.image_url},
+        message="应用分镜图片版本成功"
     )

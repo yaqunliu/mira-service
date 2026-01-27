@@ -2423,7 +2423,8 @@ class AIClient:
         model: str = None,
         image_model: str = None,
         aspect_ratio: str = "16:9",
-        chapter_costume: str = None
+        chapter_costume: str = None,
+        visual_style: str = None
     ) -> Dict[str, Any]:
         """
         生成分镜图片的提示词（支持英文/中文输出，V3版本支持首尾帧）
@@ -2438,6 +2439,7 @@ class AIClient:
             image_model: 图片模型名称（用于确定输出语言），默认使用 image_to_image_model
             aspect_ratio: 宽高比（如 "16:9" 或 "9:16"），默认 "16:9"
             chapter_costume: 当前章节的服装设定（可选，如果未指定则使用角色档案中的默认服装）
+            visual_style: 创作风格（如 "realism", "cyberpunk", "ukiyoe", "watercolor", "anime"），默认 None
 
         Returns:
             字典格式，包含:
@@ -2448,17 +2450,24 @@ class AIClient:
         # 默认使用提示词生成专用模型
         model = model or self.prompt_generation_model
 
-        # 确定使用 V2 还是 V3 模板
+        # 确定使用 V4/V3 还是 V2 模板（V4 支持视觉风格）
         use_v3 = False
+        use_v4 = False
         try:
-            # 尝试加载 V3 模板
-            prompt_template = self._load_prompt_template("shot_image_v3")
-            use_v3 = True
-            logger.info("使用 V3 分镜图片提示词模板（支持首尾帧）")
+            # 尝试加载 V4 模板（支持视觉风格）
+            prompt_template = self._load_prompt_template("shot_image_v4")
+            use_v4 = True
+            logger.info("使用 V4 分镜图片提示词模板（支持视觉风格参数）")
         except FileNotFoundError:
-            # V3 不存在，回退到 V2
-            prompt_template = self._load_prompt_template("shot_image_v2")
-            logger.info("使用 V2 分镜图片提示词模板")
+            try:
+                # V4 不存在，尝试加载 V3 模板
+                prompt_template = self._load_prompt_template("shot_image_v3")
+                use_v3 = True
+                logger.info("使用 V3 分镜图片提示词模板（支持首尾帧）")
+            except FileNotFoundError:
+                # V3 不存在，回退到 V2
+                prompt_template = self._load_prompt_template("shot_image_v2")
+                logger.info("使用 V2 分镜图片提示词模板")
         
         # 替换模板中的占位符 (针对非 format 占位符)
         if "{{SCENE_ENVIRONMENT}}" in prompt_template:
@@ -2501,7 +2510,7 @@ class AIClient:
         except Exception as e:
             logger.warning(f"获取图片模型配置失败，使用默认中文输出: {e}")
 
-        logger.info(f"分镜提示词生成：模型={image_model}, 目标语言={output_language}, 字数限制={max_words}{word_unit}, 宽高比={aspect_ratio}, 使用V3={use_v3}")
+        logger.info(f"分镜提示词生成：模型={image_model}, 目标语言={output_language}, 字数限制={max_words}{word_unit}, 宽高比={aspect_ratio}, 使用V4={use_v4}, 使用V3={use_v3}, 视觉风格={visual_style or '默认'}")
 
         # 格式化角色档案
         character_profiles_text = "\n".join([f"- {profile}" for profile in character_profiles]) if character_profiles else "无"
@@ -2515,6 +2524,25 @@ class AIClient:
         # 生成宽高比描述
         aspect_ratio_desc = "16:9横版" if aspect_ratio == "16:9" else "9:16竖版"
 
+        # 格式化视觉风格描述
+        style_description = ""
+        if visual_style:
+            style_description_map = {
+                "realism": "写实摄影风格，摄影作品，真实的光影和材质，逼真的人物形象，高清晰度",
+                "cyberpunk": "赛博朋克风格，未来科幻，高科技低生活，霓虹灯光，赛博朋克美学",
+                "ukiyoe": "浮世绘风格，传统日本浮世绘，葛饰北斋风格，平面化，鲜明色彩，传统日本元素",
+                "watercolor": "水彩画风格，柔和细腻，色彩透明，笔触柔和，艺术感强",
+                "anime": "日漫风格，经典日本动漫，鲜明色彩，夸张表情，典型日本动画美学"
+            }
+            style_description = style_description_map.get(visual_style, f"{visual_style}风格")
+        else:
+            style_description = "精细插画风格，高质量，8K细节"
+        
+        # 替换 V4 模板中的 VISUAL_STYLE 占位符
+        if "{{VISUAL_STYLE}}" in prompt_template:
+            safe_style_desc = style_description.replace("{", "{{").replace("}", "}}")
+            prompt_template = prompt_template.replace("{{VISUAL_STYLE}}", safe_style_desc)
+
         # 格式化prompt（包含语言参数）
         format_args = {
             "character_profiles": character_profiles_text,
@@ -2526,11 +2554,21 @@ class AIClient:
             "max_words": max_words,
         }
         
+        # V4 特有参数（支持视觉风格）
+        if use_v4:
+            format_args["aspect_ratio_desc"] = aspect_ratio_desc
+            format_args["chapter_costume"] = chapter_costume if chapter_costume else "无特定章节服装设定，请使用角色档案中的默认服装"
+            format_args["VISUAL_STYLE"] = style_description
+        
         # V3 特有参数
         if use_v3:
             format_args["aspect_ratio_desc"] = aspect_ratio_desc
-            # 章节服装设定（如果未提供则使用默认提示）
             format_args["chapter_costume"] = chapter_costume if chapter_costume else "无特定章节服装设定，请使用角色档案中的默认服装"
+        
+        # 对于 V2，添加风格描述到当前分镜描述（V2 不支持模板变量）
+        if not use_v3 and not use_v4 and visual_style:
+            current_shot_description_with_style = f"{current_shot_description}（风格：{style_description}）"
+            format_args["current_shot"] = current_shot_description_with_style
         
         formatted_prompt = prompt_template.format(**format_args)
 
@@ -2547,22 +2585,62 @@ class AIClient:
 
             logger.info(f"生成的图片提示词长度: {len(prompt_text)}")
             
-            # V3 返回 JSON 格式，需要解析
-            if use_v3:
+            # V3/V4 返回 JSON 格式，需要解析
+            if use_v3 or use_v4:
                 try:
                     # 尝试解析 JSON
                     # 去除可能的 markdown 代码块标记
                     json_text = prompt_text
-                    if "```json" in json_text:
-                        json_text = json_text.split("```json")[1].split("```")[0].strip()
-                    elif "```" in json_text:
-                        json_text = json_text.split("```")[1].split("```")[0].strip()
                     
-                    result = json.loads(json_text)
-                    start_frame_prompt = result.get("start_frame_prompt", "")
-                    end_frame_prompt = result.get("end_frame_prompt", "")
+                    # 首先清理可能的代码块标记
+                    if "```" in json_text:
+                        # 移除所有代码块标记
+                        json_text = json_text.replace('```json', '').replace('```', '').strip()
                     
-                    logger.info(f"V3 解析成功：首帧提示词长度={len(start_frame_prompt)}, 尾帧提示词长度={len(end_frame_prompt)}")
+                    # 清理可能的JSON前缀
+                    if json_text.startswith('json {'):
+                        json_text = json_text[5:].strip()
+                    
+                    # 清理可能的额外空白字符和BOM标记
+                    json_text = json_text.strip()
+                    
+                    logger.info(f"尝试解析的 JSON 文本长度: {len(json_text)}")
+                    logger.info(f"JSON 文本前 100 字符: {json_text[:100]}...")
+                    
+                    # 尝试解析JSON
+                    start_frame_prompt = ""
+                    end_frame_prompt = ""
+                    template_type = "V4" if use_v4 else "V3"
+                    
+                    try:
+                        # 尝试直接解析
+                        result = json.loads(json_text)
+                        start_frame_prompt = result.get("start_frame_prompt", "")
+                        end_frame_prompt = result.get("end_frame_prompt", "")
+                        logger.info(f"{template_type} 解析成功：首帧提示词长度={len(start_frame_prompt)}, 尾帧提示词长度={len(end_frame_prompt)}")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"JSON 解析失败: {e}")
+                        # 解析失败，尝试直接从原始文本中提取
+                        try:
+                            # 使用正则表达式直接提取关键字段
+                            import re
+                            # 提取 start_frame_prompt
+                            start_match = re.search(r'start_frame_prompt\s*:\s*"([\s\S]*?)"\s*,\s*"end_frame_prompt"', json_text, re.DOTALL | re.IGNORECASE)
+                            if start_match:
+                                start_frame_prompt = start_match.group(1)
+                            
+                            # 提取 end_frame_prompt
+                            end_match = re.search(r'end_frame_prompt\s*:\s*"([\s\S]*?)"\s*}', json_text, re.DOTALL | re.IGNORECASE)
+                            if end_match:
+                                end_frame_prompt = end_match.group(1)
+                            
+                            logger.info(f"直接提取成功：首帧提示词长度={len(start_frame_prompt)}, 尾帧提示词长度={len(end_frame_prompt)}")
+                        except Exception as e2:
+                            logger.warning(f"直接提取失败: {e2}")
+                            # 所有尝试都失败，使用原始文本作为首帧提示词
+                            start_frame_prompt = json_text
+                            end_frame_prompt = ""
+                            logger.info(f"使用原始文本作为首帧提示词：长度={len(start_frame_prompt)}")
                     
                     return {
                         "prompt": start_frame_prompt,  # 兼容旧代码
@@ -2570,7 +2648,8 @@ class AIClient:
                         "end_frame_prompt": end_frame_prompt
                     }
                 except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"V3 JSON 解析失败，回退到单提示词模式: {e}")
+                    template_type = "V4" if use_v4 else "V3"
+                    logger.warning(f"{template_type} JSON 解析失败，回退到单提示词模式: {e}")
                     # 解析失败，将整个文本作为首帧提示词
                     return {
                         "prompt": prompt_text,

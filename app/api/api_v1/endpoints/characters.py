@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from typing import Optional
 from app.schemas.character import CharacterUpdate, Character as CharacterSchema, CharacterGenerateImagesRequest, CharacterRegenerateImageRequest
 from app.core.exceptions import BaseServiceException
 from app.services.character_service import CharacterService
@@ -197,4 +199,102 @@ async def delete_character(character_uuid: str, db: Session = Depends(get_db), u
     return success_response(
         data={"character_uuid": character_uuid},
         message="角色删除成功"
+    )
+
+
+class ApplyImageVersionRequest(BaseModel):
+    """应用历史图片版本请求"""
+    version_id: str
+    image_url: str
+    image_prompt: Optional[str] = None
+
+
+@router.get("/{character_uuid}/image-history")
+async def get_character_image_history(
+    character_uuid: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """获取角色图片生成历史"""
+    from app.models.character import Character
+    from app.models.creation import Creation
+
+    character = db.query(Character).filter(Character.uuid == character_uuid).first()
+    if not character:
+        raise HTTPException(status_code=404, detail="角色不存在")
+
+    # 验证权限
+    if character.creation_id:
+        creation = db.query(Creation).filter(Creation.creation_id == character.creation_id).first()
+        if creation and creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限访问该角色")
+
+    # 获取图片历史
+    image_history = character.status_detail.get('image_history', []) if character.status_detail else []
+    
+    return success_response(
+        data={
+            "current_image_url": character.image_url,
+            "current_image_prompt": character.image_prompt,
+            "image_history": image_history
+        },
+        message="获取角色图片历史成功"
+    )
+
+
+@router.post("/{character_uuid}/apply-image-version")
+async def apply_character_image_version(
+    character_uuid: str,
+    request: ApplyImageVersionRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """将历史图片应用为角色的当前图片"""
+    from app.models.character import Character
+    from app.models.creation import Creation
+
+    character = db.query(Character).filter(Character.uuid == character_uuid).first()
+    if not character:
+        raise HTTPException(status_code=404, detail="角色不存在")
+
+    # 验证权限
+    if character.creation_id:
+        creation = db.query(Creation).filter(Creation.creation_id == character.creation_id).first()
+        if creation and creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限操作该角色")
+
+    # 获取图片历史
+    image_history = character.status_detail.get('image_history', []) if character.status_detail else []
+    
+    # 查找指定的版本
+    version_found = False
+    for version in image_history:
+        if version.get('version_id') == request.version_id:
+            version_found = True
+            break
+    
+    if not version_found:
+        raise HTTPException(status_code=404, detail="指定的版本不存在")
+
+    # 更新角色的当前图片
+    character.image_url = request.image_url
+    if request.image_prompt:
+        character.image_prompt = request.image_prompt
+
+    # 标记该版本为当前版本
+    for version in image_history:
+        version['is_current'] = version.get('version_id') == request.version_id
+    
+    character.status_detail['image_history'] = image_history
+    
+    db.commit()
+    db.refresh(character)
+
+    return success_response(
+        data={
+            "character_uuid": character_uuid,
+            "image_url": character.image_url,
+            "image_prompt": character.image_prompt
+        },
+        message="应用历史图片成功"
     )

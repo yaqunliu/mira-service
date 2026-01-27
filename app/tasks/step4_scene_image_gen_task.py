@@ -23,6 +23,15 @@ from app.utils.points_deduction import deduct_points_for_image
 from app.utils.model_prices import ModelPrices
 import math
 
+# 风格映射
+STYLE_MAPPING = {
+    "realism": "写实摄影,摄影作品，真实的光影和材质，逼真的场景细节",
+    "cyberpunk": "赛博朋克风格，霓虹灯效果，高科技与低生活的结合，未来主义",
+    "ukiyoe": "浮世绘风格，传统日本绘画风格，平面化，鲜明的色彩",
+    "watercolor": "水彩画风格，柔和的色彩过渡，透明感，自然的笔触",
+    "anime": "日漫风格，典型的日本动画美学，夸张的场景元素"
+}
+
 
 @celery_app.task(bind=True, name="batch_generate_scene_images_task")
 def batch_generate_scene_images_task(self, creation_id: int, force_regenerate: bool = False):
@@ -189,15 +198,19 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
         if not scene:
             raise Exception(f"Scene not found: {scene_id}")
 
-        # 从创作配置中获取模型配置
+        # 从创作配置中获取模型配置和风格
         creation = scene.creation
         extra_data = creation.extra_data or {} if creation else {}
         text_to_image_model = model_name or extra_data.get("text_to_image_model") or settings.IMAGE_MODEL_NAME
         llm_model = extra_data.get("llm_model") or settings.LLM_MODEL_NAME
+        visual_style = extra_data.get("visual_style", extra_data.get("style", "anime"))
+
+        # 获取风格描述
+        style_description = STYLE_MAPPING.get(visual_style, STYLE_MAPPING["anime"])
 
         ai_client = AIClient(llm_model_name=llm_model, text_to_image_model=text_to_image_model)
         us3_client = US3Client()
-        logger.info(f"Regenerating image for scene: {scene.title}")
+        logger.info(f"Regenerating image for scene: {scene.title}, style: {visual_style}")
 
         # 优先从 extra_data 获取
         image_prompt = None
@@ -238,6 +251,7 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
             
             # 替换模板中的占位符
             system_prompt = prompt_template.replace("{{SCENE_ENVIRONMENT}}", environment_desc)
+            system_prompt = system_prompt.replace("{{VISUAL_STYLE}}", style_description)
             system_prompt = system_prompt.replace("{character_profiles}", "\n".join(character_profiles) if character_profiles else "无")
             system_prompt = system_prompt.replace("{previous_shot}", "无") # 场景建立图通常没有上一分镜
             system_prompt = system_prompt.replace("{current_shot}", current_shot_desc)
@@ -246,7 +260,7 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
             messages = [
                 {
                     "role": "user",
-                    "content": f"{system_prompt}\n\n场景标题：{scene.title}"
+                    "content": f"{system_prompt}\n\n场景标题：{scene.title}\n视觉风格：{style_description}"
                 }
             ]
             logger.info(f"Scene image generation V2 messages: {messages[0]['content']}")
@@ -263,14 +277,17 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
 
         # 2. 生成图片
         # 根据创作比例确定图片尺寸
-        # 2. 生成图片
         # 场景图统一使用 16:9 尺寸，不受全局 aspect_ratio 设置影响
         image_size = "1536x864"
 
+        # 将风格描述添加到最终提示词中
+        final_prompt = f"{image_prompt} {style_description}"
+
         logger.info(f"生成场景图片，固定使用 16:9 尺寸: {image_size}")
+        logger.info(f"场景图片最终提示词: {final_prompt}")
         
         temp_image_url = ai_client.generate_image_by_prompt(
-            prompt=image_prompt,
+            prompt=final_prompt,
             model=ai_client.text_to_image_model,
             aspectRatio=image_size
         )
@@ -305,6 +322,36 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
         
         scene.image_url = us3_url
         scene.status = "completed"
+
+        # 保存图片生成历史到 scene.extra_data
+        try:
+            if scene.extra_data is None:
+                scene.extra_data = {}
+            
+            image_history = scene.extra_data.get('image_history', [])
+            
+            new_image_record = {
+                "version_id": str(uuid.uuid4()),
+                "image_url": us3_url,
+                "image_prompt": image_prompt,
+                "model_name": ai_client.text_to_image_model,
+                "visual_style": visual_style,
+                "generated_at": datetime.now().isoformat(),
+                "success": True,
+                "file_size": len(image_data) if image_data else None,
+                "duration_sec": round(time.perf_counter() - task_start_time, 3) if 'task_start_time' in locals() else None,
+                "is_current": False  # 标记为非当前版本
+            }
+            
+            image_history.append(new_image_record)
+            scene.extra_data['image_history'] = image_history
+            
+            db.commit()
+            db.refresh(scene)
+            logger.info(f"场景 {scene_id} 图片生成历史保存成功")
+        except Exception as e:
+            logger.error(f"保存场景 {scene_id} 图片生成历史失败: {str(e)}")
+            # 历史保存失败不影响主流程
 
         # 扣除积分（场景图生成使用文生图模型）
         creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()

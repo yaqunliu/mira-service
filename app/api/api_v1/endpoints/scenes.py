@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.attributes import flag_modified
-from typing import List
+from typing import List, Optional
+from pydantic import BaseModel
 
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
@@ -497,4 +498,97 @@ async def delete_scene(
     return success_response(
         data={"scene_uuid": scene_uuid},
         message="场景删除成功"
+    )
+
+
+class ApplySceneImageVersionRequest(BaseModel):
+    """应用场景历史图片版本请求"""
+    version_id: str
+    image_url: str
+    image_prompt: Optional[str] = None
+
+
+@router.get("/{scene_uuid}/image-history")
+async def get_scene_image_history(
+    scene_uuid: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """获取场景图片生成历史"""
+    scene = db.query(Scene).options(
+        selectinload(Scene.creation)
+    ).filter(Scene.uuid == scene_uuid).first()
+    
+    if not scene:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    
+    if scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限访问该场景")
+    
+    image_history = scene.extra_data.get('image_history', []) if scene.extra_data else []
+    
+    return success_response(
+        data={
+            "current_image_url": scene.image_url,
+            "current_image_prompt": scene.extra_data.get('image_prompt') if scene.extra_data else None,
+            "image_history": image_history
+        },
+        message="获取场景图片历史成功"
+    )
+
+
+@router.post("/{scene_uuid}/apply-image-version")
+async def apply_scene_image_version(
+    scene_uuid: str,
+    request: ApplySceneImageVersionRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """将历史图片应用为场景的当前图片"""
+    scene = db.query(Scene).options(
+        selectinload(Scene.creation)
+    ).filter(Scene.uuid == scene_uuid).first()
+    
+    if not scene:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    
+    if scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限操作该场景")
+    
+    image_history = scene.extra_data.get('image_history', []) if scene.extra_data else []
+    
+    version_found = False
+    for version in image_history:
+        if version.get('version_id') == request.version_id:
+            version_found = True
+            break
+    
+    if not version_found:
+        raise HTTPException(status_code=404, detail="指定的版本不存在")
+    
+    scene.image_url = request.image_url
+    if request.image_prompt:
+        if scene.extra_data is None:
+            scene.extra_data = {}
+        scene.extra_data['image_prompt'] = request.image_prompt
+        flag_modified(scene, "extra_data")
+    
+    for version in image_history:
+        version['is_current'] = version.get('version_id') == request.version_id
+    
+    if scene.extra_data is None:
+        scene.extra_data = {}
+    scene.extra_data['image_history'] = image_history
+    flag_modified(scene, "extra_data")
+    
+    db.commit()
+    db.refresh(scene)
+
+    return success_response(
+        data={
+            "scene_uuid": scene_uuid,
+            "image_url": scene.image_url,
+            "image_prompt": scene.extra_data.get('image_prompt') if scene.extra_data else None
+        },
+        message="应用历史图片成功"
     )

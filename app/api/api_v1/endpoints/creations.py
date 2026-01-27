@@ -1,7 +1,7 @@
 import json
 from typing import Optional, List
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,7 @@ from app.models.user import User
 from app.models.creation import Creation
 from app.models.shot import Shot
 from app.models.scene import Scene
+from app.models.character import Character
 from app.schemas.creation import CreationCreate, CreationUpdate, CreationStatus
 from app.services.creation_service import CreationService
 from app.core.exceptions import BaseServiceException
@@ -1699,3 +1700,160 @@ async def get_export_history(
     except Exception as e:
         logger.error(f"获取导出历史失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取导出历史失败: {str(e)}")
+
+
+@router.get("/{creation_uuid}/image-history")
+async def get_image_history(
+    creation_uuid: str,
+    image_type: str = Query(None, description="图片类型: character, scene, shot"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    获取图片生成历史
+
+    返回该创作的图片生成记录，支持按类型筛选（角色、场景、分镜）
+
+    Args:
+        creation_uuid: 创作项目UUID
+        image_type: 可选，图片类型筛选（character: 角色图, scene: 场景图, shot: 分镜图）
+
+    Returns:
+        图片生成历史列表
+    """
+    try:
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+        if not creation:
+            raise HTTPException(status_code=404, detail="创作项目不存在")
+
+        if creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限访问该创作项目")
+
+        extra_data = creation.extra_data or {}
+        
+        result = {
+            "creation_uuid": creation_uuid,
+            "characters": [],
+            "scenes": [],
+            "shots": [],
+            "total": 0
+        }
+        
+        if image_type is None or image_type == "character":
+            char_images = extra_data.get('char_images', [])
+            char_images_sorted = sorted(char_images, key=lambda x: x.get('generated_at', ''), reverse=True)
+            result["characters"] = char_images_sorted
+            result["total"] += len(char_images_sorted)
+        
+        if image_type is None or image_type == "scene":
+            scene_images = extra_data.get('scene_images', [])
+            scene_images_sorted = sorted(scene_images, key=lambda x: x.get('generated_at', ''), reverse=True)
+            result["scenes"] = scene_images_sorted
+            result["total"] += len(scene_images_sorted)
+        
+        if image_type is None or image_type == "shot":
+            shot_images = extra_data.get('shot_images', [])
+            shot_images_sorted = sorted(shot_images, key=lambda x: x.get('generated_at', ''), reverse=True)
+            result["shots"] = shot_images_sorted
+            result["total"] += len(shot_images_sorted)
+
+        return success_response(
+            data=result,
+            message="获取图片生成历史成功"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取图片生成历史失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取图片生成历史失败: {str(e)}")
+
+
+@router.post("/{creation_uuid}/update-image-version")
+async def update_image_version(
+    creation_uuid: str,
+    request: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    更新图片为历史版本
+
+    将指定的历史图片版本设置为当前最终版本
+
+    Args:
+        creation_uuid: 创作项目UUID
+        request: 请求体，包含：
+            image_type: 图片类型 (character, scene, shot)
+            item_id: 项目ID (character_id, scene_id, shot_id)
+            history_index: 历史记录索引
+
+    Returns:
+        更新结果
+    """
+    try:
+        creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+        if not creation:
+            raise HTTPException(status_code=404, detail="创作项目不存在")
+
+        if creation.owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail="无权限访问该创作项目")
+
+        image_type = request.get('image_type')
+        item_id = request.get('item_id')
+        history_index = request.get('history_index')
+
+        if not all([image_type, item_id, history_index]):
+            raise HTTPException(status_code=400, detail="缺少必要参数")
+
+        extra_data = creation.extra_data or {}
+        history_key = f'{image_type}_images'
+        image_history = extra_data.get(history_key, [])
+
+        if history_index < 0 or history_index >= len(image_history):
+            raise HTTPException(status_code=404, detail="历史记录不存在")
+
+        history_item = image_history[history_index]
+
+        # 根据图片类型更新对应表
+        if image_type == 'character':
+            character = db.query(Character).filter(Character.character_id == item_id).first()
+            if not character:
+                raise HTTPException(status_code=404, detail="角色不存在")
+            character.image_url = history_item.get('image_url')
+            character.image_prompt = history_item.get('image_prompt')
+            db.commit()
+        elif image_type == 'scene':
+            scene = db.query(Scene).filter(Scene.scene_id == item_id).first()
+            if not scene:
+                raise HTTPException(status_code=404, detail="场景不存在")
+            scene.image_url = history_item.get('image_url')
+            db.commit()
+        elif image_type == 'shot':
+            shot = db.query(Shot).filter(Shot.shot_id == item_id).first()
+            if not shot:
+                raise HTTPException(status_code=404, detail="分镜不存在")
+            shot.image_url = history_item.get('image_url')
+            if history_item.get('end_frame_image_url'):
+                shot_extra_data = shot.extra_data or {}
+                shot_extra_data['end_frame_image_url'] = history_item.get('end_frame_image_url')
+                shot.extra_data = shot_extra_data
+            db.commit()
+        else:
+            raise HTTPException(status_code=400, detail="无效的图片类型")
+
+        return success_response(
+            data={
+                "updated": True,
+                "image_type": image_type,
+                "item_id": item_id,
+                "image_url": history_item.get('image_url')
+            },
+            message="图片版本更新成功"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新图片版本失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"更新图片版本失败: {str(e)}")
