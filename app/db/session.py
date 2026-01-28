@@ -1,10 +1,12 @@
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
-from app.db.base import SessionLocal
+from app.db.base import AsyncSessionLocal, SyncSessionLocal, get_async_db
+
+SessionLocal = SyncSessionLocal
 
 
-def get_db() -> Session:
-    """获取数据库会话"""
-    db = SessionLocal()
+def get_sync_db() -> Session:
+    db = SyncSessionLocal()()
     try:
         yield db
     finally:

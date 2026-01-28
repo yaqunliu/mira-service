@@ -7,7 +7,7 @@ import httpx
 from datetime import datetime
 from app.core.celery_app import celery_app
 from app.core.logger import logger
-from app.db.session import SessionLocal
+from app.db.base import _get_sync_session_factory
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from app.models.creation import Creation
@@ -38,7 +38,7 @@ def batch_generate_scene_images_task(self, creation_id: int, force_regenerate: b
     """
     批量生成场景图片任务（并行）
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     try:
         self.update_state(
             state='PROGRESS',
@@ -182,7 +182,7 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
     """
     单个场景图片生成任务
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     try:
         self.update_state(
             state='PROGRESS',

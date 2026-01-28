@@ -7,7 +7,7 @@ from typing import Dict, Any, List
 
 from app.core.celery_app import celery_app
 from app.core.logger import logger
-from app.db.session import SessionLocal
+from app.db.base import _get_sync_session_factory
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from app.models.creation import Creation
@@ -35,7 +35,7 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
     """
     场景视频生成任务（生成场景下所有分镜的视频）
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     try:
         self.update_state(
             state='PROGRESS',
@@ -415,7 +415,7 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
         last_frame_image_url: 尾帧图片URL（可选）
     """
     logger.info(f"开始分镜视频生成任务: shot_id={shot_id}, creation_id={creation_id}, model_name={model_name}, 有尾帧: {bool(last_frame_image_url)}")
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
 
     try:
         # 只在Celery上下文中更新状态（检查self.request是否存在）
@@ -879,7 +879,7 @@ def generate_all_videos_task(self, creation_id: int, user_id: int):
     1. 检查每个shot是否有video_prompt，没有则先生成
     2. 逐个生成视频
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     try:
         import math
         import traceback

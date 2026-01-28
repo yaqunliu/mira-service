@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, status, UploadFile, File, Query, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
-from app.api.deps import get_db, get_current_user
+from app.api.deps import get_async_db, get_current_user
 from app.models.user import User
-from app.services.novel_service import NovelService
+from app.services.novel_async_service import NovelAsyncService
 from app.core.logger import logger
 from app.core.exceptions import BaseServiceException
 from app.utils.response import success_response
@@ -16,7 +16,7 @@ router = APIRouter()
 @router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
 async def upload_novel(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
@@ -60,7 +60,7 @@ async def upload_novel(
     
     # 调用服务层处理业务逻辑
     try:
-        task_id = await NovelService.upload_novel_file_service(
+        task_id = await NovelAsyncService.upload_novel_file_service(
             db=db,
             file=file,
             user_id=user_id
@@ -92,7 +92,7 @@ from app.schemas.novel import NovelCreate
 @router.post("/create", status_code=status.HTTP_201_CREATED)
 async def create_project(
     novel_in: NovelCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
@@ -102,11 +102,11 @@ async def create_project(
     """
     try:
         # Simple Logic: Create a Novel record with type='script'
-        # Since NovelService.create_novel_service doesn't exist yet (only upload), we'll implement logic here or calling a service method
+        # Since NovelAsyncService.create_novel_service doesn't exist yet (only upload), we'll implement logic here or calling a service method
         # For simplicity and speed, let's implement service logic inline or add to service
         
         # Call service to create
-        novel = NovelService.create_project_service(db=db, novel_in=novel_in, user_id=user.user_id)
+        novel = await NovelAsyncService.create_project_service(db=db, novel_in=novel_in, user_id=user.user_id)
         return success_response(data={"novel_id": novel.novel_id, "uuid": novel.uuid, "title": novel.title, "type": novel.type}, message="项目创建成功")
         
     except Exception as e:
@@ -124,7 +124,7 @@ async def get_novels(
     type: Optional[str] = Query(None, description="按类型筛选：novel, script"),
     order_by: str = Query("created_at", description="排序字段：created_at, updated_at, title"),
     order: str = Query("desc", description="排序方向：asc, desc"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
@@ -155,7 +155,7 @@ async def get_novels(
     """
     # 调用服务层获取数据
     try:
-        novels, total = NovelService.get_novels_service(
+        novels, total = await NovelAsyncService.get_novels_service(
             db=db,
             user_id=user.user_id,
             page=page,
@@ -217,7 +217,7 @@ async def get_novels(
 @router.get("/{novel_uuid}")
 async def get_novel(
     novel_uuid: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
@@ -226,7 +226,7 @@ async def get_novel(
     注意：章节列表需要通过 GET /{novel_uuid}/chapters 接口单独获取（支持分页）
     """
     try:
-        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
+        novel = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
     except BaseServiceException as e:
         # 将业务异常转换为HTTP异常
         raise HTTPException(
@@ -300,7 +300,7 @@ async def get_novel(
 async def get_chapter(
     novel_uuid: str,
     chapter_uuid: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
@@ -309,7 +309,7 @@ async def get_chapter(
     返回章节的完整信息，包括标题、内容URL、字数等
     """
     try:
-        chapter = NovelService.get_chapter_by_uuid_service(
+        chapter = await NovelAsyncService.get_chapter_by_uuid_service(
             db=db,
             chapter_uuid=chapter_uuid,
             user_id=user.user_id
@@ -343,7 +343,7 @@ async def get_novel_chapters(
     novel_uuid: str,
     page: int = Query(1, ge=1, description="页码，从1开始"),
     page_size: int = Query(10, ge=1, le=100, description="每页数量，默认10，最大100"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
@@ -353,8 +353,8 @@ async def get_novel_chapters(
     """
     try:
         # 先通过uuid获取novel_id
-        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
-        chapters, total = NovelService.get_novel_chapters_service(
+        novel = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
+        chapters, total = await NovelAsyncService.get_novel_chapters_service(
             db=db, 
             novel_id=novel.novel_id, 
             user_id=user.user_id,
@@ -403,7 +403,7 @@ async def get_novel_chapters(
 async def update_novel(
     novel_uuid: str,
     novel_update: NovelUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
@@ -416,8 +416,8 @@ async def update_novel(
     """
     try:
         # 先通过uuid获取novel
-        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
-        novel = NovelService.update_novel_service(
+        novel = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
+        novel = await NovelAsyncService.update_novel_service(
             db=db,
             novel_id=novel.novel_id,
             novel_update=novel_update,
@@ -448,7 +448,7 @@ async def update_chapter(
     novel_uuid: str,
     chapter_uuid: str,
     chapter_update: ChapterUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
@@ -459,8 +459,8 @@ async def update_chapter(
     """
     try:
         # 先通过uuid获取chapter
-        chapter = NovelService.get_chapter_by_uuid_service(db=db, chapter_uuid=chapter_uuid, user_id=user.user_id)
-        chapter = NovelService.update_chapter_service(
+        chapter = await NovelAsyncService.get_chapter_by_uuid_service(db=db, chapter_uuid=chapter_uuid, user_id=user.user_id)
+        chapter = await NovelAsyncService.update_chapter_service(
             db=db,
             chapter_id=chapter.chapter_id,
             chapter_update=chapter_update,
@@ -468,7 +468,7 @@ async def update_chapter(
         )
         
         # 验证章节是否属于指定的小说
-        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
+        novel = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
         if chapter.novel_id != novel.novel_id:
             raise HTTPException(
                 status_code=400,
@@ -498,7 +498,7 @@ from app.schemas.chapter import ChapterCreate
 async def create_chapter(
     novel_uuid: str,
     chapter_in: ChapterCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
@@ -506,13 +506,13 @@ async def create_chapter(
     """
     try:
         # Get novel first to confirm ownership
-        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
+        novel = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
         
         # Use service to create chapter
         # Override novel_id from path
         chapter_in.novel_id = novel.novel_id
         
-        chapter = NovelService.create_chapter_service(
+        chapter = await NovelAsyncService.create_chapter_service(
             db=db, 
             novel_id=novel.novel_id, 
             chapter_in=chapter_in, 
@@ -530,7 +530,7 @@ async def create_chapter(
 async def delete_chapter(
     novel_uuid: str,
     chapter_uuid: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
@@ -542,8 +542,8 @@ async def delete_chapter(
     """
     try:
         # 先通过uuid获取chapter
-        chapter = NovelService.get_chapter_by_uuid_service(db=db, chapter_uuid=chapter_uuid, user_id=user.user_id)
-        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
+        chapter = await NovelAsyncService.get_chapter_by_uuid_service(db=db, chapter_uuid=chapter_uuid, user_id=user.user_id)
+        novel = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
         
         # 验证章节是否属于指定的小说
         if chapter.novel_id != novel.novel_id:
@@ -553,7 +553,7 @@ async def delete_chapter(
             )
         
         # 调用服务层删除章节
-        NovelService.delete_chapter_service(
+        await NovelAsyncService.delete_chapter_service(
             db=db,
             chapter_id=chapter.chapter_id,
             user_id=user.user_id
@@ -577,7 +577,7 @@ async def delete_chapter(
 @router.delete("/{novel_uuid}")
 async def delete_novel(
     novel_uuid: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
@@ -587,8 +587,8 @@ async def delete_novel(
     """
     try:
         # 先通过uuid获取novel
-        novel = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
-        NovelService.delete_novel_service(db=db, novel_id=novel.novel_id, user_id=user.user_id)
+        novel = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
+        await NovelAsyncService.delete_novel_service(db=db, novel_id=novel.novel_id, user_id=user.user_id)
     except BaseServiceException as e:
         # 将业务异常转换为HTTP异常
         raise HTTPException(

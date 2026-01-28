@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, status, Query, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
-from app.api.deps import get_db, get_current_user
+from app.api.deps import get_async_db, get_current_user
 from app.models.user import User
-from app.services.novel_service import NovelService
+from app.services.novel_async_service import NovelAsyncService
 from app.core.logger import logger
 from app.core.exceptions import BaseServiceException
 from app.utils.response import success_response
@@ -16,7 +16,7 @@ router = APIRouter()
 @router.post("/create", status_code=status.HTTP_201_CREATED)
 async def create_script_group(
     script_in: NovelCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
@@ -28,7 +28,7 @@ async def create_script_group(
         # Override type to ensure it's 'script'
         script_in.type = 'script'
         
-        script = NovelService.create_project_service(db=db, novel_in=script_in, user_id=user.user_id)
+        script = await NovelAsyncService.create_project_service(db=db, novel_in=script_in, user_id=user.user_id)
         return success_response(
             data={
                 "script_id": script.novel_id,
@@ -53,40 +53,42 @@ async def get_script_groups(
     title: Optional[str] = Query(None, description="按标题筛选"),
     order_by: str = Query("created_at", description="排序字段"),
     order: str = Query("desc", description="排序方向"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
     获取文案组列表（仅返回 type='script' 的记录）
     """
     try:
-        # Get novels with type filter
         from app.models.novel import Novel
-        from sqlalchemy import and_, or_
+        from sqlalchemy import and_, or_, select, func
         
-        query = db.query(Novel).filter(
-            and_(
-                Novel.owner_id == user.user_id,
-                Novel.type == 'script',
-                Novel.deleted_at.is_(None)
-            )
-        )
+        # Build async query
+        conditions = [
+            Novel.owner_id == user.user_id,
+            Novel.type == 'script',
+            Novel.deleted_at.is_(None)
+        ]
         
-        # Apply filters
         if status:
-            query = query.filter(Novel.status == status)
+            conditions.append(Novel.status == status)
         if search:
-            query = query.filter(
+            conditions.append(
                 or_(
                     Novel.title.ilike(f"%{search}%"),
                     Novel.author.ilike(f"%{search}%")
                 )
             )
         if title:
-            query = query.filter(Novel.title.ilike(f"%{title}%"))
+            conditions.append(Novel.title.ilike(f"%{title}%"))
         
-        # Get total
-        total = query.count()
+        # Build base query
+        query = select(Novel).where(and_(*conditions))
+        
+        # Get total count
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await db.execute(count_query)
+        total = total_result.scalar()
         
         # Apply ordering
         if order_by == "created_at":
@@ -97,14 +99,16 @@ async def get_script_groups(
             order_column = Novel.title
         else:
             order_column = Novel.created_at
-            
+        
         if order == "desc":
             query = query.order_by(order_column.desc())
         else:
             query = query.order_by(order_column.asc())
         
         # Apply pagination
-        scripts = query.offset((page - 1) * page_size).limit(page_size).all()
+        query = query.offset((page - 1) * page_size).limit(page_size)
+        result = await db.execute(query)
+        scripts = result.scalars().all()
         
     except Exception as e:
         logger.error(f"获取文案组列表失败: {e}")
@@ -148,14 +152,14 @@ async def get_script_groups(
 @router.get("/{script_uuid}")
 async def get_script_group(
     script_uuid: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
     获取文案组详情
     """
     try:
-        script = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
+        script = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
         
         # Verify it's a script type
         if script.type != 'script':
@@ -229,19 +233,19 @@ async def get_script_items(
     script_uuid: str,
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(10, ge=1, le=100, description="每页数量"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
     获取文案列表（章节列表）
     """
     try:
-        script = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
+        script = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
         
         if script.type != 'script':
             raise HTTPException(status_code=404, detail="文案组不存在")
             
-        chapters, total = NovelService.get_novel_chapters_service(
+        chapters, total = await NovelAsyncService.get_novel_chapters_service(
             db=db,
             novel_id=script.novel_id,
             user_id=user.user_id,
@@ -285,21 +289,21 @@ async def get_script_items(
 async def create_script_item(
     script_uuid: str,
     item_in: ChapterCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
     创建文案（章节）
     """
     try:
-        script = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
+        script = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
         
         if script.type != 'script':
             raise HTTPException(status_code=404, detail="文案组不存在")
         
         item_in.novel_id = script.novel_id
         
-        chapter = NovelService.create_chapter_service(
+        chapter = await NovelAsyncService.create_chapter_service(
             db=db,
             novel_id=script.novel_id,
             chapter_in=item_in,
@@ -323,19 +327,19 @@ async def create_script_item(
 async def update_script_group(
     script_uuid: str,
     script_update: NovelUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
     更新文案组信息
     """
     try:
-        script = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
+        script = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
         
         if script.type != 'script':
             raise HTTPException(status_code=404, detail="文案组不存在")
             
-        script = NovelService.update_novel_service(
+        script = await NovelAsyncService.update_novel_service(
             db=db,
             novel_id=script.novel_id,
             novel_update=script_update,
@@ -361,15 +365,15 @@ async def update_script_item(
     script_uuid: str,
     item_uuid: str,
     item_update: ChapterUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
     更新文案信息
     """
     try:
-        chapter = NovelService.get_chapter_by_uuid_service(db=db, chapter_uuid=item_uuid, user_id=user.user_id)
-        chapter = NovelService.update_chapter_service(
+        chapter = await NovelAsyncService.get_chapter_by_uuid_service(db=db, chapter_uuid=item_uuid, user_id=user.user_id)
+        chapter = await NovelAsyncService.update_chapter_service(
             db=db,
             chapter_id=chapter.chapter_id,
             chapter_update=item_update,
@@ -377,7 +381,7 @@ async def update_script_item(
         )
         
         # Verify belongs to script
-        script = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
+        script = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
         if chapter.novel_id != script.novel_id or script.type != 'script':
             raise HTTPException(status_code=400, detail="文案不属于指定的文案组")
     except BaseServiceException as e:
@@ -397,19 +401,19 @@ async def update_script_item(
 @router.delete("/{script_uuid}")
 async def delete_script_group(
     script_uuid: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
     删除文案组
     """
     try:
-        script = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
+        script = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
         
         if script.type != 'script':
             raise HTTPException(status_code=404, detail="文案组不存在")
             
-        NovelService.delete_novel_service(db=db, novel_id=script.novel_id, user_id=user.user_id)
+        await NovelAsyncService.delete_novel_service(db=db, novel_id=script.novel_id, user_id=user.user_id)
     except BaseServiceException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     
@@ -420,20 +424,20 @@ async def delete_script_group(
 async def delete_script_item(
     script_uuid: str,
     item_uuid: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """
     删除文案
     """
     try:
-        chapter = NovelService.get_chapter_by_uuid_service(db=db, chapter_uuid=item_uuid, user_id=user.user_id)
-        script = NovelService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
+        chapter = await NovelAsyncService.get_chapter_by_uuid_service(db=db, chapter_uuid=item_uuid, user_id=user.user_id)
+        script = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=script_uuid, user_id=user.user_id)
         
         if chapter.novel_id != script.novel_id or script.type != 'script':
             raise HTTPException(status_code=400, detail="文案不属于指定的文案组")
         
-        NovelService.delete_chapter_service(
+        await NovelAsyncService.delete_chapter_service(
             db=db,
             chapter_id=chapter.chapter_id,
             user_id=user.user_id

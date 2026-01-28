@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 
 from app.core.celery_app import celery_app
-from app.db.session import SessionLocal
+from app.db.base import _get_sync_session_factory
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.attributes import flag_modified
 from app.models.creation import Creation
@@ -53,7 +53,7 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         NotFoundError: 分镜不存在
         Exception: 生图失败
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     temp_file_path = None
     start_time = time.perf_counter()
     timings: Dict[str, float] = {}
@@ -656,7 +656,7 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze
     
     # 如未传入冻结记录，则在这里计算并冻结积分（单张生成）
     if not freeze_record_id:
-        db: Session = SessionLocal()
+        db: Session = _get_sync_session_factory()()
         try:
             shot_obj = (
                 db.query(Shot)
@@ -770,7 +770,7 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze
     )
     
     # 清除 current_task_id
-    db = SessionLocal()
+    db = _get_sync_session_factory()()
     try:
         creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
         if creation and str(creation.current_task_id) == str(self.request.id):
@@ -810,7 +810,7 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
     Returns:
         包含所有分镜处理结果的字典
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     task_start = time.perf_counter()
     try:
         ##X## Debug 模式下抛出测试异常 - 测试分镜图片生成错误
@@ -1235,7 +1235,7 @@ def generate_shots_by_ids_task(self, shot_ids: List[int], creation_id: int):
     task_start = time.perf_counter()
     logger.info(f"开始并发生成 {total_count} 个分镜的图片: {shot_ids}")
     
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     try:
         # 验证创作是否存在并获取用户信息
         creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()

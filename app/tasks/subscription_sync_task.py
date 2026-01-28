@@ -4,7 +4,7 @@
 """
 from datetime import timedelta
 from app.core.celery_app import celery_app
-from app.db.session import SessionLocal
+from app.db.base import _get_sync_session_factory
 from app.models.subscription import Subscription
 from app.services.creem_client import creem_client
 from app.services.webhook_service import WebhookService
@@ -23,7 +23,7 @@ def sync_subscriptions():
     - 计费周期（billing_period）
     每天执行一次（由 Celery Beat 调度）
     """
-    db = SessionLocal()
+    db = _get_sync_session_factory()()
     try:
         logger.info("=" * 60)
         logger.info("开始执行订阅信息同步任务")

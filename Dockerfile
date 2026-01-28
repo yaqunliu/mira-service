@@ -27,6 +27,7 @@ COPY stop_celery.sh ./
 
 # 安装Python依赖
 RUN uv pip install --system -e .
+RUN uv pip install --system asyncpg>=0.29.0
 
 # 创建必要的目录
 RUN mkdir -p /app/uploads /app/logs /app/static/fonts

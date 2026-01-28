@@ -9,7 +9,7 @@ from app.utils.us3 import download_file_smart
 from app.utils.file_utils import read_prompt_file
 from app.utils.ai_client import AIClient
 from app.core.logger import logger
-from app.db.session import SessionLocal
+from app.db.base import _get_sync_session_factory
 from sqlalchemy.orm import Session
 from app.models.creation import Creation
 from app.models.character import Character
@@ -42,7 +42,7 @@ def character_analysis_task(self, novel_id: int, chapter_id: int, creation_id: i
     - chapter: 章节创作，基于小说章节内容进行分析
     - script: 文案创作，基于上传的文本内容进行分析
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     temp_file_path = None
     logger.info(f"开始角色分析任务: novel_id={novel_id}, chapter_id={chapter_id}, creation_id={creation_id}")
     try:
@@ -387,7 +387,7 @@ def scene_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, 
         creation_id: 创作ID
         chapter_content_url: 文本内容URL
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     temp_file_path = None
     logger.info(f"开始场景分析任务: novel_id={novel_id}, chapter_id={chapter_id}, creation_id={creation_id}")
     try:
@@ -745,7 +745,7 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
         creation_id: 创作ID
         chapter_content_url: 文本内容URL
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     temp_file_path = None
     logger.info(f"开始分镜分析任务: novel_id={novel_id}, chapter_id={chapter_id}, creation_id={creation_id}")
     try:

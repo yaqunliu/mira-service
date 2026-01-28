@@ -8,7 +8,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
-from app.db.session import SessionLocal
+from app.db.base import _get_sync_session_factory
 from app.models.novel import Novel
 from app.models.chapter import Chapter
 from app.models.user import User
@@ -38,7 +38,7 @@ def process_novel_upload_task(
     Returns:
         处理结果字典
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     novel = None
     
     try:

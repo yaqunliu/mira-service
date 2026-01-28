@@ -12,7 +12,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.celery_app import celery_app
 from app.core.logger import logger
-from app.db.session import SessionLocal
+from app.db.base import _get_sync_session_factory
 from app.models.creation import Creation
 from app.utils.ffmpeg_utils import FFmpegUtils
 from app.utils.us3 import US3Client, download_file_smart
@@ -57,7 +57,7 @@ def export_video_task(self, creation_id: int, user_id: int):
     9. 更新creation.status为completed
     10. 清理临时文件
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     temp_dir: Optional[str] = None
 
     try:
