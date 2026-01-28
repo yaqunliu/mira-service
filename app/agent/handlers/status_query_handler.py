@@ -354,6 +354,7 @@ class AIStatusQueryHandler:
                 error_data = {
                     'type': 'message.content',
                     'message_id': message_id,
+                    'role': 'assistant',
                     'content': error_content,
                     'delta': error_content,
                     'timestamp': datetime.utcnow().isoformat() + 'Z'
@@ -392,6 +393,7 @@ class AIStatusQueryHandler:
                     chunk_data = {
                         'type': 'message.content',
                         'message_id': message_id,
+                        'role': 'assistant',
                         'content': content_buffer,
                         'delta': chunk.content,
                         'timestamp': datetime.utcnow().isoformat() + 'Z'
