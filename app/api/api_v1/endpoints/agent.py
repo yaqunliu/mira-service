@@ -395,7 +395,14 @@ async def agent_chat(
                             
                             if msg_role in ["assistant", "system"]:
                                 logger.info(f"SSE 输出消息: role={msg_role}, content={msg_content[:50]}...")
-                                yield f"event: message\ndata: {json.dumps({'role': msg_role, 'content': msg_content, 'node': node_name})}\n\n"
+                                msg_data = {
+                                    'type': 'message.content',
+                                    'message_id': message_id,
+                                    'role': 'assistant',
+                                    'content': msg_content,
+                                    'node': node_name
+                                }
+                                yield f"event: message\ndata: {json.dumps(msg_data)}\n\n"
                                 assistant_content += msg_content + "\n"
                                 await asyncio.sleep(0.05)
                     
@@ -514,7 +521,7 @@ async def get_messages(
                     "content": msg.content,
                     "event_type": msg.event_type,
                     "metadata": msg.message_metadata,
-                    "created_at": msg.created_at.isoformat() if msg.created_at else None
+                    "timestamp": msg.created_at.isoformat() if msg.created_at else None
                 }
                 for msg in reversed(messages)
             ],

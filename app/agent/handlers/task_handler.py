@@ -297,8 +297,10 @@ class AgentTaskHandler:
             logger.error(f"获取任务状态失败: {e}")
             return {"task_id": task_id, "status": "error", "message": str(e)}
 
-    def _make_sse(self, event: str, data: Dict[str, Any]) -> str:
+    def _make_sse(self, event: str, data: Dict[str, Any], role: str = None) -> str:
         """构建 SSE 消息"""
+        if role:
+            data["role"] = role
         return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
     async def execute_single_task(
@@ -318,21 +320,21 @@ class AgentTaskHandler:
         }
         
         if intent not in task_fn_map:
-            yield self._make_sse("error", {"type": "error", "message": f"未知任务: {intent}"})
+            yield self._make_sse("error", {"type": "error", "message": f"未知任务: {intent}"}, role="assistant")
             return
         
         task_fn, task_name = task_fn_map[intent]
         task_result = await task_fn(db, creation_uuid)
         
         if "error" in task_result:
-            yield self._make_sse("error", {"type": "error", "message": task_result["error"]})
+            yield self._make_sse("error", {"type": "error", "message": task_result["error"]}, role="assistant")
             return
         
         task_id = task_result["task_id"]
         yield self._make_sse("message", {
             "type": "message.content", "message_id": message_id,
             "content": f"✅ {task_name}任务已提交\n任务ID: {task_id}", "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
-        })
+        }, role="assistant")
         
         try:
             for i in range(120):
@@ -347,19 +349,19 @@ class AgentTaskHandler:
                         "type": "message.content", "message_id": message_id,
                         "content": f"🔄 {task_name}进行中... {progress}% ({current}/{total})",
                         "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
-                    })
+                    }, role="assistant")
                 elif status["status"] == "completed":
                     yield self._make_sse("message", {
                         "type": "message.content", "message_id": message_id,
                         "content": f"✅ {task_name}已完成！", "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
-                    })
+                    }, role="assistant")
                     break
                 elif status["status"] == "failed":
                     yield self._make_sse("message", {
                         "type": "message.content", "message_id": message_id,
                         "content": f"❌ {task_name}失败: {status.get('message')}",
                         "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
-                    })
+                    }, role="assistant")
                     break
                 
                 if i >= 119:
