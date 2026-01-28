@@ -33,7 +33,7 @@ TASK_INTENT_PROMPT = """判断用户消息的意图，只返回意图类型（�
 - generate_videos: 要求生成视频（包含"生成视频"、"视频生成"、"生成短视频"）
 - auto_create: 全自动创作、智能创作、开始创作、接着创作、按流程创作（完整流程）
 - status_query: 询问状态、进度、情况
-- workflow_action: 其他工作流操作
+- unknown: 无法识别的意图、闲聊、无关问题
 
 规则：
 1. "分析角色"、"角色分析"、"提取角色"、"有哪些角色" → analyze_character
@@ -45,9 +45,27 @@ TASK_INTENT_PROMPT = """判断用户消息的意图，只返回意图类型（�
 7. "生成视频"、"视频生成" → generate_videos
 8. "全自动创作"、"智能创作"、"开始创作"、"接着创作"、"按流程创作" → auto_create
 9. "状态怎么样"、"进度如何"、"情况如何" → status_query
-10. 其他 → workflow_action
+10. 其他无法识别的意图 → unknown
 
 只返回类型名称，格式：类型"""
+
+
+CLARIFY_PROMPT = """你是一个友好的短剧创作助手。用户发送了一条我无法理解的消息，请生成一段引导性的回复，帮助用户了解你能做什么，并引导他们进行正确的操作。
+
+用户消息: {user_message}
+
+你可以帮助用户完成以下任务：
+1. 分析角色 - 从剧本中提取和分析角色信息
+2. 分析场景 - 从剧本中提取和分析场景信息
+3. 分析分镜 - 从剧本中提取镜头和分镜信息
+4. 生成角色图片 - 为角色生成形象图片
+5. 生成场景图片 - 为场景生成背景图片
+6. 生成分镜图片 - 为分镜生成插画
+7. 生成视频 - 生成短视频
+8. 全自动创作 - 一键完成整个创作流程
+9. 查询进度 - 查看当前创作进度和状态
+
+请用友好、简洁的语气回复，不要太长（2-3句话），引导用户选择上述功能之一。"""
 
 
 WORKFLOW_STEPS = [
@@ -94,7 +112,69 @@ class AgentTaskHandler:
             return intent
         except Exception as e:
             logger.error(f"任务意图识别失败: {e}")
-            return "workflow_action"
+            return "unknown"
+
+    async def generate_clarify_response(self, user_message: str) -> AsyncIterator[str]:
+        """当无法识别用户意图时，生成引导性询问"""
+        message_id = f"msg_{uuid.uuid4().hex[:12]}"
+
+        try:
+            from langchain_core.messages import SystemMessage, HumanMessage
+            from langchain_openai import ChatOpenAI
+            from app.core.config import settings
+
+            llm = ChatOpenAI(
+                model=settings.LLM_MODEL_NAME or "gpt-4",
+                api_key=settings.OPENAI_API_KEY,
+                base_url=str(settings.OPENAI_BASE_URL) if settings.OPENAI_BASE_URL else None,
+                temperature=0.7,
+                streaming=True,
+                extra_body={"thinking": {"type": "disabled"}},
+            )
+
+            prompt = CLARIFY_PROMPT.format(user_message=user_message)
+            messages = [HumanMessage(content=prompt)]
+
+            yield self._make_sse("message.start", {
+                "type": "message.start",
+                "message_id": message_id,
+                "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
+            }, role="assistant")
+
+            full_content = ""
+            async for chunk in llm.astream(messages):
+                if chunk.content:
+                    full_content += chunk.content
+                    yield self._make_sse("message", {
+                        "type": "message.content",
+                        "message_id": message_id,
+                        "content": full_content,
+                        "delta": chunk.content,
+                        "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
+                    }, role="assistant")
+
+            yield self._make_sse("message.end", {
+                "type": "message.end",
+                "message_id": message_id,
+                "finish_reason": "completed"
+            })
+
+            logger.info(f"已生成引导性回复: {full_content[:100]}...")
+
+        except Exception as e:
+            logger.error(f"生成引导性回复失败: {e}")
+            fallback_message = "抱歉，我没有理解您的意思。我可以帮您：分析角色、分析场景、分析分镜、生成图片、生成视频，或者进行全自动创作。请告诉我您想做什么？"
+            yield self._make_sse("message", {
+                "type": "message.content",
+                "message_id": message_id,
+                "content": fallback_message,
+                "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
+            }, role="assistant")
+            yield self._make_sse("message.end", {
+                "type": "message.end",
+                "message_id": message_id,
+                "finish_reason": "completed"
+            })
 
     def _get_creation(self, db, creation_uuid: str):
         """获取创作项目（同步版本）"""

@@ -284,13 +284,34 @@ async def agent_chat(
 
             if is_status_query:
                 logger.info(f"检测到状态查询 (intent={task_intent})，使用流式输出")
-                
+
                 query_types = query_types_map.get(task_intent, ["overall_status"])
                 assistant_content = ""
                 try:
                     async for sse_chunk in ai_status_query_handler.generate_ai_response(
                         db_inner, creation_uuid, user_message, query_types
                     ):
+                        if sse_chunk:
+                            yield sse_chunk
+                            if "content" in sse_chunk:
+                                try:
+                                    data = json.loads(sse_chunk.split("data: ", 1)[1].rstrip("\n\n"))
+                                    if "content" in data:
+                                        assistant_content += data["content"]
+                                except:
+                                    pass
+                finally:
+                    if assistant_content:
+                        await save_assistant_message(db_inner, session_id, assistant_content, task_intent)
+                    await db_inner.close()
+                return
+
+            # 处理 unknown 意图：生成引导性询问
+            if task_intent == "unknown":
+                logger.info(f"检测到未知意图，生成引导性回复")
+                assistant_content = ""
+                try:
+                    async for sse_chunk in agent_task_handler.generate_clarify_response(user_message):
                         if sse_chunk:
                             yield sse_chunk
                             if "content" in sse_chunk:
