@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pydub import AudioSegment
 
 from app.core.celery_app import celery_app
-from app.db.session import SessionLocal
+from app.db.base import _get_sync_session_factory
 from sqlalchemy.orm import Session, selectinload
 from app.models.creation import Creation
 from app.models.scene import Scene
@@ -70,7 +70,7 @@ def _format_srt_time(ms: int) -> str:
 
 def _generate_single_shot_audio(shot_id: int, creation_id: int, voice_id: str, voice_speed: float = 1.0) -> dict:
     """生成单个分镜的音频"""
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     temp_file_path = None
     scene_id = 0
     shot_number = 0
@@ -611,7 +611,7 @@ def generate_full_video_task(self, creation_id: int, voice_id: str, voice_speed:
         voice_speed: 语速设置，范围 0-10，默认 1.0
         force_regenerate: 是否强制重新生成
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     temp_files = []
     
     try:

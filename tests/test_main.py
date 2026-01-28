@@ -1,15 +1,20 @@
-def test_root(client):
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_root(client):
     """测试根路径"""
-    response = client.get("/")
+    response = await client.get("/")
     assert response.status_code == 200
     data = response.json()
     assert "message" in data
     assert "version" in data
 
 
-def test_health_check(client):
+@pytest.mark.asyncio
+async def test_health_check(client):
     """测试健康检查"""
-    response = client.get("/health")
+    response = await client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"

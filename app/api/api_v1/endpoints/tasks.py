@@ -8,9 +8,10 @@
 """
 import json
 from typing import Optional, Dict, Any, List
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from app.api.deps import get_db
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.api.deps import get_async_db
 from app.models.novel import Novel
 from app.models.character import Character
 from app.models.shot import Shot
@@ -26,7 +27,6 @@ router = APIRouter()
 
 
 def parse_narration(narration_str: Optional[str]) -> List[str]:
-    """解析旁白字符串为列表"""
     if not narration_str:
         return []
     try:
@@ -38,26 +38,18 @@ def parse_narration(narration_str: Optional[str]) -> List[str]:
         return [narration_str]
 
 
-def _get_resource_by_task_result(
+async def _get_resource_by_task_result(
     task_type: TaskType,
     result: Dict[str, Any],
-    db: Session
+    db: AsyncSession
 ) -> Optional[Dict[str, Any]]:
-    """
-    根据任务类型和结果获取关联的资源信息
-    
-    Args:
-        task_type: 任务类型
-        result: 任务结果字典
-        db: 数据库会话
-        
-    Returns:
-        资源信息字典，如果未找到则返回 None
-    """
     if task_type == TaskType.NOVEL_UPLOAD:
         novel_id = result.get("novel_id")
         if novel_id:
-            novel = db.query(Novel).filter(Novel.novel_id == novel_id).first()
+            result = await db.execute(
+                select(Novel).where(Novel.novel_id == novel_id)
+            )
+            novel = result.scalar_one_or_none()
             if novel:
                 return {
                     "type": "novel",
@@ -76,7 +68,10 @@ def _get_resource_by_task_result(
     elif task_type == TaskType.CREATION_INIT or task_type == TaskType.BATCH_SHOT_IMAGE_GENERATION:
         creation_id = result.get("creation_id")
         if creation_id:
-            creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+            result = await db.execute(
+                select(Creation).where(Creation.creation_id == creation_id)
+            )
+            creation = result.scalar_one_or_none()
             if creation:
                 return {
                     "type": "creation",
@@ -93,7 +88,10 @@ def _get_resource_by_task_result(
     elif task_type == TaskType.CHARACTER_IMAGE_GENERATION:
         character_id = result.get("character_id")
         if character_id:
-            character = db.query(Character).filter(Character.character_id == character_id).first()
+            result = await db.execute(
+                select(Character).where(Character.character_id == character_id)
+            )
+            character = result.scalar_one_or_none()
             if character:
                 return {
                     "type": "character",
@@ -108,7 +106,10 @@ def _get_resource_by_task_result(
     elif task_type == TaskType.SHOT_IMAGE_GENERATION:
         shot_id = result.get("shot_id")
         if shot_id:
-            shot = db.query(Shot).filter(Shot.shot_id == shot_id).first()
+            result = await db.execute(
+                select(Shot).where(Shot.shot_id == shot_id)
+            )
+            shot = result.scalar_one_or_none()
             if shot:
                 return {
                     "type": "shot",
@@ -123,16 +124,25 @@ def _get_resource_by_task_result(
     elif task_type in [TaskType.CHARACTER_ANALYSIS, TaskType.SCENE_DESCRIPTION_GENERATION, TaskType.SCENE_SHOT_DECOMPOSITION, TaskType.SCENE_IMAGE_GENERATION, TaskType.SHOT_SCRIPT_DESIGN, TaskType.SHOT_IMAGE_PROMPT_GENERATION, TaskType.VIDEO_PROMPT_GENERATION, TaskType.AI_VIDEO_GENERATION]:
         creation_id = result.get("creation_id")
         if not creation_id:
-            # Try to find by task_id in result or creation record
-            creation = db.query(Creation).filter(Creation.uuid == result.get("task_id")).first()
+            result = await db.execute(
+                select(Creation).where(Creation.uuid == result.get("task_id"))
+            )
+            creation = result.scalar_one_or_none()
         else:
-            creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
+            result = await db.execute(
+                select(Creation).where(Creation.creation_id == creation_id)
+            )
+            creation = result.scalar_one_or_none()
             
         if creation:
-            # Fetch shots if completed
             shots_data = []
             if creation.status == "completed":
-                shots = db.query(Shot).join(Scene).filter(Scene.creation_id == creation.creation_id).order_by(Shot.shot_id).all()
+                result = await db.execute(
+                    select(Shot).join(Scene).where(
+                        Scene.creation_id == creation.creation_id
+                    ).order_by(Shot.shot_id)
+                )
+                shots = result.scalars().all()
                 for s in shots:
                     shots_data.append({
                         "shot_id": s.shot_id,
@@ -144,7 +154,6 @@ def _get_resource_by_task_result(
                         "content": s.content
                     })
 
-            # For V2, we might want to return the full timeline config if completed
             return {
                 "type": "creation_v2",
                 "creation_id": creation.creation_id,
@@ -154,7 +163,6 @@ def _get_resource_by_task_result(
                     "status": creation.status,
                     "timeline_config": creation.timeline_config,
                     "shots": shots_data,
-                    # Fallback for old frontend expectations
                     "video_url": creation.video_url,
                     "audio_url": creation.audio_url,
                 }
@@ -164,81 +172,11 @@ def _get_resource_by_task_result(
 
 
 @router.get("/{task_id}")
-async def get_task_status(task_id: str, db: Session = Depends(get_db)):
-    """
-    通过 task_id 查询任务状态和进度（通用接口，支持所有任务类型）
-    
-    返回信息包括：
-    - Celery 任务状态（PENDING, STARTED, PROGRESS, SUCCESS, FAILURE, RETRY, REVOKED）
-    - 任务类型（task_type）
-    - 进度信息（当状态为PROGRESS时）：
-      - current: 当前进度
-      - total: 总进度
-      - percent: 百分比
-      - status: 状态描述
-      - stage: 处理阶段
-      - success_count: 成功处理的数量（如适用）
-      - error_count: 失败的数量（如适用）
-    - 如果任务完成，返回关联的资源信息（根据任务类型返回 novel_id, character_id, shot_id 等）
-    - 如果任务失败，返回错误信息
-    
-    Args:
-        task_id: Celery 任务ID
-        
-    Returns:
-        任务状态、进度和相关信息的字典
-        
-    示例响应（小说上传处理中）:
-    {
-        "task_id": "xxx",
-        "task_type": "novel_upload",
-        "status": "PROGRESS",
-        "message": "正在处理第 5/20 章",
-        "progress": {
-            "current": 5,
-            "total": 20,
-            "percent": 25,
-            "status": "正在处理第 5/20 章",
-            "stage": "uploading_chapters",
-            "success_count": 5,
-            "error_count": 0
-        },
-        "resource": null
-    }
-    
-    示例响应（角色图片生成完成）:
-    {
-        "task_id": "yyy",
-        "task_type": "character_image_generation",
-        "status": "SUCCESS",
-        "message": "任务处理完成",
-        "progress": {
-            "current": 100,
-            "total": 100,
-            "percent": 100,
-            "status": "处理完成",
-            "stage": "completed"
-        },
-        "resource": {
-            "type": "character",
-            "character_id": 123,
-            "character": {
-                "character_id": 123,
-                "name": "帝王",
-                "image_url": "https://..."
-            }
-        }
-    }
-    """
+async def get_task_status(task_id: str, db: AsyncSession = Depends(get_async_db)):
     try:
-        # 查询 Celery 任务状态
         task = celery_app.AsyncResult(task_id)
-        
-        # 获取任务状态
         task_state = task.state
         
-        # 推断任务类型
-        # 方法1: 从任务结果中获取任务类型（如果任务已完成）
         task_type = None
         if task_state == "SUCCESS" and task.result:
             try:
@@ -251,7 +189,6 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
             except Exception:
                 pass
         
-        # 方法2: 从进度信息中获取任务类型（如果任务正在执行）
         if task_type is None and task_state == "PROGRESS" and task.info:
             try:
                 if isinstance(task.info, dict) and "task_type" in task.info:
@@ -263,45 +200,38 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
             except Exception:
                 pass
         
-        # 方法3: 从任务名称推断（如果方法1和2都失败）
         if task_type is None:
-            # 尝试从 Celery 的 inspect 功能获取任务信息
-            # 如果无法获取，默认使用小说上传类型（向后兼容）
             task_type = TaskType.NOVEL_UPLOAD
         
-        # 基础响应
         response = {
             "task_id": task_id,
             "task_type": task_type.value,
             "status": task_state,
         }
         
-        # 根据任务状态返回不同信息
         if task_state == "PENDING" or task_state == "STARTED":
-            # 检查是否是僵尸任务 (Zombie Task Detection)
-            # 如果任务处于 PENDING 状态，但在数据库中已经创建很久了，可能是 worker 崩溃了
-            creation = db.query(Creation).filter(Creation.uuid == task_id).first()
+            result = await db.execute(
+                select(Creation).where(Creation.uuid == task_id)
+            )
+            creation = result.scalar_one_or_none()
             if creation and creation.status == "processing":
                 from datetime import datetime, timedelta, timezone
                 now = datetime.now(timezone.utc)
-                # 如果创建超过 10 分钟且没有更新，判定为失败
                 if creation.updated_at and now - creation.updated_at.replace(tzinfo=timezone.utc) > timedelta(minutes=10):
                     logger.warning(f"检测到僵尸任务: task_id={task_id}, creation_id={creation.creation_id}. 标记为完成失败。")
                     creation.status = "failed"
-                    db.commit()
+                    await db.commit()
                     task_state = "FAILURE"
                     response["status"] = "FAILURE"
                     response["message"] = "任务异常中断或超时"
                     return success_response(data=response)
 
-            # 任务正在执行
             response.update({
                 "message": "任务正在处理中",
                 "resource": None,
                 "progress": None,
             })
         elif task_state == "PROGRESS":
-            # 任务执行中，有进度信息
             try:
                 progress_info = task.info if task.info else {}
                 response.update({
@@ -325,14 +255,12 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
                     "progress": None,
                 })
         elif task_state == "SUCCESS":
-            # 任务成功完成
             try:
                 result = task.result
                 if not isinstance(result, dict):
                     result = {}
                 
-                # 根据任务类型获取关联的资源信息
-                resource_info = _get_resource_by_task_result(task_type, result, db)
+                resource_info = await _get_resource_by_task_result(task_type, result, db)
                 
                 response.update({
                     "message": "任务处理完成",
@@ -346,7 +274,6 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
                     },
                 })
                 
-                # 向后兼容：如果是小说上传任务，保留 novel_id 和 novel_uuid 字段
                 if task_type == TaskType.NOVEL_UPLOAD and resource_info:
                     response["novel_id"] = resource_info.get("novel_id")
                     response["novel_uuid"] = resource_info.get("novel_uuid")
@@ -359,7 +286,6 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
                     "progress": None,
                 })
         elif task_state == "FAILURE":
-            # 任务失败
             try:
                 error_info = str(task.info) if task.info else "未知错误"
                 response.update({
@@ -376,21 +302,18 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
                     "progress": None,
                 })
         elif task_state == "RETRY":
-            # 任务重试中
             response.update({
                 "message": "任务正在重试",
                 "resource": None,
                 "progress": None,
             })
         elif task_state == "REVOKED":
-            # 任务被撤销
             response.update({
                 "message": "任务已被撤销",
                 "resource": None,
                 "progress": None,
             })
         else:
-            # 未知状态
             response.update({
                 "message": f"任务状态: {task_state}",
                 "resource": None,
@@ -405,26 +328,17 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"查询任务状态失败: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=500,
             detail=f"查询任务状态失败: {str(e)}"
         )
 
 
 @router.get("/{task_id}/novel")
-async def get_task_novel(task_id: str, db: Session = Depends(get_db)):
-    """
-    通过 task_id 查询关联的小说信息（向后兼容接口）
-    
-    注意：此接口仅适用于小说上传任务。对于其他任务类型，请使用 GET /{task_id} 接口。
-    
-    Args:
-        task_id: Celery 任务ID
-        
-    Returns:
-        小说信息（如果存在）
-    """
-    # 先通过 task_id 在数据库中查找关联的小说
-    novel = db.query(Novel).filter(Novel.task_id == task_id).first()
+async def get_task_novel(task_id: str, db: AsyncSession = Depends(get_async_db)):
+    result = await db.execute(
+        select(Novel).where(Novel.task_id == task_id)
+    )
+    novel = result.scalar_one_or_none()
     
     if novel:
         return success_response(
@@ -443,14 +357,16 @@ async def get_task_novel(task_id: str, db: Session = Depends(get_db)):
             message="小说信息获取成功"
         )
     
-    # 如果数据库中没有找到，尝试从任务结果中获取
     try:
         task = celery_app.AsyncResult(task_id)
         if task.state == "SUCCESS":
             result = task.result
             if isinstance(result, dict) and "novel_id" in result:
                 novel_id = result["novel_id"]
-                novel = db.query(Novel).filter(Novel.novel_id == novel_id).first()
+                result = await db.execute(
+                    select(Novel).where(Novel.novel_id == novel_id)
+                )
+                novel = result.scalar_one_or_none()
                 if novel:
                     return success_response(
                         data={
@@ -471,49 +387,17 @@ async def get_task_novel(task_id: str, db: Session = Depends(get_db)):
         logger.error(f"从任务结果获取小说信息失败: {str(e)}")
     
     raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
+        status_code=404,
         detail="未找到关联的小说记录"
     )
 
 
 @router.get("/{task_id}/sub-tasks")
-async def get_task_sub_tasks(task_id: str, db: Session = Depends(get_db)):
-    """
-    查询批量任务的子任务状态
-    
-    适用于批量分镜图片生成等任务，返回主任务状态和所有子任务的状态。
-    
-    Args:
-        task_id: 主任务ID
-        
-    Returns:
-        {
-            "task_id": "xxx",
-            "status": "PROGRESS",
-            "task_type": "batch_shot_image_generation",
-            "progress": {
-                "total": 10,
-                "completed": 5,
-                "success_count": 4,
-                "failed_count": 1
-            },
-            "sub_tasks": [
-                {
-                    "task_id": "sub-task-1",
-                    "status": "SUCCESS",
-                    "shot_id": 1,
-                    "image_url": "https://..."
-                },
-                ...
-            ]
-        }
-    """
+async def get_task_sub_tasks(task_id: str, db: AsyncSession = Depends(get_async_db)):
     try:
-        # 查询主任务状态
         task = celery_app.AsyncResult(task_id)
         task_state = task.state
         
-        # 获取任务类型和进度信息
         task_type = None
         progress_info = {}
         sub_task_ids = []
@@ -536,267 +420,19 @@ async def get_task_sub_tasks(task_id: str, db: Session = Depends(get_db)):
                 except ValueError:
                     pass
             sub_task_ids = result.get("sub_tasks", [])
-            progress_info = {
-                "total": result.get("total", 0),
-                "completed": result.get("total", 0),
-                "success_count": result.get("success_count", 0),
-                "failed_count": result.get("failed_count", 0),
-            }
         
-        # 查询所有子任务状态
-        sub_tasks_status = []
-        for sub_task_id in sub_task_ids:
-            sub_task = celery_app.AsyncResult(sub_task_id)
-            sub_task_info = {
-                "task_id": sub_task_id,
-                "status": sub_task.state,
-            }
-            
-            # 获取子任务的详细信息
-            if sub_task.state == "SUCCESS" and sub_task.result:
-                sub_result = sub_task.result if isinstance(sub_task.result, dict) else {}
-                sub_task_info.update({
-                    "shot_id": sub_result.get("shot_id"),
-                    "shot_title": sub_result.get("shot_title"),
-                    "success": sub_result.get("success", False),
-                    "image_url": sub_result.get("image_url"),
-                    "error": sub_result.get("error"),
-                    "skipped": sub_result.get("skipped", False),
-                })
-            elif sub_task.state == "PROGRESS" and sub_task.info:
-                sub_info = sub_task.info if isinstance(sub_task.info, dict) else {}
-                sub_task_info.update({
-                    "shot_id": sub_info.get("shot_id"),
-                    "status_message": sub_info.get("status"),
-                })
-            elif sub_task.state == "FAILURE":
-                sub_task_info["error"] = str(sub_task.info) if sub_task.info else "未知错误"
-            
-            sub_tasks_status.append(sub_task_info)
-        
-        response = {
+        return success_response(data={
             "task_id": task_id,
             "status": task_state,
             "task_type": task_type.value if task_type else None,
             "progress": {
-                "total": progress_info.get("total", 0),
-                "completed": progress_info.get("completed", 0),
+                "total": progress_info.get("total", len(sub_task_ids)),
+                "completed": progress_info.get("success_count", 0) + progress_info.get("failed_count", 0),
                 "success_count": progress_info.get("success_count", 0),
-                "failed_count": progress_info.get("failed_count", 0),
-                "status": progress_info.get("status", ""),
-                "stage": progress_info.get("stage", ""),
+                "failed_count": progress_info.get("error_count", 0),
             },
-            "sub_tasks": sub_tasks_status,
-        }
-        
-        return success_response(data=response, message="子任务状态查询成功")
-        
+            "sub_tasks": sub_task_ids
+        })
     except Exception as e:
-        logger.error(f"查询子任务状态失败: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"查询子任务状态失败: {str(e)}"
-        )
-
-
-@router.get("/{task_id}/shots")
-async def get_task_shots_progress(task_id: str, db: Session = Depends(get_db)):
-    """
-    查询分镜图片生成任务的进度和分镜详情
-    
-    该接口不仅返回任务状态，还会从数据库获取最新的分镜信息（包含 image_url）。
-    前端可以通过此接口获取实时的分镜图片生成进度。
-    
-    Args:
-        task_id: 任务ID
-        
-    Returns:
-        {
-            "task_id": "xxx",
-            "status": "PROGRESS",
-            "progress": {...},
-            "creation_id": 123,
-            "scenes": [
-                {
-                    "scene_id": 1,
-                    "title": "场景1",
-                    "shots": [
-                        {
-                            "shot_id": 1,
-                            "title": "分镜1",
-                            "image_url": "https://...",
-                            "image_prompt": "...",
-                            "status": "completed"  # pending/generating/completed/failed
-                        },
-                        ...
-                    ]
-                },
-                ...
-            ]
-        }
-    """
-    try:
-        # 查询主任务状态
-        task = celery_app.AsyncResult(task_id)
-        
-        # 安全获取任务状态（task.state 访问可能抛出异常，比如 Redis 数据损坏时）
-        try:
-            task_state = task.state
-        except Exception as state_error:
-            logger.warning(f"获取任务 {task_id} 状态失败: {str(state_error)}")
-            return success_response(
-                data={
-                    "task_id": task_id,
-                    "status": "UNKNOWN",
-                    "progress": None,
-                    "creation_id": None,
-                    "scenes": [],
-                    "message": "任务状态获取失败，可能任务数据已损坏或任务不存在",
-                    "error": str(state_error)
-                },
-                message="任务状态获取失败"
-            )
-        
-        # 处理 PENDING 状态（任务还未开始）
-        if task_state == "PENDING":
-            return success_response(
-                data={
-                    "task_id": task_id,
-                    "status": task_state,
-                    "progress": None,
-                    "creation_id": None,
-                    "scenes": [],
-                    "message": "任务等待执行中"
-                },
-                message="任务等待执行中"
-            )
-        
-        # 处理 FAILURE 状态
-        if task_state == "FAILURE":
-            error_msg = "未知错误"
-            try:
-                if task.info:
-                    error_msg = str(task.info)
-            except Exception:
-                pass
-            return success_response(
-                data={
-                    "task_id": task_id,
-                    "status": task_state,
-                    "progress": None,
-                    "creation_id": None,
-                    "scenes": [],
-                    "message": "任务执行失败",
-                    "error": error_msg
-                },
-                message="任务执行失败"
-            )
-        
-        # 获取 creation_id
-        creation_id = None
-        progress_info = {}
-        sub_task_results = {}  # shot_id -> result
-        
-        if task_state == "PROGRESS" and task.info:
-            info = task.info if isinstance(task.info, dict) else {}
-            creation_id = info.get("creation_id")
-            progress_info = {
-                "total": info.get("total", 0),
-                "completed": info.get("completed", 0),
-                "success_count": info.get("success_count", 0),
-                "failed_count": info.get("failed_count", 0),
-                "status": info.get("status", "处理中"),
-                "stage": info.get("stage", ""),
-            }
-            # 获取已完成的结果
-            results = info.get("results", [])
-            for res in results:
-                if isinstance(res, dict) and res.get("shot_id"):
-                    sub_task_results[res["shot_id"]] = res
-        elif task_state == "SUCCESS" and task.result:
-            result = task.result if isinstance(task.result, dict) else {}
-            creation_id = result.get("creation_id")
-            progress_info = {
-                "total": result.get("total", 0),
-                "completed": result.get("total", 0),
-                "success_count": result.get("success_count", 0),
-                "failed_count": result.get("failed_count", 0),
-                "status": "完成",
-                "stage": "completed",
-            }
-            results = result.get("results", [])
-            for res in results:
-                if isinstance(res, dict) and res.get("shot_id"):
-                    sub_task_results[res["shot_id"]] = res
-        
-        if not creation_id:
-            return success_response(
-                data={
-                    "task_id": task_id,
-                    "status": task_state,
-                    "message": "无法获取创作ID，任务可能还未开始或不是分镜图片生成任务"
-                },
-                message="任务信息获取中"
-            )
-        
-        # 从数据库获取场景和分镜信息
-        scenes = (
-            db.query(Scene)
-            .options(selectinload(Scene.shots))
-            .filter(Scene.creation_id == creation_id)
-            .order_by(Scene.scene_id)
-            .all()
-        )
-        
-        scenes_data = []
-        for scene in scenes:
-            shots_data = []
-            for shot in sorted(scene.shots, key=lambda s: s.shot_id):
-                # 确定分镜状态
-                shot_status = "pending"
-                if shot.image_url:
-                    shot_status = "completed"
-                elif shot.shot_id in sub_task_results:
-                    res = sub_task_results[shot.shot_id]
-                    if res.get("success"):
-                        shot_status = "completed"
-                    elif res.get("error"):
-                        shot_status = "failed"
-                    else:
-                        shot_status = "generating"
-                
-                shots_data.append({
-                    "shot_id": shot.shot_id,
-                    "title": shot.title,
-                    "shot_number": shot.shot_number,
-                    "image_url": shot.image_url,
-                    "image_prompt": shot.image_prompt,
-                    "narration": shot.narration,
-                    "uuid": shot.uuid,
-                    "status": shot_status,
-                })
-            
-            scenes_data.append({
-                "scene_id": scene.scene_id,
-                "title": scene.title,
-                "duration": scene.duration,
-                "shots": shots_data,
-            })
-        
-        response = {
-            "task_id": task_id,
-            "status": task_state,
-            "progress": progress_info,
-            "creation_id": creation_id,
-            "scenes": scenes_data,
-        }
-        
-        return success_response(data=response, message="任务进度查询成功")
-        
-    except Exception as e:
-        logger.error(f"查询任务分镜进度失败: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"查询任务分镜进度失败: {str(e)}"
-        )
-
+        logger.error(f"查询子任务状态失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"查询子任务状态失败: {str(e)}")

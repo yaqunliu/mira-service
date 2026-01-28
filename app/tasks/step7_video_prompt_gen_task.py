@@ -4,7 +4,7 @@
 from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.core.logger import logger
-from app.db.session import SessionLocal
+from app.db.base import _get_sync_session_factory
 from app.models.creation import Creation
 from app.models.shot import Shot
 from app.services.points_service import PointsService
@@ -37,7 +37,7 @@ def generate_video_prompt_task(
         creation_id: 作品ID
         freeze_record_id: 积分冻结记录ID（用于后续扣除）
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     try:
         shot = db.query(Shot).filter(Shot.shot_id == shot_id).first()
         if not shot:
@@ -243,7 +243,7 @@ def generate_all_video_prompts_task(self, creation_id: int):
     """
     为作品中所有分镜批量生成视频提示词
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     try:
         creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
         if not creation:

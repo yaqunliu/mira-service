@@ -1,25 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Header
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
-from app.db.session import get_db
+from app.db.session import get_async_db
 from app.models.user import User
 from app.api.deps import get_current_user
 from app.utils.response import success_response
-from app.services.user_sync_service import UserSyncService
+from app.services.user_async_service import UserAsyncService
 
 router = APIRouter()
-
-
-# 注意：传统的注册、登录和刷新端点已废弃
-# 所有认证现在都通过 Supabase 进行
-# 用户注册和登录请使用前端 Supabase 客户端
 
 
 @router.post("/sync")
 async def sync_supabase_user(
     authorization: Optional[str] = Header(None),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     同步 Supabase 用户到本地数据库
@@ -33,7 +28,7 @@ async def sync_supabase_user(
         )
     
     token = authorization.replace("Bearer ", "")
-    user = UserSyncService.get_user_from_supabase_token(db, token)
+    user = await UserAsyncService.get_user_from_supabase_token(db, token)
     
     if not user:
         raise HTTPException(
@@ -42,24 +37,17 @@ async def sync_supabase_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # 获取用户头像（User 模型现在有 avatar 字段）
     avatar = user.avatar if hasattr(user, 'avatar') else None
     
-    # 如果没有 avatar 值，尝试从 token 中获取
     if not avatar:
         from app.services.supabase_service import supabase_service
         supabase_user_data = supabase_service.get_user_from_token(token)
         if supabase_user_data:
             avatar = supabase_user_data.get("avatar_url")
-            # 如果从 token 中获取到了头像，更新数据库
             if avatar and hasattr(user, 'avatar'):
                 user.avatar = avatar
-                db.commit()
-                db.refresh(user)
-    
-    # 停掉 sync 相关日志
-    # from app.core.logger import logger
-    # logger.info(f"同步用户响应: user_id={user.user_id}, avatar={avatar}")
+                await db.commit()
+                await db.refresh(user)
     
     return success_response(
         data={
@@ -67,9 +55,29 @@ async def sync_supabase_user(
             "username": user.username,
             "email": user.email,
             "supabase_user_id": user.supabase_user_id,
-            "avatar": avatar,  # 添加 avatar 字段
+            "avatar": avatar,
             "created_at": user.created_at.isoformat() if user.created_at else None,
             "updated_at": user.updated_at.isoformat() if user.updated_at else None,
         },
         message="用户同步成功"
+    )
+
+
+@router.get("/me")
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    获取当前用户信息
+    """
+    return success_response(
+        data={
+            "user_id": current_user.user_id,
+            "username": current_user.username,
+            "email": current_user.email,
+            "supabase_user_id": current_user.supabase_user_id,
+            "avatar": getattr(current_user, 'avatar', None),
+            "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+        },
+        message="获取用户信息成功"
     )

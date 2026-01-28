@@ -1,5 +1,5 @@
 from app.core.celery_app import celery_app
-from app.db.session import SessionLocal
+from app.db.base import _get_sync_session_factory
 from sqlalchemy.orm import Session
 from typing import List
 from app.models.character import Character
@@ -58,7 +58,7 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         NotFoundError: 角色不存在
         Exception: 生图失败
     """
-    db: Session = SessionLocal()
+    db: Session = _get_sync_session_factory()()
     start_time = time.perf_counter()
     timings = {}
     try:
@@ -426,7 +426,7 @@ def generate_character_image_task(
         }
 
     # 通过 creation_uuid 获取 creation
-    db = SessionLocal()
+    db = _get_sync_session_factory()()
     try:
         creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
         if not creation:
@@ -466,7 +466,7 @@ def generate_character_image_task(
     if creation_uuid and update_creation_task:
         try:
             # 重新获取 creation_id
-            db = SessionLocal()
+            db = _get_sync_session_factory()()
             creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
             if creation:
                 from app.services.creation_service import CreationService
@@ -554,7 +554,7 @@ def generate_character_image_task(
                     })
         
         # 所有角色处理完成后，根据 update_creation_task 决定是否更新 creation 状态和清除 current_task_id
-        db = SessionLocal()
+        db = _get_sync_session_factory()()
         try:
             creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
 
@@ -612,7 +612,7 @@ def generate_character_image_task(
     except Exception as e:
         # 只有 update_creation_task=True 时才清除 current_task_id
         if update_creation_task:
-            db = SessionLocal()
+            db = _get_sync_session_factory()()
             try:
                 creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
                 if creation:

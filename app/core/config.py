@@ -130,6 +130,16 @@ class Settings(BaseSettings):
     AI_RETRY_DELAY: int = 2  # 重试间隔（秒）
     AI_IMAGE_DOWNLOAD_TIMEOUT: int = 60  # 图片下载超时时间（秒），默认60秒
     
+    # LangSmith 配置（可选，用于调试和追踪）
+    LANGSMITH_API_KEY: str = ""  # LangSmith API 密钥
+    LANGSMITH_PROJECT: str = "mira-agent-workflow"  # LangSmith 项目名称
+    LANGSMITH_ENDPOINT: str = "https://api.smith.langchain.com"  # LangSmith API 端点
+    LANGSMITH_TRACING_V2: bool = True  # 启用 LangSmith V2 追踪
+    
+    # LangGraph 配置
+    LANGGRAPH_CHECKPOINT_NAMESPACE: str = "mira_comic_drama"  # Checkpointer 命名空间
+    LANGGRAPH_RECURSION_LIMIT: int = 25  # 递归深度限制（防止无限循环）
+    
     # 云存储配置 (US3)
     US3_PUBLIC_KEY: str = ""
     US3_PRIVATE_KEY: str = ""

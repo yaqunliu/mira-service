@@ -16,9 +16,9 @@ from app.api.api_v1.endpoints import (
     products,
     orders,
     subscriptions,
-    subscriptions,
     webhooks,
     video_generation,
+    agent,
 )
 
 api_router = APIRouter()

@@ -2,7 +2,7 @@
 积分系统定时任务
 """
 from app.core.celery_app import celery_app
-from app.db.session import SessionLocal
+from app.db.base import _get_sync_session_factory
 from app.services.points_service import PointsService
 from app.core.logger import logger
 
@@ -14,7 +14,7 @@ def expire_daily_points_task():
     
     定时任务配置在 celery_app.py 中
     """
-    db = SessionLocal()
+    db = _get_sync_session_factory()()
     try:
         expired_points = PointsService.expire_daily_points(db)
         logger.info(f"积分过期任务完成，共过期 {expired_points} 积分")
