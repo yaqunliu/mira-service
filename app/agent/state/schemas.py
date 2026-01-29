@@ -121,6 +121,10 @@ class ComicDramaState(TypedDict, total=False):
     user_action: Optional[str]  # approve, reject, modify
     user_action_data: Optional[Dict[str, Any]]  # action 附加数据
     pending_action: Optional[str]  # 待处理的 action
+    
+    # 响应文本（用于 SSE 输出）
+    response_text: Optional[str]  # 节点生成的响应文本
+    awaiting_clarification: bool  # 是否等待用户澄清
 
     # ==================== 输入数据 ====================
     script_text: Optional[str]  # 原始剧本文本（用户上传或输入）

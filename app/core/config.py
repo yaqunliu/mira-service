@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = ""
     LLM_MODEL_NAME: str = ""
+    LLM_MODEL_DEFAULT: str = "zai-org/glm-4.6"  # Agent 对话默认 LLM 模型
 
     # 专用LLM模型配置
     LLM_MODEL_CHARACTER_ANALYSIS: str = "zai-org/glm-4.6"  # 人物解析模型

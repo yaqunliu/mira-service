@@ -63,6 +63,16 @@ async def task_execution_node(state: Dict[str, Any]) -> Dict[str, Any]:
     user_action_data = state.get("user_action_data", {})
     
     try:
+        # ========== 1. 数据预检查 ==========
+        # 在执行任务前，先检查创作数据是否就绪
+        precheck_result = await _precheck_creation_data(state, detected_intent)
+        if not precheck_result["ready"]:
+            return await _generate_clarify_response(
+                state, 
+                precheck_result.get("message", "创作数据未就绪，请先上传剧本。")
+            )
+        
+        # ========== 2. 处理用户确认操作 ==========
         # 处理用户确认操作
         if pending_action == "approve":
             return await _handle_approve_action(state)
@@ -71,6 +81,7 @@ async def task_execution_node(state: Dict[str, Any]) -> Dict[str, Any]:
         elif pending_action == "modify":
             return await _handle_modify_action(state)
         
+        # ========== 3. 获取并执行对应的 Tool ==========
         # 获取对应的 Tool
         tool_name = INTENT_TOOL_MAPPING.get(detected_intent)
         
@@ -146,6 +157,93 @@ async def task_execution_node(state: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "messages": messages,
             "errors": state.get("errors", []) + [{"node": "task_execution", "error": str(e)}],
+        }
+
+
+async def _precheck_creation_data(state: Dict[str, Any], detected_intent: str) -> Dict[str, Any]:
+    """
+    预检查创作数据是否就绪
+    
+    根据用户意图检查必要的数据是否已存在：
+    - 生成角色图片：需要有角色数据
+    - 生成场景图片：需要有场景数据
+    - 生成分镜图片：需要有分镜数据
+    - 分析剧本：需要有剧本内容
+    
+    Args:
+        state: 当前状态
+        detected_intent: 检测到的意图
+        
+    Returns:
+        {"ready": True/False, "message": "..."}
+    """
+    from app.agent.tools.db_tools import query_creation_status
+    
+    creation_uuid = state.get("creation_uuid")
+    
+    if not creation_uuid:
+        return {
+            "ready": False,
+            "message": "找不到创作项目，请先创建一个创作项目。"
+        }
+    
+    try:
+        # 查询创作状态
+        status_data = await query_creation_status.ainvoke({"creation_uuid": creation_uuid})
+        
+        if status_data.get("status") == "error":
+            return {
+                "ready": False,
+                "message": f"查询创作状态失败：{status_data.get('error', '未知错误')}"
+            }
+        
+        # 根据意图检查所需数据
+        if detected_intent in ["generate_character_images", "regenerate_character_image"]:
+            chars = status_data.get("characters", {})
+            if chars.get("total", 0) == 0:
+                return {
+                    "ready": False,
+                    "message": "还没有角色数据，请先上传剧本并完成剧本分析，我会自动提取角色信息。"
+                }
+        
+        elif detected_intent in ["generate_scene_images", "regenerate_scene_image"]:
+            scenes = status_data.get("scenes", {})
+            if scenes.get("total", 0) == 0:
+                return {
+                    "ready": False,
+                    "message": "还没有场景数据，请先上传剧本并完成剧本分析，我会自动提取场景信息。"
+                }
+        
+        elif detected_intent in ["generate_shot_images", "regenerate_shot_image", "generate_videos", "regenerate_video"]:
+            shots = status_data.get("shots", {})
+            if shots.get("total", 0) == 0:
+                return {
+                    "ready": False,
+                    "message": "还没有分镜数据，请先完成剧本分析和分镜生成。"
+                }
+        
+        elif detected_intent in ["analyze_script", "extract_characters", "extract_scenes"]:
+            # 分析类任务需要检查是否有剧本
+            if not state.get("script_text"):
+                creation_status = status_data.get("status", "init")
+                if creation_status == "init":
+                    return {
+                        "ready": False,
+                        "message": "请先上传剧本内容，我会帮您进行分析。"
+                    }
+        
+        # 数据就绪
+        logger.info(f"[Precheck] 数据检查通过，intent={detected_intent}")
+        return {
+            "ready": True,
+            "status_data": status_data  # 可选：传递状态数据供后续使用
+        }
+        
+    except Exception as e:
+        logger.error(f"[Precheck] 数据检查失败: {e}")
+        return {
+            "ready": False,
+            "message": f"数据检查时出错：{str(e)}"
         }
 
 

@@ -35,7 +35,7 @@ async def analyze_script(
     llm = ChatOpenAI(
         model=settings.LLM_MODEL_DEFAULT,
         api_key=settings.OPENAI_API_KEY,
-        base_url=settings.OPENAI_API_BASE,
+        base_url=settings.OPENAI_BASE_URL,
         temperature=0.3,
     )
     
@@ -110,7 +110,7 @@ async def extract_characters(
     llm = ChatOpenAI(
         model=settings.LLM_MODEL_DEFAULT,
         api_key=settings.OPENAI_API_KEY,
-        base_url=settings.OPENAI_API_BASE,
+        base_url=settings.OPENAI_BASE_URL,
         temperature=0.3,
     )
     
@@ -191,7 +191,7 @@ async def extract_scenes(
     llm = ChatOpenAI(
         model=settings.LLM_MODEL_DEFAULT,
         api_key=settings.OPENAI_API_KEY,
-        base_url=settings.OPENAI_API_BASE,
+        base_url=settings.OPENAI_BASE_URL,
         temperature=0.3,
     )
     
@@ -277,7 +277,7 @@ async def generate_image_prompt(
     llm = ChatOpenAI(
         model=settings.LLM_MODEL_DEFAULT,
         api_key=settings.OPENAI_API_KEY,
-        base_url=settings.OPENAI_API_BASE,
+        base_url=settings.OPENAI_BASE_URL,
         temperature=0.7,
     )
     

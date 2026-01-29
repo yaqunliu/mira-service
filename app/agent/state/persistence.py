@@ -6,8 +6,10 @@
 
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+from uuid import uuid4
 import json
 
+from sqlalchemy import select
 from app.core.logger import logger
 
 
@@ -33,15 +35,15 @@ class StatePersistence:
         Returns:
             检查点 ID
         """
-        from uuid import uuid4
-        from sqlalchemy import select
-        from app.core.database import get_async_session
-        from app.models.creation import Creation
-        
-        checkpoint_id = str(uuid4())
-        
         try:
-            async with get_async_session() as session:
+            # 使用正确的数据库会话
+            from app.db.base import _get_async_session_factory
+            from app.models.creation import Creation
+            
+            checkpoint_id = str(uuid4())
+            session = _get_async_session_factory()()
+            
+            try:
                 # 获取 Creation 记录
                 result = await session.execute(
                     select(Creation).where(Creation.uuid == self.creation_uuid)
@@ -78,6 +80,8 @@ class StatePersistence:
                 
                 logger.info(f"[Persistence] 保存检查点: {checkpoint_id}, type={checkpoint_type}")
                 return checkpoint_id
+            finally:
+                await session.close()
                 
         except Exception as e:
             logger.error(f"[Persistence] 保存检查点失败: {e}")
@@ -96,12 +100,13 @@ class StatePersistence:
         Returns:
             恢复的状态或 None
         """
-        from sqlalchemy import select
-        from app.core.database import get_async_session
-        from app.models.creation import Creation
-        
         try:
-            async with get_async_session() as session:
+            from app.db.base import _get_async_session_factory
+            from app.models.creation import Creation
+            
+            session = _get_async_session_factory()()
+            
+            try:
                 result = await session.execute(
                     select(Creation).where(Creation.uuid == self.creation_uuid)
                 )
@@ -126,6 +131,8 @@ class StatePersistence:
                     # 返回最新检查点
                     latest = checkpoints[-1]
                     return _deserialize_state(latest.get("state", {}))
+            finally:
+                await session.close()
                 
         except Exception as e:
             logger.error(f"[Persistence] 加载检查点失败: {e}")
@@ -134,11 +141,14 @@ class StatePersistence:
     async def get_checkpoint_list(self) -> List[Dict[str, Any]]:
         """获取所有检查点列表（仅元数据）"""
         from sqlalchemy import select
-        from app.core.database import get_async_session
-        from app.models.creation import Creation
         
         try:
-            async with get_async_session() as session:
+            from app.db.base import _get_async_session_factory
+            from app.models.creation import Creation
+            
+            session = _get_async_session_factory()()
+            
+            try:
                 result = await session.execute(
                     select(Creation).where(Creation.uuid == self.creation_uuid)
                 )
@@ -159,6 +169,8 @@ class StatePersistence:
                     }
                     for cp in checkpoints
                 ]
+            finally:
+                await session.close()
                 
         except Exception as e:
             logger.error(f"[Persistence] 获取检查点列表失败: {e}")
@@ -167,11 +179,14 @@ class StatePersistence:
     async def clear_checkpoints(self):
         """清除所有检查点"""
         from sqlalchemy import select
-        from app.core.database import get_async_session
-        from app.models.creation import Creation
         
         try:
-            async with get_async_session() as session:
+            from app.db.base import _get_async_session_factory
+            from app.models.creation import Creation
+            
+            session = _get_async_session_factory()()
+            
+            try:
                 result = await session.execute(
                     select(Creation).where(Creation.uuid == self.creation_uuid)
                 )
@@ -185,6 +200,8 @@ class StatePersistence:
                     await session.commit()
                     
                     logger.info(f"[Persistence] 清除所有检查点: {self.creation_uuid}")
+            finally:
+                await session.close()
                     
         except Exception as e:
             logger.error(f"[Persistence] 清除检查点失败: {e}")

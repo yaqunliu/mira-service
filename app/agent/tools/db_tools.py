@@ -201,10 +201,21 @@ async def query_shots(
         if not creation:
             return {"total": 0, "shots": [], "error": "创作项目不存在"}
         
-        stmt = select(Shot).where(Shot.creation_id == creation.creation_id)
+        # Shot 没有直接的 creation_id，需要通过 Scene 关联
+        from app.models.scene import Scene
+        
+        # 先获取该创作的所有场景 ID
+        scene_stmt = select(Scene.scene_id).where(Scene.creation_id == creation.creation_id)
+        scene_result = await db.execute(scene_stmt)
+        scene_ids = [s[0] for s in scene_result.fetchall()]
+        
+        if not scene_ids:
+            return {"total": 0, "shots": [], "with_image": 0, "with_video": 0}
+        
+        stmt = select(Shot).where(Shot.scene_id.in_(scene_ids))
         if scene_id:
             stmt = stmt.where(Shot.scene_id == scene_id)
-        stmt = stmt.order_by(Shot.sequence_number)
+        stmt = stmt.order_by(Shot.shot_number)
         
         result = await db.execute(stmt)
         shots = result.scalars().all()
@@ -287,29 +298,38 @@ async def query_creation_status(creation_uuid: str) -> Dict[str, Any]:
         )
         scene_with_image = (await db.execute(scene_with_image_stmt)).scalar()
         
-        # 分镜统计
-        shot_stmt = select(func.count()).select_from(Shot).where(
-            Shot.creation_id == creation.creation_id
-        )
-        shot_count = (await db.execute(shot_stmt)).scalar()
+        # 分镜统计（Shot 没有直接 creation_id，需要通过 Scene 关联）
+        # 先获取该创作的所有场景 ID
+        scene_ids_stmt = select(Scene.scene_id).where(Scene.creation_id == creation.creation_id)
+        scene_ids_result = await db.execute(scene_ids_stmt)
+        scene_ids = [s[0] for s in scene_ids_result.fetchall()]
         
-        shot_with_image_stmt = select(func.count()).select_from(Shot).where(
-            Shot.creation_id == creation.creation_id,
-            Shot.image_url.isnot(None)
-        )
-        shot_with_image = (await db.execute(shot_with_image_stmt)).scalar()
-        
-        shot_with_video_stmt = select(func.count()).select_from(Shot).where(
-            Shot.creation_id == creation.creation_id,
-            Shot.video_url.isnot(None)
-        )
-        shot_with_video = (await db.execute(shot_with_video_stmt)).scalar()
+        if scene_ids:
+            shot_stmt = select(func.count()).select_from(Shot).where(
+                Shot.scene_id.in_(scene_ids)
+            )
+            shot_count = (await db.execute(shot_stmt)).scalar()
+            
+            shot_with_image_stmt = select(func.count()).select_from(Shot).where(
+                Shot.scene_id.in_(scene_ids),
+                Shot.image_url.isnot(None)
+            )
+            shot_with_image = (await db.execute(shot_with_image_stmt)).scalar()
+            
+            shot_with_video_stmt = select(func.count()).select_from(Shot).where(
+                Shot.scene_id.in_(scene_ids),
+                Shot.video_url.isnot(None)
+            )
+            shot_with_video = (await db.execute(shot_with_video_stmt)).scalar()
+        else:
+            shot_count = 0
+            shot_with_image = 0
+            shot_with_video = 0
         
         return {
             "creation_uuid": creation_uuid,
             "title": creation.title,
             "status": creation.status,
-            "current_stage": creation.current_stage,
             "characters": {
                 "total": char_count,
                 "with_image": char_with_image,

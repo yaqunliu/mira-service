@@ -27,11 +27,14 @@ class MessageHistory:
             消息列表
         """
         from sqlalchemy import select
-        from app.core.database import get_async_session
-        from app.models.creation import Creation
         
         try:
-            async with get_async_session() as session:
+            from app.db.base import _get_async_session_factory
+            from app.models.creation import Creation
+            
+            session = _get_async_session_factory()()
+            
+            try:
                 result = await session.execute(
                     select(Creation).where(Creation.uuid == self.creation_uuid)
                 )
@@ -46,6 +49,8 @@ class MessageHistory:
                 
                 self._cache = thread_data.get("messages", [])
                 return self._cache
+            finally:
+                await session.close()
                 
         except Exception as e:
             logger.error(f"[Messages] 加载消息历史失败: {e}")
@@ -59,15 +64,18 @@ class MessageHistory:
             messages: 消息列表
         """
         from sqlalchemy import select
-        from app.core.database import get_async_session
-        from app.models.creation import Creation
         
         # 限制消息数量
         if len(messages) > self.max_messages:
             messages = messages[-self.max_messages:]
         
         try:
-            async with get_async_session() as session:
+            from app.db.base import _get_async_session_factory
+            from app.models.creation import Creation
+            
+            session = _get_async_session_factory()()
+            
+            try:
                 result = await session.execute(
                     select(Creation).where(Creation.uuid == self.creation_uuid)
                 )
@@ -87,10 +95,17 @@ class MessageHistory:
                 
                 extra_data["agent_threads"] = threads
                 creation.extra_data = extra_data
+                
+                # 标记 JSONB 字段被修改（SQLAlchemy 需要）
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(creation, "extra_data")
+                
                 await session.commit()
                 
                 self._cache = messages
                 logger.debug(f"[Messages] 保存 {len(messages)} 条消息")
+            finally:
+                await session.close()
                 
         except Exception as e:
             logger.error(f"[Messages] 保存消息历史失败: {e}")

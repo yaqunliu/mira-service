@@ -53,8 +53,9 @@ async def clarify_node(state: Dict[str, Any]) -> Dict[str, Any]:
         llm = ChatOpenAI(
             model=settings.LLM_MODEL_DEFAULT,
             api_key=settings.OPENAI_API_KEY,
-            base_url=settings.OPENAI_API_BASE,
+            base_url=settings.OPENAI_BASE_URL,
             temperature=0.7,
+            streaming=True,  # 启用流式输出
         )
         
         response = await llm.ainvoke(prompt)

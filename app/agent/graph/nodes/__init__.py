@@ -11,6 +11,7 @@ from .status_query import status_query_node
 from .task_execution import task_execution_node
 from .clarify import clarify_node
 from .response_formatter import response_formatter_node
+from .human_review import human_review_node
 
 __all__ = [
     # 对话调度层
@@ -21,4 +22,5 @@ __all__ = [
     "task_execution_node",
     "clarify_node",
     "response_formatter_node",
+    "human_review_node",
 ]

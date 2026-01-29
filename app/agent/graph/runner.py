@@ -145,6 +145,8 @@ class GraphRunner:
     ) -> AsyncIterator[str]:
         """
         执行 Graph 并转换为 SSE
+        
+        使用 astream_events 实现 LLM 流式输出
         """
         from app.agent.graph.dialogue_graph import get_dialogue_runner
         import uuid
@@ -159,48 +161,73 @@ class GraphRunner:
         })
         
         try:
-            # 2. 流式执行 Graph
+            # 2. 使用 astream_events 流式执行 Graph（实时输出 LLM tokens）
             full_response = ""
             current_node = ""
+            last_node_reported = ""
+            streaming_node = ""  # 当前正在流式输出的节点
             
-            async for event in runner.stream(initial_state, self.thread_id):
-                # event 格式: {node_name: {state_updates}}
-                for node_name, updates in event.items():
-                    current_node = node_name
-                    
-                    # 发送节点进度
-                    yield formatter._format_sse({
-                        "event": "progress",
-                        "data": {
-                            "node": node_name,
-                            "status": "processing",
-                        },
-                    })
-                    
-                    # 如果有响应文本，流式发送
-                    if "response_text" in updates:
-                        content = updates["response_text"]
-                        if content and content != full_response:
-                            # 发送增量内容
-                            delta = content[len(full_response):]
-                            if delta:
+            # 只有这些节点的 LLM 输出需要流式发送给用户
+            USER_VISIBLE_NODES = {"clarify", "status_query", "task_execution"}
+            
+            config = {"configurable": {"thread_id": self.thread_id}}
+            
+            async for event in runner.graph.astream_events(initial_state, config, version="v2"):
+                event_kind = event.get("event", "")
+                
+                # 节点开始事件 - 追踪当前节点
+                if event_kind == "on_chain_start":
+                    node_name = event.get("name", "")
+                    if node_name and node_name != last_node_reported and not node_name.startswith("_"):
+                        last_node_reported = node_name
+                        # 记录当前处理的节点（用于过滤 LLM 输出）
+                        if node_name in USER_VISIBLE_NODES:
+                            streaming_node = node_name
+                        yield formatter._format_sse({
+                            "event": "progress",
+                            "data": {
+                                "node": node_name,
+                                "status": "processing",
+                            },
+                        })
+                
+                # LLM 流式 token 事件 - 只输出用户可见节点的内容！
+                elif event_kind == "on_chat_model_stream":
+                    # 只有当前节点是用户可见节点时才输出
+                    if streaming_node in USER_VISIBLE_NODES:
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk and hasattr(chunk, "content") and chunk.content:
+                            content = chunk.content
+                            full_response += content
+                            yield formatter._format_sse({
+                                "event": "message.delta",
+                                "data": {
+                                    "id": message_id,
+                                    "content": content,
+                                    "node": streaming_node,
+                                },
+                            })
+                
+                # 节点完成事件
+                elif event_kind == "on_chain_end":
+                    node_name = event.get("name", "")
+                    if node_name:
+                        current_node = node_name
+                        # 如果节点输出有 response_text 且之前没流式输出，补充发送
+                        output = event.get("data", {}).get("output", {})
+                        if isinstance(output, dict) and "response_text" in output:
+                            resp_text = output["response_text"]
+                            if resp_text and not full_response:
+                                # 没有流式输出过，一次性发送
                                 yield formatter._format_sse({
                                     "event": "message.delta",
                                     "data": {
                                         "id": message_id,
-                                        "content": delta,
+                                        "content": resp_text,
                                         "node": node_name,
                                     },
                                 })
-                                full_response = content
-                    
-                    # 如果有看板操作
-                    if "board_actions" in updates:
-                        for action in updates.get("board_actions", []):
-                            yield formatter._format_sse({
-                                "event": "board.action",
-                                "data": action,
-                            })
+                                full_response = resp_text
             
             # 3. 发送消息结束
             yield formatter._format_sse({
