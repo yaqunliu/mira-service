@@ -757,7 +757,7 @@ async def generate_character_image_tool(
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │   Graph 节点    │ ──▶ │   Tool 函数     │ ──▶ │   Celery 任务   │
-│                 │     │                 │     │                 │
+│                 │     │                 │     │   (新建独立)    │
 │ task_execution  │     │ generate_xxx()  │     │ xxx_task.delay()│
 └─────────────────┘     └────────┬────────┘     └────────┬────────┘
                                  │                       │
@@ -766,6 +766,120 @@ async def generate_character_image_tool(
                         │  异步:轮询进度   │◄─────────────┘
                         └─────────────────┘
 ```
+
+#### 3.3.3 新 Celery Task 设计原则
+
+> [!IMPORTANT]
+> **核心原则**：生成类功能（图片、视频、音频）需要设计**全新的 Celery Task**，做成 Tool 使用，**不与现有逻辑共用或修改**，避免冲突。
+
+**设计理由**：
+1. **隔离风险**：Agent 功能独立开发，不影响现有业务流程
+2. **渐进迁移**：新旧系统可并行运行，逐步切换
+3. **职责清晰**：新 Task 专为 Agent 设计，参数和返回值更适配
+
+**新增 Celery Task 清单**：
+
+| 新 Task 名称 | 功能 | 对应 Tool |
+|-------------|------|-----------|
+| `agent_generate_character_image_task` | Agent 专用角色图片生成 | `generate_character_image` |
+| `agent_generate_scene_image_task` | Agent 专用场景图片生成 | `generate_scene_image` |
+| `agent_generate_shot_image_task` | Agent 专用分镜图片生成 | `generate_shot_image` |
+| `agent_generate_video_task` | Agent 专用视频生成 | `generate_video` |
+| `agent_generate_audio_task` | Agent 专用音频生成 | `generate_audio` |
+
+**文件结构**：
+
+```
+app/agent/
+├── tasks/                          # 新建目录 - Agent 专用 Celery Tasks
+│   ├── __init__.py
+│   ├── image_tasks.py              # 图片生成 tasks
+│   ├── video_tasks.py              # 视频生成 tasks
+│   └── audio_tasks.py              # 音频生成 tasks
+├── tools/                          # Tool 封装层
+│   ├── __init__.py
+│   ├── generation_tools.py         # 生成类 Tools（调用 agent tasks）
+│   ├── db_tools.py                 # 数据库 Tools
+│   └── analysis_tools.py           # 分析类 Tools
+```
+
+**Task 实现示例**：
+
+```python
+# app/agent/tasks/image_tasks.py
+from celery import shared_task
+from app.core.celery_app import celery_app
+
+@celery_app.task(bind=True, name="agent.generate_character_image")
+def agent_generate_character_image_task(self, character_id: str, prompt: str, style: dict):
+    """
+    Agent 专用角色图片生成任务
+    - 独立于现有 step3_character_image_gen_task
+    - 参数和返回值针对 Agent 优化
+    """
+    try:
+        # 更新进度
+        self.update_state(state='PROGRESS', meta={'progress': 10, 'status': '开始生成...'})
+        
+        # 调用底层生成服务（可复用核心逻辑）
+        from app.services.image_generation import generate_image
+        result = generate_image(prompt=prompt, style=style)
+        
+        self.update_state(state='PROGRESS', meta={'progress': 90, 'status': '保存结果...'})
+        
+        # 保存到数据库
+        # ...
+        
+        return {
+            "status": "success",
+            "character_id": character_id,
+            "image_url": result["url"],
+            "generation_time": result["time"]
+        }
+        
+    except Exception as e:
+        return {
+            "status": "failed",
+            "error": str(e),
+            "recoverable": True
+        }
+```
+
+**Tool 封装示例**：
+
+```python
+# app/agent/tools/generation_tools.py
+from langchain.tools import tool
+from app.agent.tasks.image_tasks import agent_generate_character_image_task
+
+@tool
+async def generate_character_image(character_id: str, prompt: str, style: dict = None):
+    """
+    生成角色图片
+    
+    Args:
+        character_id: 角色 ID
+        prompt: 图片提示词
+        style: 风格参数（可选）
+    
+    Returns:
+        生成结果，包含 image_url
+    """
+    # 调用 Agent 专用 Task（不是现有的 step3 task）
+    task = agent_generate_character_image_task.delay(
+        character_id=character_id,
+        prompt=prompt,
+        style=style or {}
+    )
+    
+    # 等待并返回结果
+    result = await wait_for_task_with_progress(task)
+    return result
+```
+
+> [!WARNING]
+> **不要直接调用现有的 `step3_character_image_gen_task` 等任务**
+> 现有任务与自动化流程耦合，参数结构不同，状态更新逻辑不同
 
 ---
 
