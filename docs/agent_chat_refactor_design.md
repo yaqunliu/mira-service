@@ -109,6 +109,11 @@ app/agent/
    - 错误重试与恢复
    - **注：业务数据（图片、视频、提示词等）的持久化由 Tool 负责，不是 Agent 的职责**
 
+8. **知识库（RAG）集成**：在需要专业知识的场景中调用知识库增强生成质量：
+   - **提示词生成**：调用提示词案例库和提示词编写技巧知识库
+   - **分镜解析**：调用分镜技巧、镜头语言等专业知识库
+   - **其他场景**：根据具体任务需求动态调用相关知识库
+
 ### 2.2 目标架构图
 
 ```
@@ -1151,7 +1156,114 @@ class ToolCallLog(Base):
 
 ---
 
-### 3.7 Agent 实例管理
+### 3.7 知识库（RAG）集成
+
+#### 3.7.1 知识库调用场景
+
+| 场景 | 调用节点 | 知识库类型 | 用途 |
+|------|----------|-----------|------|
+| **提示词生成** | `storyboard_creation`, `asset_generation` | 提示词案例库、提示词编写技巧 | 生成高质量的角色/场景/分镜提示词 |
+| **分镜解析** | `storyboard_creation` | 分镜技巧、镜头语言、景别构图 | 辅助分镜拆分和分析 |
+| **剧本分析** | `script_analysis` | 叙事结构、角色塑造 | 辅助角色和场景提取 |
+| **风格化** | `production_manager` | 艺术风格、视觉参考 | 辅助风格决策 |
+
+#### 3.7.2 RAG Tool 设计
+
+```python
+from typing import List, Dict
+
+async def query_knowledge_base_tool(
+    query: str,
+    kb_type: str,  # "prompt_examples", "storyboard_techniques", etc.
+    top_k: int = 5
+) -> List[Dict]:
+    """
+    查询知识库
+
+    Args:
+        query: 查询文本
+        kb_type: 知识库类型
+        top_k: 返回top-k条结果
+
+    Returns:
+        相关知识条目列表
+    """
+    # 1. 向量化查询
+    query_embedding = await embedding_service.embed(query)
+
+    # 2. 检索相关文档
+    results = await vector_store.similarity_search(
+        embedding=query_embedding,
+        collection=kb_type,
+        top_k=top_k
+    )
+
+    # 3. 返回格式化结果
+    return [
+        {
+            "content": doc.content,
+            "metadata": doc.metadata,
+            "score": doc.score
+        }
+        for doc in results
+    ]
+```
+
+#### 3.7.3 节点中调用示例
+
+```python
+async def storyboard_creation_node(state: ComicDramaState):
+    """分镜创建节点 - 使用 RAG 辅助"""
+
+    # 1. 查询分镜技巧知识库
+    storyboard_knowledge = await query_knowledge_base_tool.invoke(
+        query=f"如何为以下场景设计分镜：{state['current_scene']}",
+        kb_type="storyboard_techniques",
+        top_k=3
+    )
+
+    # 2. LLM 结合知识库进行分镜分析
+    prompt = f"""
+    参考以下分镜技巧：
+    {format_knowledge(storyboard_knowledge)}
+
+    请为以下场景设计分镜：
+    {state['current_scene']}
+    """
+
+    shots = await llm.invoke(prompt)
+
+    # 3. 生成分镜提示词时再次查询知识库
+    for shot in shots:
+        prompt_knowledge = await query_knowledge_base_tool.invoke(
+            query=f"生成提示词：{shot['description']}",
+            kb_type="prompt_examples",
+            top_k=5
+        )
+
+        shot_prompt = await generate_shot_prompt_tool.invoke(
+            shot=shot,
+            examples=prompt_knowledge
+        )
+        shot["prompt"] = shot_prompt
+
+    state["storyboards"] = shots
+    return state
+```
+
+#### 3.7.4 知识库类型定义
+
+| 知识库名称 | 类型 | 内容示例 |
+|-----------|------|----------|
+| `prompt_examples` | 提示词案例 | "古风少女：身穿汉服，长发飘逸，杏眼桃腮..." |
+| `prompt_techniques` | 提示词技巧 | "如何描述光影：使用Rembrandt lighting, rim light..." |
+| `storyboard_techniques` | 分镜技巧 | "对话场景使用正反打镜头（shot-reverse-shot）..." |
+| `camera_angles` | 镜头语言 | "俯拍（High Angle）：表现角色的渺小或脆弱..." |
+| `composition_rules` | 构图规则 | "三分法则、黄金分割..." |
+
+---
+
+### 3.8 Agent 实例管理
 
 #### 3.7.1 设计决策：Workflow 完成即释放 + Checkpoint 恢复
 
@@ -1615,6 +1727,116 @@ pytest tests/agent/test_sse_output.py -v
 
 - **决策**: 不在 Graph/Tool 层控制并发
 - **说明**: 生成任务通过 Tool 交给 Celery，并发控制由 Celery Worker 配置完成
+
+### 7.5 超时处理策略
+
+#### 7.5.1 LLM 调用超时
+
+- **超时阈值**: 根据模型设置（通常 30-60 秒）
+- **重试策略**: 自动重试 3 次
+- **失败处理**: 全部失败后通过 SSE 返回 `error` 事件给用户，提示用户重新发起对话
+
+```python
+async def call_llm_with_retry(prompt: str, max_retries: int = 3):
+    """LLM 调用重试逻辑"""
+    for attempt in range(max_retries):
+        try:
+            return await llm.ainvoke(prompt, timeout=60)
+        except TimeoutError as e:
+            if attempt == max_retries - 1:
+                # 最后一次失败，返回错误给用户
+                raise LLMTimeoutError(
+                    message="LLM 调用超时，请稍后重试",
+                    code="LLM_TIMEOUT",
+                    recoverable=True
+                )
+            await asyncio.sleep(1)
+```
+
+#### 7.5.2 Tool 调用超时
+
+- **超时阈值**: 根据 Tool 类型设置（DB 查询 10s，生成任务提交 30s）
+- **重试策略**: 自动重试 3 次
+- **失败处理**:
+  - 记录错误到 `tool_call_logs` 表
+  - 通过 SSE 返回 `error` 事件给用户，提示用户重试
+
+```python
+async def execute_tool_with_retry(tool, params, max_retries: int = 3):
+    """Tool 调用重试逻辑"""
+    for attempt in range(max_retries):
+        try:
+            return await asyncio.wait_for(
+                tool.ainvoke(params),
+                timeout=30
+            )
+        except asyncio.TimeoutError:
+            # 记录日志
+            await log_tool_call_error(
+                tool_name=tool.name,
+                params=params,
+                error="Timeout",
+                attempt=attempt + 1
+            )
+
+            if attempt == max_retries - 1:
+                # 最后一次失败，返回错误
+                raise ToolTimeoutError(
+                    message=f"工具 {tool.name} 执行超时",
+                    code="TOOL_TIMEOUT",
+                    recoverable=True
+                )
+            await asyncio.sleep(1)
+```
+
+#### 7.5.3 SSE 连接超时/断开
+
+- **场景**: 用户关闭页面、刷新网页、网络中断
+- **处理策略**: 不做重连，用户重新发起 `/agent/chat` 请求即可
+- **状态保护**:
+  - Graph Checkpoint 已保存，可从中断点恢复
+  - 消息历史已持久化到 `agent_messages` 表
+  - 用户再次对话时自动恢复上下文
+
+```python
+@router.post("/{creation_uuid}/agent/chat")
+async def agent_chat(creation_uuid: str, request: ChatRequest, ...):
+    """SSE 断开后可重新连接，自动恢复状态"""
+
+    async def event_generator():
+        try:
+            session = await get_or_create_session(db, creation_uuid, user_id)
+
+            # 从 Checkpoint 恢复状态（如果存在）
+            async for event in AgentInstanceManager.run_and_cleanup(
+                session_uuid=session.uuid,
+                message=request.message,
+                checkpointer=checkpointer,
+                db_session=db
+            ):
+                yield format_sse_event(event)
+        except Exception as e:
+            # SSE 断开不影响状态持久化
+            logger.warning(f"SSE connection closed: {e}")
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+```
+
+### 7.6 任务取消机制
+
+- **决策**: 任务一旦提交到 Celery 就不可取消
+- **说明**:
+  - 生成类任务（图片、视频）提交后立即开始执行，无法中途取消
+  - 如果用户想停止，只能等待任务完成后不使用结果
+  - 前端不提供"取消"按钮，只提供"跳过此步骤"选项（在 Human Review 阶段）
+
+### 7.7 SSE 重连机制
+
+- **决策**: 不实现 SSE 自动重连
+- **说明**:
+  - SSE 断开即对话中断，用户需重新发起对话
+  - 得益于 Checkpoint 机制，重新发起对话时可从上次位置继续
+  - 前端无需实现复杂的重连逻辑，简化实现
 
 ---
 
