@@ -202,6 +202,25 @@ async def get_creations_service(
                     }
                     creation_data["characters"].append(character_data)
 
+            creation_data["scenes"] = []
+            if hasattr(creation, 'scenes'):
+                for scene in (creation.scenes or []):
+                    scene_data = {
+                        "scene_id": scene.scene_id,
+                        "title": scene.title,
+                        "image_url": scene.image_url,
+                        "shots": []
+                    }
+                    if hasattr(scene, 'shots'):
+                        for shot in (scene.shots or []):
+                            shot_data = {
+                                "shot_id": shot.shot_id,
+                                "title": shot.title,
+                                "image_url": shot.image_url,
+                            }
+                            scene_data["shots"].append(shot_data)
+                    creation_data["scenes"].append(scene_data)
+
             if novel:
                 creation_data["novel"] = {
                     "novel_id": novel.novel_id,

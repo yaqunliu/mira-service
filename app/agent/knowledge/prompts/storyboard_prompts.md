@@ -1,132 +1,158 @@
-# 分镜图片提示词模板
+# 视频分镜提示词模板 (V5 专业版)
 
 ## 基础结构
+遵循“首尾帧驱动”与“时间轴驱动”原则，先描述故事梗概，再将视频拆分为多个简单直接的短镜头。
 
 ```
-[镜头类型] + [画面主体] + [动作/姿态] + [表情] + [背景] + [光线] + [构图] + [风格]
-```
+[故事梗概]：用一两句话描述整个视频要讲什么故事，包含整体风格和核心氛围。
 
----
+[0-Xs] 镜头1：景别 + 运镜方式
+- 画面内容：(对应首帧) 简单直接描述看到的画面。
+- 动作/台词：发生的动作或出现的台词。
+- cut切换
 
-## 镜头类型模板
+[X-Ys] 镜头2：景别 + 运镜方式
+- 画面内容：中间过渡画面描述。
+- 动作/台词：变化的动作或台词配合。
+- cut切换
 
-### 建立镜头 (Establishing Shot)
-```
-Establishing shot of [location], [time of day], [weather/atmosphere], wide angle, cinematic composition, [style]
-```
-
-**示例**：
-```
-Establishing shot of ancient Chinese village at dawn, morning mist rising from rice paddies, distant mountains silhouette, golden sunrise light, wide panoramic view, anime style, peaceful atmosphere
-```
-
-### 中景镜头 (Medium Shot)
-```
-Medium shot of [character] [action], [expression], [background element], [lighting], [style]
-```
-
-**示例**：
-```
-Medium shot of two friends talking in a cozy cafe, warm smiles, bokeh background with hanging lights, soft natural window lighting, slice of life anime style, comfortable atmosphere
-```
-
-### 特写镜头 (Close-up)
-```
-Close-up of [subject], [emotion/detail], [lighting], shallow depth of field, [style]
-```
-
-**示例**：
-```
-Close-up of young woman's face, tears streaming down cheeks, dramatic side lighting creating half-shadow, shallow depth of field, cinematic photography, emotional moment, photorealistic
-```
-
-### 动作镜头 (Action Shot)
-```
-Dynamic action shot of [character] [action], motion blur, [angle], dramatic composition, [style]
-```
-
-**示例**：
-```
-Dynamic action shot of samurai warrior mid-slash, katana blade gleaming, motion blur on movement, low angle dramatic composition, cherry blossom petals frozen in air, anime style, intense battle scene
-```
-
-### 过渡镜头 (Transition Shot)
-```
-[Symbolic element] [transition description], [atmosphere], [style]
-```
-
-**示例**：
-```
-Autumn leaves falling from ancient tree, transitioning from vibrant orange to bare branches, melancholic atmosphere, time passage symbolism, watercolor style, poetic imagery
+[Y-末] 镜头N：景别 + 运镜方式
+- 画面内容：(对应尾帧) 精确描述结尾画面。
+- 定格收尾：画面最后停在尾帧状态。
 ```
 
 ---
 
-## 情绪表达模板
+## 不同场景案例（简单直接描述）
 
-### 紧张场景
-```
-Tense moment, [character] [defensive/alert pose], sharp shadows, high contrast lighting, tight framing, suspenseful atmosphere, [style]
-```
+## 案例 1：二战史诗战争 (9秒)
+**提示词：**
+`[故事梗概]：一部关于诺曼底登陆的二战电影的史诗电影预告片。相机每3秒更换一次镜头，创造出一个戏剧性和激烈的预告片序列。超现实的、沙砾般的战争氛围、雷鸣般的炮声、混乱的海滩、为生存而战的士兵。`
 
-### 浪漫场景
-```
-Romantic scene, [characters] [intimate pose], soft focus, warm golden lighting, dreamy bokeh, gentle atmosphere, [style]
-```
+`[0-3s] 镜头1 黎明俯拍：黎明时分，战舰接近诺曼底海岸的航拍照片，乌云密布，海洋无边无际，海岸线上远处发生爆炸。`
+`- cut切换`
 
-### 悲伤场景
-```
-Melancholic moment, [character] [sorrowful pose], muted colors, rain/overcast lighting, isolated composition, emotional weight, [style]
-```
+`[3-6s] 镜头2 特写镜头：一名士兵在登陆艇内的特写镜头，颤抖的双手紧握步枪，子弹击中金属墙时，他眼中充满了恐惧。`
+`- cut切换`
 
-### 胜利场景
-```
-Triumphant moment, [character] [victorious pose], dramatic backlighting, dynamic angle, epic composition, powerful atmosphere, [style]
-```
+`[6-9s] 镜头3 混乱全景（尾帧衔接）：斜坡打开——在猛烈的炮火下，海滩一片混乱，爆炸中爆发出沙子，士兵们在烟雾中冲上前去，画面定格。`
+
+## 案例 2：双人激烈争吵 (5秒)
+**提示词：**
+`[故事梗概]：在昏暗的客厅里，两个人正在激烈争吵，情绪非常激动，充满了戏剧冲突。`
+
+`[0-1.5s] 镜头1 近景特写：角色A大声说：“你到底还要骗我到什么时候！”，表情愤怒，眼睛里闪着泪光。`
+`- cut切换`
+
+`[1.5-3.5s] 镜头2 角色B特写：切到角色B，他低下头不敢看对方，表情从愧疚转为嫌弃，冷哼一声，撇过头去。`
+`- cut切换`
+
+`[3.5-5s] 镜头3 双人中景（尾帧衔接）：镜头拉开显示两个人的对峙，角色A掩面哭泣，角色B摔门而出，画面定格。`
+
+## 案例 3：古风剑客决斗 (4秒)
+**提示词：**
+`[故事梗概]：竹林深处，两名剑客正在高速对决，动作干净利落，充满武侠意境。`
+
+`[0-1.5s] 镜头1 中景侧拍：两名剑客在竹林间飞速穿梭，剑刃相撞擦出火花，脚下的瓦片被踩得乱飞。`
+`- cut切换`
+
+`[1.5-3s] 镜头2 局部特写：特写两人的脚部和剑尖，他们在地面上滑行，带起一串尘土，剑气斩断了旁边的竹子。`
+`- cut切换`
+
+`[3-4s] 镜头3 眼神对峙（尾帧衔接）：镜头猛地拉近到其中一人的眼神特写，目光如炬，剑尖指向前方，画面定格。`
+
+## 案例 4：赛博朋克都市 (6秒)
+**提示词：**
+`[故事梗概]：在下着雨的未来都市，霓虹灯闪烁，街道充满科幻感和颓废美。`
+
+`[0-2s] 镜头1 远景俯拍：镜头从高空滑过密密麻麻的霓虹招牌，飞行器从楼宇间飞过，雨水打在镜头上。`
+`- cut切换`
+
+`[2-4s] 镜头2 中景跟拍：镜头跟着一个穿着雨衣的背影走在积水的小巷，路边的自动贩卖机发出蓝色的光。`
+`- cut切换`
+
+`[4-6s] 镜头3 特写定格（尾帧衔接）：镜头聚焦到地面积水的倒影，霓虹灯在水面晃动，一只机械手捡起地上的芯片，画面定格。`
+
+## 案例 5：悬疑神秘发现 (5秒)
+**提示词：**
+`[故事梗概]：在一间尘封已久的老屋里，主角发现了一个隐藏的秘密，氛围紧张压抑。`
+
+`[0-2s] 镜头1 第一视角缓推：镜头模拟主角的视线，慢慢靠近一个锁着的木盒子，手电筒的光在黑暗中晃动。`
+`- cut切换`
+
+`[2-3.5s] 镜头2 近景特写：主角的手颤抖着插入钥匙，咔哒一声，锁孔里竟然长出了一朵鲜红色的花。`
+`- cut切换`
+
+`[3.5-5s] 镜头3 惊愕表情（尾帧衔接）：镜头猛地拉回主角的脸部特写，瞳孔收缩，背景里出现一个模糊的人影，画面定格。`
+
+## 案例 6：治愈日常午后 (4秒)
+**提示词：**
+`[故事梗概]：阳光明媚的午后，一只猫在窗台上睡觉，氛围安静祥和，充满生活气息。`
+
+`[0-1.5s] 镜头1 广角固定：阳光透过白色的纱帘照进房间，地板上投影出窗棂的影子，空气中有微尘飘动。`
+`- cut切换`
+
+`[1.5-3s] 镜头2 近景侧拍：一只大橘猫在窗台上翻了个身，尾巴轻轻拍打着木头，发出满足的呼噜声。`
+`- cut切换`
+
+`[3-4s] 镜头3 特写定格（尾帧衔接）：特写猫咪慢慢闭上的眼睛，长长的睫毛在阳光下发亮，画面定格。`
+
+## 案例 7：极速赛车追逐 (5秒)
+**提示词：**
+`[故事梗概]：在繁华都市的隧道里，两辆赛车正在疯狂追逐，速度极快，充满力量感。`
+
+`[0-1.5s] 镜头1 低角度跟拍：镜头贴近地面，两辆赛车喷着蓝色的火焰从镜头上方飞速驶过，扬起大片灰尘。`
+`- cut切换`
+
+`[1.5-3.5s] 镜头2 中景侧拍：镜头在两辆车之间快速切换，轮胎摩擦地面冒出白烟，发动机的轰鸣声震耳欲聋。`
+`- cut切换`
+
+`[3.5-5s] 镜头3 特写定格（尾帧衔接）：镜头猛地切到领头车的后视镜，映出后面车紧追不放的灯光，画面定格。`
+
+## 案例 8：吉卜力风治愈动画 (5秒)
+**提示词：**
+`[故事梗概]：清晨的乡间小路，充满吉卜力风格的清新与治愈，阳光明媚，草木繁茂。`
+
+`[0-2s] 镜头1 广角横摇：镜头缓缓滑过开满野花的草地，远处的红色屋顶小房子冒着炊烟，天空中飘着大朵大朵的白云。`
+`- cut切换`
+
+`[2-3.5s] 镜头2 中景固定：一个小女孩背着草帽跑过木桥，脚下的溪水清澈见底，鱼儿在水里游动。`
+`- cut切换`
+
+`[3.5-5s] 镜头3 特写定格（尾帧衔接）：切到草地上的一颗露珠，露珠里倒映着小女孩远去的背影，晶莹剔透，画面定格。`
+
+## 案例 9：新海诚风唯美雨景 (6秒)
+**提示词：**
+`[故事梗概]：雨中的城市车站，极致的视觉美感，光影交织，带着淡淡的忧伤。`
+
+`[0-2s] 镜头1 远景俯拍：镜头从高空缓缓降落，无数雨滴落在城市的玻璃幕墙上，折射出五彩斑斓的灯光。`
+`- cut切换`
+
+`[2-4s] 镜头2 近景缓推：车站的长椅上放着一把透明的雨伞，水珠顺着伞骨滑落，远处的电车缓缓进站。`
+`- cut切换`
+
+`[4-6s] 镜头3 特写定格（尾帧衔接）：镜头聚焦在地面水洼的倒影，倒影里是电车离去时的灯光，水面泛起一圈圈涟漪，画面定格。`
+
+## 案例 10：热血少年漫战斗 (4秒)
+**提示词：**
+`[故事梗概]：热血少年漫画风格的必杀技释放瞬间，充满张力和速度感，特效华丽。`
+
+`[0-1.5s] 镜头1 近景急推：主角紧握拳头，周身爆发出金色的气焰，地面因为强大的压力开始碎裂飞起。`
+`- cut切换`
+
+`[1.5-3s] 镜头2 环绕运镜：镜头快速环绕主角转动，展示他出拳的瞬间，空气被拳风撕裂，产生白色的冲击波。`
+`- cut切换`
+
+`[3-4s] 镜头3 特写定格（尾帧衔接）：镜头猛地切到拳头撞击屏障的特写，巨大的能量光芒炸裂开来，画面定格。`
 
 ---
 
-## 视频运动提示词
-
-### 镜头运动
-- camera pan left/right：镜头水平移动
-- camera tilt up/down：镜头垂直移动
-- camera zoom in/out：镜头推拉
-- dolly forward/backward：摄像机前进后退
-- orbit around subject：环绕拍摄
-- crane shot up/down：升降镜头
-
-### 运动描述
-```
-[Camera movement], [speed description], [subject action], [lighting consistency], [atmosphere maintenance]
-```
-
-**示例**：
-```
-Slow camera zoom in on character's face, subtle expression change from doubt to determination, soft lighting remains constant, emotional crescendo, cinematic pacing
-```
-
-### 动态效果
-- slow motion：慢动作
-- speed ramp：变速
-- freeze frame：定格
-- smooth tracking：平滑跟踪
-
----
-
-## 质量提升关键词
-
-**电影感**：
-```
-cinematic shot, film still, movie scene, theatrical composition, widescreen format, anamorphic lens
-```
-
-**细节强化**：
-```
-highly detailed, intricate, sharp focus, 8k resolution, professional quality, masterpiece
-```
-
-**氛围增强**：
-```
-atmospheric, moody, dramatic, evocative, immersive, captivating
-```
+## 运镜与转场小技巧
+1. **说人话描述动作**：比如“慢慢往前走”、“猛地回头”、“低头叹气”，不需要太高级的词汇。
+2. **镜头不要长**：每个镜头最好在 1.5 到 2 秒左右，切换多了画面才动感。
+3. **尾帧必须对上**：最后一个镜头一定要描述得跟尾帧图片一模一样，并且写上“画面定格”。
+4. **运镜方式常用词**：
+   - **缓推/急推**：慢慢靠近/快速靠近。
+   - **横摇/纵摇**：左右看/上下看。
+   - **跟随**：跟着人动。
+   - **定格**：画面不动。

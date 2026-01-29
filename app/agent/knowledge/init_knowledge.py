@@ -260,7 +260,7 @@ class KnowledgeInitializer:
                 logger.info(f"解析 camera_techniques.md: {len(docs)} 个镜头类型")
 
             # 构图法则
-            composition_path = director_dir / "composition.md"
+            composition_path = director_dir / "composition_rules.md"
             if composition_path.exists():
                 docs = self._parse_markdown_sections(str(composition_path))
                 for doc in docs:
@@ -278,7 +278,7 @@ class KnowledgeInitializer:
                 logger.info(f"解析 lighting_mood.md: {len(docs)} 个光线技巧")
 
             # 节奏与剪辑
-            pacing_path = director_dir / "pacing_editing.md"
+            pacing_path = director_dir / "pacing_guide.md"
             if pacing_path.exists():
                 docs = self._parse_markdown_sections(str(pacing_path))
                 for doc in docs:
@@ -287,7 +287,7 @@ class KnowledgeInitializer:
                 logger.info(f"解析 pacing_editing.md: {len(docs)} 个剪辑技巧")
 
             # 分镜技巧
-            storyboard_path = director_dir / "storyboard_techniques.md"
+            storyboard_path = director_dir / "storyboard_examples.md"
             if storyboard_path.exists():
                 docs = self._parse_markdown_sections(str(storyboard_path))
                 for doc in docs:
