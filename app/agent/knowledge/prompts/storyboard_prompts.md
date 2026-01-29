@@ -1,132 +1,89 @@
-# 分镜图片提示词模板
+# 视频分镜提示词模板 (V5 专业版)
 
 ## 基础结构
+遵循“首尾帧驱动”与“时间轴驱动”原则，将视频拆分为多个短镜头快切。
 
 ```
-[镜头类型] + [画面主体] + [动作/姿态] + [表情] + [背景] + [光线] + [构图] + [风格]
-```
+[全局氛围]：描述整体色调、光影、艺术风格和情绪。
 
----
+[0-Xs] 镜头1：景别 + 运镜方式
+- 画面内容：（与首帧呼应）简单直接地描述开头画面。
+- 动作/表情：开始时的动作。
+- 过渡方式：怎么切换到下一个镜头。
 
-## 镜头类型模板
+[X-Ys] 镜头2：景别 + 运镜方式
+- 画面内容：中间发生的变化。
+- 动作/表情：表情或动作的演变。
+- 过渡方式：怎么切换到下一个镜头。
 
-### 建立镜头 (Establishing Shot)
-```
-Establishing shot of [location], [time of day], [weather/atmosphere], wide angle, cinematic composition, [style]
-```
-
-**示例**：
-```
-Establishing shot of ancient Chinese village at dawn, morning mist rising from rice paddies, distant mountains silhouette, golden sunrise light, wide panoramic view, anime style, peaceful atmosphere
-```
-
-### 中景镜头 (Medium Shot)
-```
-Medium shot of [character] [action], [expression], [background element], [lighting], [style]
-```
-
-**示例**：
-```
-Medium shot of two friends talking in a cozy cafe, warm smiles, bokeh background with hanging lights, soft natural window lighting, slice of life anime style, comfortable atmosphere
-```
-
-### 特写镜头 (Close-up)
-```
-Close-up of [subject], [emotion/detail], [lighting], shallow depth of field, [style]
-```
-
-**示例**：
-```
-Close-up of young woman's face, tears streaming down cheeks, dramatic side lighting creating half-shadow, shallow depth of field, cinematic photography, emotional moment, photorealistic
-```
-
-### 动作镜头 (Action Shot)
-```
-Dynamic action shot of [character] [action], motion blur, [angle], dramatic composition, [style]
-```
-
-**示例**：
-```
-Dynamic action shot of samurai warrior mid-slash, katana blade gleaming, motion blur on movement, low angle dramatic composition, cherry blossom petals frozen in air, anime style, intense battle scene
-```
-
-### 过渡镜头 (Transition Shot)
-```
-[Symbolic element] [transition description], [atmosphere], [style]
-```
-
-**示例**：
-```
-Autumn leaves falling from ancient tree, transitioning from vibrant orange to bare branches, melancholic atmosphere, time passage symbolism, watercolor style, poetic imagery
+[Y-末] 镜头N（尾帧衔接）：景别 + 运镜方式
+- 画面内容：（与尾帧呼应）精确描述结尾画面。
+- 定格收尾：画面最后停在尾帧的样子。
 ```
 
 ---
 
-## 情绪表达模板
+## 不同场景案例（简单直接描述）
 
-### 紧张场景
-```
-Tense moment, [character] [defensive/alert pose], sharp shadows, high contrast lighting, tight framing, suspenseful atmosphere, [style]
-```
+### 案例 1：情感对话场景 (4秒)
+**提示词：**
+`[全局氛围]：温馨的午后咖啡厅，柔和的阳光滤镜，细腻动漫风格。`
 
-### 浪漫场景
-```
-Romantic scene, [characters] [intimate pose], soft focus, warm golden lighting, dreamy bokeh, gentle atmosphere, [style]
-```
+`[0-1.5s] 镜头1 中景固定：她和朋友面对面坐着，低头看着咖啡杯，双手有些紧张地握着杯子，阳光照在桌面上。`
 
-### 悲伤场景
-```
-Melancholic moment, [character] [sorrowful pose], muted colors, rain/overcast lighting, isolated composition, emotional weight, [style]
-```
+`[1.5-3s] 镜头2 近景缓推：镜头慢慢切到她的脸，她抬起头，眼神里带着一点犹豫，嘴唇微动好像要说话。`
 
-### 胜利场景
-```
-Triumphant moment, [character] [victorious pose], dramatic backlighting, dynamic angle, epic composition, powerful atmosphere, [style]
-```
+`[3-4s] 镜头3 特写定格（尾帧衔接）：直接切到眼睛特写，眼神变得坚定，瞳孔里映着窗外的光，画面定格。`
+
+### 案例 2：动作逃跑场景 (3秒)
+**提示词：**
+`[全局氛围]：阴冷的雨夜街道，冷蓝色调，霓虹灯闪烁，压抑的电影质感。`
+
+`[0-1.2s] 镜头1 全景跟随：他在大雨里低头快跑，雨水溅在身上，背景是模糊的霓虹灯牌，身影显得很匆忙。`
+
+`[1.2-2.2s] 镜头2 中景侧拍：镜头切到侧面，拍他奔跑的半身，呼吸急促，雨水顺着脸颊往下流。`
+
+`[2.2-3s] 镜头3 低角度特写（尾帧衔接）：切到脚部特写，皮鞋猛地踩进一个大水坑，水花四溅，画面定格在水花飞起来的一瞬间。`
+
+### 案例 3：风景发现场景 (5秒)
+**提示词：**
+`[全局氛围]：壮丽的雪山日出，金色的暖光，震撼的史诗感。`
+
+`[0-2s] 镜头1 远景横摇：镜头从左往右慢慢转动，展示一大片白茫茫的雪山，天边刚开始泛红。`
+
+`[2-3.5s] 镜头2 远景缓拉：镜头慢慢往后退，露出山脚下的一座孤零零的小木屋，屋顶还冒着烟。`
+
+`[3.5-5s] 镜头3 特写定格（尾帧衔接）：切到木屋窗户的特写，窗户上映着金色的日出倒影，画面定格。`
+
+### 案例 4：双人激烈争吵 (5秒)
+**提示词：**
+`[全局氛围]：昏暗的客厅，只有一盏台灯亮着，强烈的明暗对比，压抑愤怒的动漫风格。`
+
+`[0-1.5s] 镜头1 中景固定：两人面对面站着，气氛非常紧张。背景里的窗帘被风吹得轻轻摆动。`
+
+`[1.5-3.5s] 镜头2 近景特写：镜头猛地切到[角色A]的脸部特写，他正张大嘴巴大声喊叫，额头青筋暴起。`
+`- 台词配合：[角色A]大声说：“你到底还要骗我到什么时候！”`
+
+`[3.5-5s] 镜头3 特写定格（尾帧衔接）：镜头迅速切到[角色B]的脸部特写，他满脸嫌弃地撇过头，眉头紧皱，眼神里全是冷漠，画面定格。`
+
+### 案例 5：刀剑对拼打斗 (4秒)
+**提示词：**
+`[全局氛围]：月光下的古城顶，深蓝色夜空，银色月光，热血激烈的武侠风格。`
+
+`[0-1.2s] 镜头1 中景跟随：两名剑客在屋顶上飞快对冲，脚下的瓦片被踩得乱飞，长剑在月光下闪着寒光。`
+
+`[1.2-2.5s] 镜头2 近景急推：镜头猛地推近，两把长剑狠狠撞在一起，火星四溅，两人的脸靠得很近，都在用力咬牙坚持。`
+
+`[2.5-4s] 镜头3 特写定格（尾帧衔接）：切到一把长剑被震飞在空中的特写，剑身在月光下翻转，背景是巨大的圆月，画面定格。`
 
 ---
 
-## 视频运动提示词
-
-### 镜头运动
-- camera pan left/right：镜头水平移动
-- camera tilt up/down：镜头垂直移动
-- camera zoom in/out：镜头推拉
-- dolly forward/backward：摄像机前进后退
-- orbit around subject：环绕拍摄
-- crane shot up/down：升降镜头
-
-### 运动描述
-```
-[Camera movement], [speed description], [subject action], [lighting consistency], [atmosphere maintenance]
-```
-
-**示例**：
-```
-Slow camera zoom in on character's face, subtle expression change from doubt to determination, soft lighting remains constant, emotional crescendo, cinematic pacing
-```
-
-### 动态效果
-- slow motion：慢动作
-- speed ramp：变速
-- freeze frame：定格
-- smooth tracking：平滑跟踪
-
----
-
-## 质量提升关键词
-
-**电影感**：
-```
-cinematic shot, film still, movie scene, theatrical composition, widescreen format, anamorphic lens
-```
-
-**细节强化**：
-```
-highly detailed, intricate, sharp focus, 8k resolution, professional quality, masterpiece
-```
-
-**氛围增强**：
-```
-atmospheric, moody, dramatic, evocative, immersive, captivating
-```
+## 运镜与转场小技巧
+1. **说人话描述动作**：比如“慢慢往前走”、“猛地回头”、“低头叹气”，不需要太高级的词汇。
+2. **镜头不要长**：每个镜头最好在 1.5 到 2 秒左右，切换多了画面才动感。
+3. **尾帧必须对上**：最后一个镜头一定要描述得跟尾帧图片一模一样，并且写上“画面定格”。
+4. **运镜方式常用词**：
+   - **缓推/急推**：慢慢靠近/快速靠近。
+   - **横摇/纵摇**：左右看/上下看。
+   - **跟随**：跟着人动。
+   - **定格**：画面不动。

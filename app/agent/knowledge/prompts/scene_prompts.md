@@ -1,104 +1,76 @@
 # 场景图片提示词模板
 
 ## 基础结构
+`{{VISUAL_STYLE}}，高质量背景。16:9横版构图。`
 
-```
-[场景类型] + [地点描述] + [时间/天气] + [氛围] + [构图] + [光线] + [风格关键词]
-```
+`[地点描述]：[空间特征]，[建筑/景观结构]。`
 
----
+`时间：[时间段]，[光线描述]。天气：[天气状况]，[动态效果]。`
 
-## 场景类型模板
+`环境细节：[主要物体]，[装饰元素]，[背景元素]。[具体物品的位置和状态描述]。`
 
-### 室内场景 (Interior)
-```
-[Room type], [architectural style], [furniture/objects], [lighting source], [atmosphere], [time of day], [style]
-```
+`色调：[主色调]，[光影效果]。氛围：[情绪氛围]，[画面质感]。`
 
-**示例**：
-```
-Traditional Japanese tea room, tatami floor with low table, shoji screens with soft light filtering through, paper lanterns, peaceful zen atmosphere, afternoon sunlight, anime style, warm colors
-```
+`动态效果：[雨滴/烟雾/光线等动态元素的描述]。`
 
-### 室外场景 (Exterior)
-```
-[Location type], [natural elements], [weather condition], [time of day], [atmospheric effects], [perspective], [style]
-```
-
-**示例**：
-```
-Ancient Chinese mountain temple, perched on misty cliff edge, cherry blossoms in bloom, early morning fog, golden sunrise light breaking through clouds, wide establishing shot, cinematic landscape, ethereal atmosphere
-```
-
-### 城市场景 (Urban)
-```
-[City type], [street/building elements], [crowd/activity level], [lighting], [time], [weather], [style]
-```
-
-**示例**：
-```
-Cyberpunk metropolis at night, towering neon-lit skyscrapers, crowded street market, holographic advertisements, rain-slicked streets with reflections, vibrant purple and cyan lighting, blade runner style, futuristic dystopia
-```
+`高质量，无人物，空场景。`
 
 ---
 
-## 环境描述词库
+## 案例展示（简单直接的大白话描述）
 
-### 自然环境
-- 森林：enchanted forest, dense woodland, sunlit grove, misty woods
-- 山脉：snow-capped mountains, rocky peaks, mountain valley, cliff edge
-- 水体：crystal clear lake, rushing waterfall, calm river, stormy ocean
-- 天空：dramatic cloudscape, starry night sky, aurora borealis, sunset gradient
+### 案例 1：雨后的公交站台
+**提示词：**
+`日本动漫风格，高质量动画背景。16:9横版构图。`
 
-### 建筑环境
-- 古典：ancient temple, medieval castle, gothic cathedral, Roman ruins
-- 现代：glass skyscraper, minimalist interior, modern apartment, office building
-- 奇幻：floating island, crystal palace, treehouse city, underground cavern
+`城市街道旁的公交站台：一个小小的半开放候车区，塑料顶棚上面全是雨水，旁边有矮栏杆，地面是湿漉漉的水泥地，前面是没几辆车的马路。`
 
-### 时间描述
-- 清晨：early morning, dawn light, sunrise, first light of day
-- 正午：midday sun, bright afternoon, high noon
-- 黄昏：golden hour, sunset, dusk, twilight
-- 夜晚：moonlit night, starry sky, midnight, witching hour
+`时间：傍晚，天快黑了，路灯刚亮。天气：下着大雨，雨水从棚顶流下来像帘子一样，地上的积水映着路边的霓虹灯。`
 
-### 天气描述
-- 晴朗：clear blue sky, sunny day, cloudless
-- 多云：overcast, cloudy, dramatic clouds
-- 雨天：heavy rain, light drizzle, storm, rain-soaked
-- 特殊：snow falling, foggy, misty, sandstorm
+`环境细节：路边的广告牌亮着光，被雨淋得闪个不停。金属长椅湿透了，上面亮晶晶的。地上的水坑里飘着破纸片。远处的车灯在马路上拉出长长的光影。`
+
+`色调：主要是冷冷的蓝紫色，混着一点路灯的黄光，看起来湿答答的。氛围：有点孤单、冷清、湿润的感觉。`
+
+`动态效果：雨水一直从棚顶往下掉，水面上有一圈圈涟漪，霓虹灯光在水里晃动，偶尔有车开过去溅起水花。`
+
+`高质量，无人物，空场景。`
+
+### 案例 2：阳光下的教室
+**提示词：**
+`清新治愈风格，高质量插画背景。16:9横版构图。`
+
+`放学后的空教室：一排排整齐的木头桌椅，黑板上还残留着粉笔字迹，窗台上有几盆绿色的小植物。`
+
+`时间：下午，阳光很足。天气：大晴天，阳光透过窗户斜着射进来，能看到空气里的小灰尘。`
+
+`环境细节：书桌上放着几本没收走的课本，窗帘被微风吹得轻轻飘起来。教室后面的扫帚整齐靠在墙角。阳光照在木地板上，暖洋洋的。`
+
+`色调：明亮的浅黄色和翠绿色，看起来很干净。氛围：安静、温馨、怀旧的感觉。`
+
+`动态效果：窗帘轻轻晃动，阳光下的小灰尘在飞舞，树影在桌面上慢慢移动。`
+
+`高质量，无人物，空场景。`
+
+### 案例 3：赛博朋克小巷
+**提示词：**
+`赛博朋克风格，高质量概念设计。16:9横版构图。`
+
+`深夜的科幻风小巷：狭窄的过道，两边墙上挂满了乱七八糟的电线和发光的招牌，地面坑洼不平。`
+
+`时间：深夜，到处都是霓虹灯。天气：阴天，空气里有点雾蒙蒙的，感觉湿气很重。`
+
+`环境细节：墙角堆着几个废弃的金属桶，自动贩卖机发出蓝幽幽的光。招牌上有复杂的电子图案。地面上的积水倒映着五颜六色的灯光。`
+
+`色调：深蓝色底色，配上亮粉色和亮青色的霓虹光。氛围：神秘、科幻、有点乱糟糟的酷感。`
+
+`动态效果：霓虹灯招牌闪烁跳动，排气管冒出淡淡的白烟，积水里的倒影随着光线晃来晃去。`
+
+`高质量，无人物，空场景。`
 
 ---
 
-## 氛围关键词
-
-### 积极氛围
-- peaceful, serene, magical, whimsical, romantic, cozy, inviting, cheerful
-
-### 消极氛围
-- ominous, eerie, desolate, haunting, melancholic, tense, foreboding
-
-### 中性氛围
-- mysterious, dramatic, epic, grand, majestic, tranquil, atmospheric
-
----
-
-## 构图与透视
-
-### 视角
-- wide establishing shot, panoramic view, aerial view
-- eye-level perspective, worm's eye view, bird's eye view
-
-### 景深
-- deep focus, shallow depth of field, tilt-shift effect
-- foreground elements, layered composition, atmospheric perspective
-
----
-
-## 质量提升关键词
-
-```
-highly detailed environment, intricate architecture, photorealistic,
-matte painting quality, concept art, environmental design,
-cinematic composition, dramatic lighting, atmospheric effects,
-8k resolution, unreal engine, octane render
-```
+## 编写指南
+1. **说人话**：描述时不要用太复杂的修辞，就像跟朋友介绍一个地方一样，用简单直接的大白话。
+2. **拒绝人物**：绝对不能出现人，也不能出现“某人坐在椅子上”这种描述，只能写“椅子上放着书”。
+3. **构图固定**：一定要写“16:9横版构图”和“无人物，空场景”。
+4. **细节到位**：虽然是大白话，但要把东西放在哪、是什么样子的写清楚。
