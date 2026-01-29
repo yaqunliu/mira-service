@@ -139,6 +139,9 @@ class Settings(BaseSettings):
     # LangGraph 配置
     LANGGRAPH_CHECKPOINT_NAMESPACE: str = "mira_comic_drama"  # Checkpointer 命名空间
     LANGGRAPH_RECURSION_LIMIT: int = 25  # 递归深度限制（防止无限循环）
+
+    # ChromaDB 向量数据库配置
+    CHROMADB_PATH: str = "./chroma_db"  # ChromaDB 持久化存储路径
     
     # 云存储配置 (US3)
     US3_PUBLIC_KEY: str = ""

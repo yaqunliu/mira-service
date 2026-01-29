@@ -1,0 +1,190 @@
+openspec: "1.0"
+info:
+  title: 短剧创作工作流
+  version: "1.0.0"
+  description: 定义从剧本分析到视频生成的完整创作流程
+
+workflow:
+  stages:
+    - id: script_analysis
+      name: 剧本分析
+      description: 从剧本中提取角色、场景和分镜信息
+      steps:
+        - character_analysis
+        - scene_analysis
+        - shot_analysis
+
+    - id: prompt_generation
+      name: 提示词生成
+      description: 为所有资产生成 AI 提示词
+      requires:
+        - script_analysis
+      steps:
+        - character_prompt_generation
+        - scene_prompt_generation
+        - shot_prompt_generation
+
+    - id: asset_generation
+      name: 资产生成
+      description: 生成角色、场景和分镜图片
+      requires:
+        - prompt_generation
+      steps:
+        - character_image_generation
+        - scene_image_generation
+        - shot_image_generation
+
+    - id: video_production
+      name: 视频制作
+      description: 生成视频和音频，合成最终作品
+      requires:
+        - asset_generation
+      steps:
+        - video_prompt_generation
+        - video_generation
+        - audio_generation
+        - video_composition
+
+steps:
+  # 剧本分析步骤
+  character_analysis:
+    name: 角色分析
+    type: celery
+    task: character_analysis_task
+    description: 从剧本中提取角色信息
+    outputs:
+      - characters
+
+  scene_analysis:
+    name: 场景分析
+    type: celery
+    task: scene_analysis_task
+    description: 从剧本中提取场景信息
+    outputs:
+      - scenes
+
+  shot_analysis:
+    name: 分镜分析
+    type: celery
+    task: shot_analysis_task
+    description: 从剧本中提取分镜信息
+    requires:
+      - scene_analysis
+    outputs:
+      - shots
+
+  # 提示词生成步骤
+  character_prompt_generation:
+    name: 角色提示词生成
+    type: agent
+    handler: generate_character_image_prompt
+    description: 为角色生成图片提示词
+    requires:
+      - character_analysis
+    outputs:
+      - character_prompts
+
+  scene_prompt_generation:
+    name: 场景提示词生成
+    type: agent
+    handler: generate_scene_image_prompt
+    description: 为场景生成图片提示词
+    requires:
+      - scene_analysis
+    outputs:
+      - scene_prompts
+
+  shot_prompt_generation:
+    name: 分镜提示词生成
+    type: agent
+    handler: generate_shot_image_prompt
+    description: 为分镜生成图片提示词
+    requires:
+      - shot_analysis
+      - character_prompt_generation
+      - scene_prompt_generation
+    outputs:
+      - shot_prompts
+
+  # 资产生成步骤
+  character_image_generation:
+    name: 角色图片生成
+    type: celery
+    task: generate_character_image_task
+    description: 生成角色参考图
+    requires:
+      - character_prompt_generation
+    outputs:
+      - character_images
+
+  scene_image_generation:
+    name: 场景图片生成
+    type: celery
+    task: batch_generate_scene_images_task
+    description: 生成场景图片
+    requires:
+      - scene_prompt_generation
+    outputs:
+      - scene_images
+
+  shot_image_generation:
+    name: 分镜图片生成
+    type: celery
+    task: generate_creation_shots_task
+    description: 生成分镜图片
+    requires:
+      - shot_prompt_generation
+      - character_image_generation
+      - scene_image_generation
+    outputs:
+      - shot_images
+
+  # 视频制作步骤
+  video_prompt_generation:
+    name: 视频提示词生成
+    type: agent
+    handler: generate_shot_video_prompt
+    description: 为分镜生成视频运动提示词
+    requires:
+      - shot_image_generation
+    outputs:
+      - video_prompts
+
+  video_generation:
+    name: 视频生成
+    type: celery
+    task: generate_all_videos_task
+    description: 生成分镜视频
+    requires:
+      - video_prompt_generation
+    outputs:
+      - videos
+
+  audio_generation:
+    name: 音频生成
+    type: celery
+    task: generate_audio_task
+    description: 生成配音和背景音乐
+    requires:
+      - shot_analysis
+    outputs:
+      - audio_files
+
+  video_composition:
+    name: 视频合成
+    type: celery
+    task: compose_video_task
+    description: 合成最终视频
+    requires:
+      - video_generation
+      - audio_generation
+    outputs:
+      - final_video
+
+# 状态定义
+statuses:
+  pending: 等待执行
+  in_progress: 执行中
+  completed: 已完成
+  failed: 失败
+  skipped: 已跳过

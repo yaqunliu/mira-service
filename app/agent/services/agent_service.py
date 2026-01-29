@@ -6,7 +6,7 @@ Agent 服务层 - Agent Service
 
 from typing import Dict, Any, Optional, AsyncIterator
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.agent.graph import ComicDramaProductionGraph
+from app.agent.graph import ComicDramaGraph
 from app.agent.checkpointer import AsyncPostgresCheckpointer
 from app.agent.tools import (
     CharacterAnalysisTool,
@@ -188,7 +188,7 @@ class AgentService:
         tools = self._prepare_tools(db)
 
         # 创建工作流图
-        graph = ComicDramaProductionGraph(
+        graph = ComicDramaGraph(
             checkpointer=self.checkpointer,
             tools=tools
         )
