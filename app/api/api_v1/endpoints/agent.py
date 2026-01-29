@@ -224,7 +224,24 @@ async def agent_chat(
 
             await save_user_message(db_inner, session_id, user_message)
 
-            task_intent = await agent_task_handler.detect_task_intent(user_message)
+            # 获取聊天历史用于意图判断
+            chat_history = []
+            try:
+                history_stmt = select(AgentMessage).where(
+                    AgentMessage.session_id == session_id
+                ).order_by(desc(AgentMessage.created_at)).limit(10)
+                history_result = await db_inner.execute(history_stmt)
+                history_messages = history_result.scalars().all()
+                # 反转顺序，使其按时间正序排列
+                for msg in reversed(history_messages):
+                    chat_history.append({
+                        "role": msg.role,
+                        "content": msg.content or ""
+                    })
+            except Exception as e:
+                logger.warning(f"获取聊天历史失败: {e}")
+
+            task_intent = await agent_task_handler.detect_task_intent(user_message, chat_history)
             
             debug_info = {
                 "user_message": user_message,
@@ -232,16 +249,23 @@ async def agent_chat(
                 "timestamp": datetime.utcnow().isoformat() + "Z"
             }
             yield f"event: debug\ndata: {json.dumps(debug_info)}\n\n"
-            
+
             task_intents = [
                 "analyze_character", "analyze_scene", "analyze_shot",
-                "generate_character_images", "generate_scene_images", 
+                "generate_character_images", "generate_scene_images",
                 "generate_storyboard_images", "generate_videos", "auto_create"
             ]
             is_task_intent = task_intent in task_intents
 
+            # 新增：设置和提示词相关的意图
+            settings_intents = ["modify_settings", "collect_info"]
+            is_settings_intent = task_intent in settings_intents
+
+            prompt_intents = ["modify_prompt", "generate_prompt_only"]
+            is_prompt_intent = task_intent in prompt_intents
+
             status_intents = [
-                "status_query", "character_query", "scene_query", 
+                "status_query", "character_query", "scene_query",
                 "character_image_query", "scene_image_query", "storyboard_image_query",
                 "video_query", "overall_status_query"
             ]
@@ -261,11 +285,30 @@ async def agent_chat(
             logger.info(f"意图识别: user_message='{user_message}', intent={task_intent}, is_task={is_task_intent}, is_status={is_status_query}")
 
             if is_task_intent:
-                logger.info(f"检测到任务请求 (intent={task_intent})，提交 Celery 任务")
+                logger.info(f"检测到任务请求 (intent={task_intent})，进行意图细化分析")
+
+                # 获取上下文信息
+                context_info = await agent_task_handler.get_context_for_intent(
+                    db_inner, creation_uuid, task_intent
+                )
+
+                # 调用意图细化子Agent
+                refined_intent = await agent_task_handler.refine_task_intent(
+                    intent_type=task_intent,
+                    user_message=user_message,
+                    chat_history=chat_history,
+                    context_info=context_info
+                )
+
+                logger.info(f"意图细化结果: {refined_intent}")
+
+                # 发送细化结果到前端（debug事件）
+                yield f"event: debug\ndata: {json.dumps({'refined_intent': refined_intent})}\n\n"
+
                 assistant_content = ""
                 try:
-                    async for sse_chunk in agent_task_handler.execute_single_task(
-                        db_inner, creation_uuid, task_intent
+                    async for sse_chunk in agent_task_handler.execute_refined_task(
+                        db_inner, creation_uuid, task_intent, refined_intent
                     ):
                         if sse_chunk:
                             yield sse_chunk
@@ -274,6 +317,52 @@ async def agent_chat(
                                     data = json.loads(sse_chunk.split("data: ", 1)[1].rstrip("\n\n"))
                                     if "content" in data:
                                         assistant_content += data["content"]
+                                except:
+                                    pass
+                finally:
+                    if assistant_content:
+                        await save_assistant_message(db_inner, session_id, assistant_content, task_intent)
+                    await db_inner.close()
+                return
+
+            # 处理设置修改意图
+            if is_settings_intent:
+                logger.info(f"检测到设置修改请求 (intent={task_intent})")
+                assistant_content = ""
+                try:
+                    async for sse_chunk in agent_task_handler.handle_settings_modification(
+                        db_inner, creation_uuid, user_message, chat_history
+                    ):
+                        if sse_chunk:
+                            yield sse_chunk
+                            if "delta" in sse_chunk:
+                                try:
+                                    data = json.loads(sse_chunk.split("data: ", 1)[1].rstrip("\n\n"))
+                                    if "delta" in data:
+                                        assistant_content += data["delta"]
+                                except:
+                                    pass
+                finally:
+                    if assistant_content:
+                        await save_assistant_message(db_inner, session_id, assistant_content, task_intent)
+                    await db_inner.close()
+                return
+
+            # 处理提示词操作意图
+            if is_prompt_intent:
+                logger.info(f"检测到提示词操作请求 (intent={task_intent})")
+                assistant_content = ""
+                try:
+                    async for sse_chunk in agent_task_handler.handle_prompt_operation(
+                        db_inner, creation_uuid, user_message, chat_history, task_intent
+                    ):
+                        if sse_chunk:
+                            yield sse_chunk
+                            if "delta" in sse_chunk:
+                                try:
+                                    data = json.loads(sse_chunk.split("data: ", 1)[1].rstrip("\n\n"))
+                                    if "delta" in data:
+                                        assistant_content += data["delta"]
                                 except:
                                     pass
                 finally:
@@ -311,14 +400,14 @@ async def agent_chat(
                 logger.info(f"检测到未知意图，生成引导性回复")
                 assistant_content = ""
                 try:
-                    async for sse_chunk in agent_task_handler.generate_clarify_response(user_message):
+                    async for sse_chunk in agent_task_handler.generate_clarify_response(user_message, chat_history):
                         if sse_chunk:
                             yield sse_chunk
-                            if "content" in sse_chunk:
+                            if "delta" in sse_chunk:
                                 try:
                                     data = json.loads(sse_chunk.split("data: ", 1)[1].rstrip("\n\n"))
-                                    if "content" in data:
-                                        assistant_content += data["content"]
+                                    if "delta" in data:
+                                        assistant_content += data["delta"]
                                 except:
                                     pass
                 finally:

@@ -421,9 +421,9 @@ class ChapterAsyncService:
         
         base_query = select(Chapter).where(
             Chapter.novel_id == novel_id
-        )
+        ).options(selectinload(Chapter.creation))
         
-        query = base_query.order_by(Chapter.order.asc())
+        query = base_query.order_by(Chapter.chapter_number.asc())
         
         count_query = select(func.count()).select_from(base_query.subquery())
         count_result = await db.execute(count_query)

@@ -288,6 +288,21 @@ async def get_creation_detail(
                     "atmosphere": s.atmosphere,
                     "image_url": s.image_url,
                     "status": s.status,
+                    "extra_data": s.extra_data,
+                    "shots": [
+                        {
+                            "shot_id": shot.shot_id,
+                            "shot_number": shot.shot_number,
+                            "title": shot.title,
+                            "description": shot.description,
+                            "narration": shot.narration,
+                            "image_url": shot.image_url,
+                            "video_url": shot.video_url,
+                            "status": shot.status,
+                            "extra_data": shot.extra_data,
+                        }
+                        for shot in (s.shots or [])
+                    ],
                 }
                 for s in (creation_with_relations.scenes or [])
             ],

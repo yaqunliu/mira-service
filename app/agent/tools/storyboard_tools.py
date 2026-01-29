@@ -7,8 +7,9 @@ from typing import Dict, Any, List
 from app.agent.tools.base import CeleryTaskTool
 from app.agent.state.schemas import ComicDramaState
 from app.tasks.shot_task import (
-    batch_generate_shot_images_task,
-    generate_single_shot_image_task
+    generate_shots_by_ids_task,
+    generate_single_shot_image_task,
+    generate_creation_shots_task
 )
 from app.core.logger import logger
 
@@ -17,7 +18,7 @@ class BatchShotImageGenerationTool(CeleryTaskTool):
     """
     批量分镜图片生成工具
 
-    调用 batch_generate_shot_images_task 并发生成多个分镜的图片
+    调用 generate_shots_by_ids_task 或 generate_creation_shots_task 并发生成多个分镜的图片
     """
 
     @property
@@ -33,7 +34,7 @@ class BatchShotImageGenerationTool(CeleryTaskTool):
         )
 
     def get_celery_task(self):
-        return batch_generate_shot_images_task
+        return generate_creation_shots_task
 
     def get_task_params(
         self,
@@ -49,13 +50,22 @@ class BatchShotImageGenerationTool(CeleryTaskTool):
         """
         creation_uuid = state.get("creation_uuid")
 
-        from app.models.creation import Creation
-        creation = self.db.query(Creation).filter(
-            Creation.uuid == creation_uuid
-        ).first()
+        # 从 kwargs 中获取 creation_id（如果已经传入）
+        creation_id = kwargs.get("creation_id")
 
-        if not creation:
-            raise ValueError(f"创作项目不存在: {creation_uuid}")
+        if not creation_id:
+            # 使用同步数据库会话获取 creation_id
+            from app.db.session import SessionLocal
+            from app.models.creation import Creation
+
+            with SessionLocal() as db:
+                creation = db.query(Creation).filter(
+                    Creation.uuid == creation_uuid
+                ).first()
+
+                if not creation:
+                    raise ValueError(f"创作项目不存在: {creation_uuid}")
+                creation_id = creation.creation_id
 
         # 提取分镜 ID 列表（如果有指定）
         shot_ids = kwargs.get("shot_ids")
@@ -63,12 +73,12 @@ class BatchShotImageGenerationTool(CeleryTaskTool):
         frame_type = kwargs.get("frame_type", "both")  # "start", "end", "both"
 
         logger.info(
-            f"准备批量生成分镜图片, creation_id={creation.creation_id}, "
+            f"准备批量生成分镜图片, creation_id={creation_id}, "
             f"shot_ids={shot_ids}, frame_type={frame_type}"
         )
 
         task_kwargs = {
-            "creation_id": creation.creation_id,
+            "creation_id": creation_id,
             "force_regen_prompt": force_regen_prompt,
             "frame_type": frame_type
         }
@@ -124,13 +134,22 @@ class SingleShotImageGenerationTool(CeleryTaskTool):
         if not shot_id:
             raise ValueError("必须提供 shot_id 参数")
 
-        from app.models.creation import Creation
-        creation = self.db.query(Creation).filter(
-            Creation.uuid == creation_uuid
-        ).first()
+        # 从 kwargs 中获取 creation_id（如果已经传入）
+        creation_id = kwargs.get("creation_id")
 
-        if not creation:
-            raise ValueError(f"创作项目不存在: {creation_uuid}")
+        if not creation_id:
+            # 使用同步数据库会话获取 creation_id
+            from app.db.session import SessionLocal
+            from app.models.creation import Creation
+
+            with SessionLocal() as db:
+                creation = db.query(Creation).filter(
+                    Creation.uuid == creation_uuid
+                ).first()
+
+                if not creation:
+                    raise ValueError(f"创作项目不存在: {creation_uuid}")
+                creation_id = creation.creation_id
 
         frame_type = kwargs.get("frame_type", "both")
 
@@ -138,7 +157,7 @@ class SingleShotImageGenerationTool(CeleryTaskTool):
             "args": [],
             "kwargs": {
                 "shot_id": shot_id,
-                "creation_id": creation.creation_id,
+                "creation_id": creation_id,
                 "frame_type": frame_type
             },
             "options": {},

@@ -193,3 +193,4 @@ htmlcov/
 test.ipynb
 note.md
 cert/*
+chroma_db/
