@@ -202,7 +202,10 @@ class NovelAsyncService:
         根据 UUID 获取小说
         """
         result = await db.execute(
-            select(Novel).where(Novel.uuid == novel_uuid)
+            select(Novel).where(Novel.uuid == novel_uuid).options(
+                selectinload(Novel.characters),
+                selectinload(Novel.creations)
+            )
         )
         novel = result.scalar_one_or_none()
         
