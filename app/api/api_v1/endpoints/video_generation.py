@@ -18,6 +18,7 @@ class CreateVideoRequest(BaseModel):
     novel_id: int
     chapter_id: Optional[int] = None
     input_text: Optional[str] = None
+    style: Optional[str] = None
 
 
 @router.post("/v2/create")
@@ -36,9 +37,22 @@ async def create_video_generation_task(
     input_text = request.input_text
     
     if request.chapter_id and not input_text:
-        from app.services.novel_service import NovelService
+        from app.services.novel_async_service import NovelAsyncService
+        from app.services.novel_async_service import ChapterAsyncService
         try:
-            chapter = await NovelService.get_chapter_by_id_service(db, request.novel_id, request.chapter_id, current_user.user_id)
+            novel = await NovelAsyncService.get_novel_by_id(db, request.novel_id)
+            if not novel:
+                raise HTTPException(status_code=400, detail="小说不存在")
+            
+            if novel.owner_id != current_user.user_id:
+                raise HTTPException(status_code=403, detail="无权限访问该小说")
+            
+            chapter = await ChapterAsyncService.get_chapter_by_id(db, request.chapter_id)
+            if not chapter:
+                raise HTTPException(status_code=400, detail="章节不存在")
+            
+            logger.info(f"章节信息: chapter_id={chapter.chapter_id}, content_url={chapter.content_url}")
+            
             if chapter.content_url:
                 if chapter.content_url.startswith("http"):
                     import tempfile
@@ -57,6 +71,7 @@ async def create_video_generation_task(
                         if download_result.get('success'):
                             with open(temp_save_path, "r", encoding="utf-8") as f:
                                 input_text = f.read()
+                            logger.info(f"成功从 US3 下载章节内容，长度: {len(input_text)}")
                         else:
                             raise Exception(f"Download failed: {download_result.get('message')}")
                                 
@@ -67,27 +82,35 @@ async def create_video_generation_task(
                 elif Path(chapter.content_url).exists():
                     with open(chapter.content_url, "r", encoding="utf-8") as f:
                         input_text = f.read()
+                    logger.info(f"成功从本地文件读取章节内容，长度: {len(input_text)}")
+            else:
+                logger.warning(f"章节 content_url 为空: chapter_id={chapter.chapter_id}")
             
             if not input_text:
-                raise HTTPException(status_code=400, detail="无法获取章节内容")
+                logger.error(f"无法获取章节内容: chapter_id={chapter.chapter_id}, content_url={chapter.content_url}")
+                raise HTTPException(status_code=400, detail="无法获取章节内容，章节内容为空")
                 
+        except HTTPException:
+            raise
         except Exception as e:
+            logger.error(f"获取章节失败: {str(e)}", exc_info=True)
             raise HTTPException(status_code=400, detail=f"获取章节失败: {str(e)}")
 
     if not input_text:
         raise HTTPException(status_code=400, detail="文案内容不能为空")
 
-    from app.services.novel_service import NovelService
     creation_title = f"Creation for {task_id}"
 
     try:
-        novel = await NovelService.get_novel_by_id_service(db, request.novel_id, current_user.user_id)
+        from app.services.novel_async_service import NovelAsyncService
+        from app.services.novel_async_service import ChapterAsyncService
+        novel = await NovelAsyncService.get_novel_by_id(db, request.novel_id)
         if novel:
             novel_title = novel.title or "Untitled Novel"
 
             if request.chapter_id:
                 try:
-                    chapter = await NovelService.get_chapter_by_id_service(db, request.novel_id, request.chapter_id, current_user.user_id)
+                    chapter = await ChapterAsyncService.get_chapter_by_id(db, request.chapter_id)
                     chapter_title = chapter.title or f"Chapter {request.chapter_id}"
                     creation_title = f"{novel_title} - {chapter_title}"
                 except:
@@ -96,6 +119,26 @@ async def create_video_generation_task(
                 creation_title = novel_title
     except:
         pass
+
+    from sqlalchemy import select
+    from app.models.creation import Creation
+
+    if request.chapter_id:
+        result = await db.execute(
+            select(Creation).where(
+                Creation.novel_id == request.novel_id,
+                Creation.chapter_id == request.chapter_id,
+                Creation.deleted_at.is_(None)
+            )
+        )
+        existing_creation = result.scalar_one_or_none()
+        if existing_creation:
+            logger.info(f"章节已存在创作记录，直接返回: creation_id={existing_creation.creation_id}")
+            return {
+                "task_id": existing_creation.uuid,
+                "status": existing_creation.status,
+                "creation_id": existing_creation.creation_id
+            }
 
     temp_dir = Path(settings.UPLOAD_DIR) / "temp_tasks"
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -116,7 +159,8 @@ async def create_video_generation_task(
         chapter_id=request.chapter_id or 0,
         status="draft",
         current_task_id=task_id,
-        creation_type="chapter" if request.chapter_id else "script"
+        creation_type="chapter" if request.chapter_id else "script",
+        extra_data={"style": request.style} if request.style else None
     )
     db.add(new_creation)
     await db.commit()

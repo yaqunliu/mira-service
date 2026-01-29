@@ -277,7 +277,8 @@ class CreationAsyncService:
             )
             existing = result.scalar_one_or_none()
             if existing:
-                raise AlreadyExistsError(detail="该章节已存在创作记录")
+                logger.info(f"章节已存在创作记录，直接返回: creation_id={existing.creation_id}")
+                return existing.creation_id
         
         creation_extra_data = extra_data or {}
         if narration_mode:

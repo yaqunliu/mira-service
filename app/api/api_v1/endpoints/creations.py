@@ -370,6 +370,40 @@ async def update_creation(
         raise HTTPException(status_code=500, detail="更新创作失败")
 
 
+@router.put("/{creation_uuid}")
+async def put_creation(
+    creation_uuid: str,
+    update_data: CreationUpdate,
+    db: AsyncSession = Depends(get_async_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    更新创作（PUT方法，支持更新timeline_config等字段）
+    """
+    creation = await CreationAsyncService.get_creation_by_uuid(db, creation_uuid)
+    
+    if not creation:
+        raise HTTPException(status_code=404, detail="创作不存在")
+    
+    if creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权修改此创作")
+    
+    update_dict = update_data.model_dump(exclude_unset=True)
+    updated = await CreationAsyncService.update_creation(
+        db,
+        creation.creation_id,
+        **update_dict
+    )
+    
+    if updated:
+        return success_response(
+            data={"creation_id": updated.creation_id, "uuid": updated.uuid},
+            message="更新创作成功"
+        )
+    else:
+        raise HTTPException(status_code=500, detail="更新创作失败")
+
+
 @router.get("/{creation_uuid}/progress")
 async def get_creation_progress(
     creation_uuid: str,
