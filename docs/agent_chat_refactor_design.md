@@ -265,20 +265,65 @@ async def agent_chat(...):
 - Agent 内部处理所有逻辑：意图识别、任务执行、状态查询、持久化、错误重试
 - 兼容同步/异步调用（Agent 内部统一处理）
 
+#### 3.1.1 ComicDramaState 完整定义
+
+```python
+from typing import TypedDict, Optional, List, Dict, Any
+from langgraph.graph import MessagesState
+
+class ComicDramaState(TypedDict, total=False):
+    """漫剧创作 Graph 状态定义"""
+    
+    # === 对话相关 ===
+    user_message: str                     # 当前用户消息
+    messages: List[Dict[str, Any]]        # 对话历史（LangChain BaseMessage 格式）
+    
+    # === 意图识别结果 ===
+    detected_intent: str                  # 具体意图: analyze_character, generate_video...
+    intent_category: str                  # 意图分类: task_intent, status_query, asset_action
+    intent_confidence: float              # 置信度 0.0-1.0
+    intent_details: Dict[str, Any]        # 意图详情: {"target": "character_1", "action": "regenerate"}
+    
+    # === 用户 Action（Human Review 响应）===
+    user_action: Optional[str]            # approve, reject, modify
+    user_action_data: Optional[Dict]      # action 附加数据
+    pending_action: Optional[str]         # 待处理的 action
+    
+    # === 业务数据引用 ===
+    creation_uuid: str                    # 创作项目 UUID
+    current_stage: str                    # 当前阶段: init, script_analysis, asset_generation...
+    current_assets: Dict[str, Any]        # 当前资产状态快照
+    
+    # === 业务执行结果 ===
+    characters: List[Dict[str, Any]]      # 角色列表
+    scenes: List[Dict[str, Any]]          # 场景列表
+    storyboards: List[Dict[str, Any]]     # 分镜列表
+    generated_assets: List[Dict]          # 本次生成的资产
+    tool_results: List[Dict]              # Tool 调用结果
+    
+    # === 流程控制 ===
+    next_node: Optional[str]              # 下一个节点（用于动态路由）
+    pending_human_review: Optional[Dict]  # 等待人工审核的数据
+    
+    # === 错误处理 ===
+    errors: List[Dict[str, Any]]          # 错误列表
+    retry_count: int                      # 当前重试次数
+```
+
 ---
 
 ### 3.2 Graph 节点设计
 
-#### 3.2.1 双层架构
+#### 3.2.1 双层架构（子图调用模式）
 
-Graph 采用 **对话调度层 + 业务执行层** 的双层架构：
+> ⚠️ **调用模式**：对话调度层通过 **子图调用（Subgraph Invocation）** 触发业务执行层
 
 ```
 用户消息
     │
     ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    对话调度层 (新增)                             │
+│                    对话调度层 (主图)                             │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │   entry → intent_detection → router                             │
@@ -287,37 +332,67 @@ Graph 采用 **对话调度层 + 业务执行层** 的双层架构：
 │          ▼                      ▼                      ▼        │
 │    status_query          task_execution            clarify      │
 │          │                      │                      │        │
-│          └──────────────────────┼──────────────────────┘        │
+│          │          ┌───────────┴───────────┐          │        │
+│          │          ▼                       ▼          │        │
+│          │   invoke_subgraph()         call_tool()     │        │
+│          │          │                       │          │        │
+│          │          ▼                       │          │        │
+│          │  ┌───────────────┐               │          │        │
+│          │  │ 业务执行子图   │◄──────────────┤          │        │
+│          │  └───────┬───────┘               │          │        │
+│          │          │                       │          │        │
+│          └──────────┴───────────────────────┴──────────┘        │
+│                                 │                               │
 │                                 ▼                               │
 │                        response_formatter                       │
-│                                                                 │
 └─────────────────────────────────────────────────────────────────┘
-                                  │
-                                  │ 调用业务节点 / Tool
-                                  ▼
+
 ┌─────────────────────────────────────────────────────────────────┐
-│                    业务执行层 (保留现有)                         │
+│                    业务执行层 (子图)                             │
 ├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
 │   production_manager → asset_generation → storyboard_creation   │
 │                              ↓                                  │
 │         human_review ← audio_processing ← video_generation      │
 │              ↓                                                  │
 │           editing → completed                                   │
-│                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-#### 3.2.2 两层职责对比
+#### 3.2.2 子图调用实现
 
-| 维度 | 对话调度层 | 业务执行层 |
+```python
+from langgraph.graph import StateGraph
+
+# 定义业务执行子图
+execution_subgraph = build_execution_subgraph().compile()
+
+async def task_execution_node(state: ComicDramaState) -> ComicDramaState:
+    """任务执行节点 - 根据意图调用子图或 Tool"""
+    intent = state["detected_intent"]
+    
+    if intent in ["auto_create", "generate_all"]:
+        # 调用完整业务执行子图
+        result = await execution_subgraph.ainvoke(state)
+        return result
+    
+    elif intent.startswith("generate_"):
+        # 直接调用单个生成 Tool
+        tool_result = await call_generation_tool(intent, state)
+        return {**state, "tool_result": tool_result}
+    
+    return state
+```
+
+#### 3.2.3 两层职责对比
+
+| 维度 | 对话调度层（主图） | 业务执行层（子图） |
 |------|-----------|-----------|
 | **定位** | 处理用户对话 | 执行创作任务 |
-| **触发** | 用户消息触发 | 按创作流程推进 |
-| **状态** | 短周期（单次对话） | 长周期（整个创作过程） |
-| **节点来源** | 新增 | 保留现有 |
+| **触发** | 用户消息触发 | 主图 `task_execution` 调用 |
+| **状态** | 共享 `ComicDramaState` | 共享 `ComicDramaState` |
+| **中断点** | - | `human_review` 节点 |
 
-#### 3.2.3 对话调度层节点（新增）
+#### 3.2.4 对话调度层节点（新增）
 
 | 节点名 | 类型 | 职责 |
 |--------|------|------|
@@ -329,7 +404,7 @@ Graph 采用 **对话调度层 + 业务执行层** 的双层架构：
 | `clarify` | LLM | 生成引导性回复 |
 | `response_formatter` | 格式化 | 统一输出格式 |
 
-#### 3.2.4 业务执行层节点（保留现有）
+#### 3.2.5 业务执行层节点（保留现有）
 
 > ⚠️ **重要原则**：所有节点只做 **协调和决策**，不直接执行操作。  
 > 具体操作必须通过 **Tool 调用** 或 **LLM 思考** 来完成。
@@ -345,7 +420,7 @@ Graph 采用 **对话调度层 + 业务执行层** 的双层架构：
 | `human_review` | 中断 | 等待用户审核确认 | - |
 | `error_handler` | LLM | 错误分析和恢复决策 | - |
 
-#### 3.2.5 节点设计原则
+#### 3.2.6 节点设计原则
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -367,7 +442,7 @@ Graph 采用 **对话调度层 + 业务执行层** 的双层架构：
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-#### 3.2.6 调用关系示例
+#### 3.2.7 调用关系示例
 
 ```python
 # ❌ 错误示例：节点直接执行操作
@@ -394,7 +469,7 @@ async def asset_generation_node_correct(state: ComicDramaState):
     return state
 ```
 
-#### 3.2.6 对话调度层流转图
+#### 3.2.8 对话调度层流转图
 
 ```
                               ┌─────────────────┐
@@ -432,7 +507,7 @@ async def asset_generation_node_correct(state: ComicDramaState):
                               └─────────────────┘
 ```
 
-#### 3.2.3 意图识别节点详细设计
+#### 3.2.9 意图识别节点详细设计
 
 **输入**:
 - `state.user_message`: 用户当前消息
@@ -476,6 +551,122 @@ other:
 └── unknown               # 未知
 ```
 
+#### 3.2.10 Router 路由规则
+
+| 条件 | 目标节点 | 说明 |
+|------|----------|------|
+| `intent_category == "status_query"` | `status_query` | 状态查询分支 |
+| `intent_category == "task_intent" && confidence > 0.8` | `task_execution` | 高置信度任务执行 |
+| `intent_category == "task_intent" && confidence <= 0.8` | `clarify` | 低置信度需确认 |
+| `intent_category == "asset_action"` | `task_execution` | 资产操作 |
+| `intent_category in ["confirm", "cancel"]` | `task_execution` | 用户确认/取消 |
+| `intent_category == "unknown"` | `clarify` | 未知意图引导 |
+
+```python
+def router_node(state: ComicDramaState) -> str:
+    """路由节点 - 根据意图分发到不同节点"""
+    intent = state["intent_category"]
+    confidence = state.get("intent_confidence", 0)
+    
+    if intent == "status_query":
+        return "status_query"
+    
+    if intent == "task_intent":
+        return "task_execution" if confidence > 0.8 else "clarify"
+    
+    if intent in ["asset_action", "confirm", "cancel"]:
+        return "task_execution"
+    
+    return "clarify"
+```
+
+#### 3.2.11 Human Review 交互流程
+
+> ⚠️ **核心机制**：用户通过 Chat 消息（带 action）与 Human Review 节点交互
+
+**触发 Human Review 的场景**：
+1. 资产生成完成后（角色/场景图片）
+2. 分镜拆分完成后
+3. 批量生成分镜图/视频前
+
+**用户交互流程**：
+
+```
+1. 子图到达 human_review 节点
+       │
+       ▼
+2. 保存 Checkpoint，流程暂停，SSE 发送等待审核消息
+       │
+       ▼
+3. 用户通过 Chat 发送消息（带 action 字段）
+   ├── action: "approve"  → 批准继续
+   ├── action: "reject"   → 拒绝，返回重做
+   └── action: "modify"   → 修改后继续
+       │
+       ▼
+4. Agent 从 Checkpoint 恢复，entry 节点识别 action
+       │
+       ▼
+5. intent_detection 识别为 confirm/cancel/asset_action
+       │
+       ▼
+6. router 路由到 task_execution
+       │
+       ▼
+7. task_execution 恢复子图，从中断点继续
+```
+
+**Chat 消息格式**：
+
+```json
+// 批准
+{
+  "message": "确认，继续下一步",
+  "action": "approve",
+  "action_data": {}
+}
+
+// 拒绝重做
+{
+  "message": "角色1不满意，重新生成",
+  "action": "reject",
+  "action_data": {
+    "target": "character_1",
+    "reason": "表情不自然"
+  }
+}
+
+// 修改后继续
+{
+  "message": "已修改提示词，重新生成角色1",
+  "action": "modify",
+  "action_data": {
+    "target": "character_1",
+    "changes": {"prompt": "新的提示词..."}
+  }
+}
+```
+
+**Agent 恢复逻辑**：
+
+```python
+async def entry_node(state: ComicDramaState) -> ComicDramaState:
+    """入口节点 - 处理用户消息和 action"""
+    user_message = state["user_message"]
+    action = state.get("user_action")  # 从请求中提取
+    
+    if action:
+        # 有 action 表示是 Human Review 响应
+        state["pending_action"] = action
+        state["pending_action_data"] = state.get("user_action_data", {})
+    
+    # Agent 每次初始化时，调用 Tool 查询最新资产状态
+    assets_status = await query_assets_tool.invoke(state["creation_uuid"])
+    state["current_assets"] = assets_status
+    
+    return state
+```
+
 ---
 
 ### 3.3 Tools 设计
@@ -501,25 +692,75 @@ other:
 | | `extract_characters` | 提取角色 |
 | | `extract_scenes` | 提取场景 |
 
-#### 3.3.2 Tool 与 Celery 的关系
+#### 3.3.2 Tool 执行模式
+
+> ⚠️ **核心原则**：快速任务同步执行，耗时任务异步轮询
+
+**模式分类**：
+
+| 模式 | 适用场景 | Tool 示例 |
+|------|----------|-----------|
+| **同步** | 快速任务（< 3秒） | `query_*`, `update_*`, `analyze_*` |
+| **异步** | 耗时任务（生图/生视频） | `generate_character_image`, `generate_video` |
+
+**同步模式**（DB 操作、分析类）：
+```python
+async def query_characters_tool(creation_uuid: str) -> list:
+    """同步查询 - 直接返回结果"""
+    characters = await db.query(Character).filter(...).all()
+    return characters
+```
+
+**异步模式**（生成类）：
+```python
+async def generate_character_image_tool(
+    character_id: str,
+    state: ComicDramaState
+) -> AsyncIterator[dict]:
+    """异步生成 - 轮询进度，发送 SSE 事件"""
+    
+    # 1. 启动 Celery 任务
+    task = generate_character_image_task.delay(character_id)
+    
+    # 2. 发送开始事件
+    yield {"event": "tool.start", "tool_name": "generate_character_image", "task_id": task.id}
+    
+    # 3. 轮询等待完成
+    while not task.ready():
+        status = task.info or {}
+        yield {
+            "event": "tool.progress",
+            "task_id": task.id,
+            "status": "running",
+            "progress": status.get("progress", 0)
+        }
+        await asyncio.sleep(2)  # 每 2 秒检查一次
+    
+    # 4. 获取结果
+    if task.successful():
+        result = task.get()
+        yield {"event": "tool.end", "status": "success", "result": result}
+        return result
+    else:
+        error = str(task.result)
+        yield {"event": "tool.end", "status": "failed", "error": error}
+        raise ToolError(error)
+```
+
+**Tool 与 Celery 调用关系**：
 
 ```
-Tool 调用流程:
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │   Graph 节点    │ ──▶ │   Tool 函数     │ ──▶ │   Celery 任务   │
 │                 │     │                 │     │                 │
 │ task_execution  │     │ generate_xxx()  │     │ xxx_task.delay()│
 └─────────────────┘     └────────┬────────┘     └────────┬────────┘
                                  │                       │
-                                 ▼                       ▼
-                        返回 task_id              异步执行生成
-                        更新 state                返回结果/回调
+                        ┌────────▼────────┐              │
+                        │  同步:直接返回   │              │
+                        │  异步:轮询进度   │◄─────────────┘
+                        └─────────────────┘
 ```
-
-**说明**:
-- Tool 是 Graph 节点调用的接口
-- Tool 内部可以调用 Celery 任务进行异步处理
-- Celery 任务保留现有实现，只是被 Tool 封装
 
 ---
 
@@ -601,7 +842,9 @@ NODE_VISIBILITY = {
     # 对话调度层 - 用户可见
     "entry": "user",
     "intent_detection": "user",
+    "router": "internal",           # 路由逻辑不展示
     "status_query": "user",
+    "task_execution": "user",
     "clarify": "user",
     "response_formatter": "user",
     
@@ -613,6 +856,8 @@ NODE_VISIBILITY = {
     "video_generation": "internal",
     "editing": "internal",
     "director": "internal",
+    "human_review": "user",         # 等待审核消息需展示
+    "error_handler": "user",        # 错误消息需展示
 }
 
 # visibility 值说明
@@ -638,17 +883,26 @@ data: {json_payload}
 }
 ```
 
-#### 3.5.5 LangGraph 到 SSE 的转换
+#### 3.5.5 LangGraph 到 SSE 的转换（Batch 持久化）
+
+> ⚠️ **持久化策略**：SSE 流式发送，但持久化采用 **batch 模式**，在流结束后一次性写入
 
 ```python
 async def langgraph_to_sse(
     graph,
     input_state: dict,
+    session_id: str,
     is_streaming: bool = True
 ) -> AsyncIterator[str]:
-    """将 LangGraph 输出转换为 SSE 事件流"""
+    """将 LangGraph 输出转换为 SSE 事件流，batch 持久化"""
     
     message_id = generate_id()
+    
+    # 累积器：thinking 和 content 分开存储
+    thinking_chunks: list[str] = []
+    content_chunks: list[str] = []
+    current_node: str = ""
+    is_thinking: bool = False
     
     # 发送消息开始
     if is_streaming:
@@ -662,19 +916,29 @@ async def langgraph_to_sse(
         node = metadata.get("langgraph_node")
         visibility = NODE_VISIBILITY.get(node, "internal")
         layer = "dispatch" if node in DISPATCH_NODES else "execution"
+        tags = metadata.get("tags", [])
         
-        # 1. 持久化（所有消息都写入）
-        await persist_message(
-            message_id=message_id,
-            content=chunk.content,
-            node=node,
-            visibility=visibility,
-            metadata=metadata
-        )
+        # 判断是否为 thinking 节点
+        is_thinking_node = "thinking" in tags or node in ["intent_detection"]
         
-        # 2. SSE 发送（只发送用户可见的）
+        # 节点切换时，发送 thinking.start/end
+        if is_thinking_node != is_thinking:
+            if is_thinking_node:
+                yield format_sse("thinking.start", {"id": message_id})
+            elif is_thinking:  # 从 thinking 切换到非 thinking
+                yield format_sse("thinking.end", {"id": message_id})
+            is_thinking = is_thinking_node
+        
+        # 累积内容（用于 batch 持久化）
+        if chunk.content:
+            if is_thinking_node:
+                thinking_chunks.append(chunk.content)
+            else:
+                content_chunks.append(chunk.content)
+        
+        # SSE 发送（只发送用户可见的）
         if is_streaming and visibility == "user" and chunk.content:
-            event_type = get_event_type(node, metadata)
+            event_type = "thinking.delta" if is_thinking_node else "message.delta"
             yield format_sse(event_type, {
                 "id": message_id,
                 "content": chunk.content,
@@ -682,7 +946,7 @@ async def langgraph_to_sse(
                 "layer": layer
             })
         
-        # 3. 处理工具调用
+        # 处理工具调用
         if chunk.tool_call_chunks:
             for tool_chunk in chunk.tool_call_chunks:
                 yield format_sse("tool.progress", {
@@ -690,6 +954,12 @@ async def langgraph_to_sse(
                     "tool_name": tool_chunk.get("name"),
                     "status": "running"
                 })
+        
+        current_node = node
+    
+    # 如果还在 thinking 状态，发送结束
+    if is_thinking:
+        yield format_sse("thinking.end", {"id": message_id})
     
     # 发送消息结束
     if is_streaming:
@@ -698,19 +968,16 @@ async def langgraph_to_sse(
             "finish_reason": "stop"
         })
     
+    # Batch 持久化：thinking 和 content 分字段写入
+    await persist_agent_message(
+        session_id=session_id,
+        message_id=message_id,
+        thinking_content="".join(thinking_chunks),  # 写入 thinking 字段
+        message_content="".join(content_chunks),    # 写入 content 字段
+        node=current_node
+    )
+    
     yield format_sse("done", {})
-
-
-def get_event_type(node: str, metadata: dict) -> str:
-    """根据节点和元数据确定事件类型"""
-    tags = metadata.get("tags", [])
-    
-    # 如果是思考类节点
-    if "thinking" in tags or node in ["intent_detection", "router"]:
-        return "thinking.delta"
-    
-    # 默认是消息类
-    return "message.delta"
 
 
 def format_sse(event: str, data: dict) -> str:
@@ -725,11 +992,17 @@ def format_sse(event: str, data: dict) -> str:
 event: message.start
 data: {"id": "msg_001"}
 
+event: thinking.start
+data: {"id": "msg_001"}
+
 event: thinking.delta
 data: {"id": "msg_001", "content": "分析用户意图...", "node": "intent_detection"}
 
 event: thinking.delta
 data: {"id": "msg_001", "content": "用户想查询角色状态", "node": "intent_detection"}
+
+event: thinking.end
+data: {"id": "msg_001"}
 
 event: message.delta
 data: {"id": "msg_001", "content": "好的", "node": "status_query"}
@@ -888,6 +1161,60 @@ class ToolCallLog(Base):
 > - 新消息到达时，若实例不存在，则从 Checkpoint **恢复**
 >
 > **注：不是"强制销毁"，而是 Workflow 走完后自然结束，实例被 GC 回收。**
+
+**Checkpoint 存在的意义**：
+
+| 作用 | 说明 |
+|------|------|
+| **断点恢复** | Human Review 中断后，能从上次位置继续执行 |
+| **服务重启** | 服务重启后不丢失进度，可恢复工作流 |
+| **调试回溯** | 可查看工作流在某个时间点的完整状态 |
+| **容错备份** | 节点执行失败时，可从上一个 Checkpoint 重试 |
+
+> 💡 **与 agent_messages 的关系**：
+> - `agent_messages`：存储**对话内容**（用户看到的消息）
+> - `checkpoints`：存储**工作流状态**（Graph 执行位置、中间变量）
+> - 两者互补，Checkpoint 不能替代消息持久化
+
+**Checkpoint 保存失败处理**：
+
+```python
+async def save_with_retry(session_id: str, state: dict, max_retries: int = 3):
+    """Checkpoint 保存失败重试逻辑"""
+    for attempt in range(max_retries):
+        try:
+            await checkpointer.aput(session_id, state)
+            return True
+        except Exception as e:
+            if attempt < max_retries - 1:
+                await asyncio.sleep(1)  # 等待后重试
+            else:
+                logger.error(f"Checkpoint 保存失败（已重试 {max_retries} 次）: {e}")
+                # 记录错误但不阻塞流程，消息已写入 agent_messages
+                return False
+```
+
+**恢复时 Merge 逻辑**：
+
+```python
+async def restore_state(session_id: str) -> ComicDramaState:
+    """从 Checkpoint 和 agent_messages 恢复状态"""
+    
+    # 1. 尝试从 Checkpoint 恢复
+    checkpoint = await checkpointer.aget(session_id)
+    
+    # 2. 从 agent_messages 获取最新消息
+    messages = await get_session_messages(session_id)
+    
+    if checkpoint:
+        state = checkpoint["values"]
+        # 以 agent_messages 为主，补充最新消息
+        state["messages"] = messages
+        return state
+    else:
+        # 无 Checkpoint，创建初始状态
+        return {"messages": messages, ...}
+```
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -1219,7 +1546,9 @@ pytest tests/agent/test_sse_output.py -v
   2. **分镜拆分后** - 分镜分析完成后
   3. **分镜图/视频生成前** - 开始生成分镜图片或视频前
 
-### 7.3 错误重试策略
+### 7.3 错误处理策略
+
+#### 7.3.1 自动重试
 
 - **决策**: 自动重试 3 次，失败后触发 Human Review
 - **实现**:
@@ -1234,6 +1563,53 @@ pytest tests/agent/test_sse_output.py -v
               return {"status": "failed", "need_human_review": True, "error": str(e)}
           await asyncio.sleep(1)  # 等待1秒后重试
   ```
+
+#### 7.3.2 错误信息展示
+
+错误通过 SSE `error` 事件发送给前端：
+
+```json
+{
+  "event": "error",
+  "data": {
+    "error": "角色图片生成失败：服务超时",
+    "code": "GENERATION_TIMEOUT",
+    "recoverable": true,
+    "context": {
+      "node": "asset_generation",
+      "target": "character_1",
+      "attempt": 3
+    },
+    "suggested_actions": ["retry", "skip", "modify_prompt"]
+  }
+}
+```
+
+#### 7.3.3 用户操作选项
+
+| 操作 | 说明 | 触发方式 |
+|------|------|----------|
+| **重试** | 使用相同参数重新执行 | `action: "retry"` |
+| **跳过** | 跳过当前步骤继续流程 | `action: "skip"` |
+| **修改后重试** | 修改参数后重新执行 | `action: "modify"` + 新参数 |
+| **终止** | 停止整个流程 | `action: "abort"` |
+
+**前端 UI 示例**：
+```
+❌ 角色图片生成失败：服务超时
+
+请选择操作：
+[重新生成] [跳过此角色] [修改提示词] [终止任务]
+```
+
+#### 7.3.4 错误分类
+
+| 错误类型 | 是否可恢复 | 默认处理 |
+|----------|-----------|----------|
+| 网络超时 | ✅ | 自动重试 3 次 |
+| 服务不可用 | ✅ | 自动重试后 Human Review |
+| 参数错误 | ❌ | 直接 Human Review |
+| 配额耗尽 | ❌ | 通知用户充值 |
 
 ### 7.4 并行生成控制
 
@@ -1264,5 +1640,6 @@ pytest tests/agent/test_sse_output.py -v
 > **文档维护**: 技术团队  
 > **最后更新**: 2026-01-29  
 > **版本历史**:
+> - v1.2 (2026-01-29): 补充子图调用模式、Router 路由规则、Human Review 交互流程、Checkpoint 机制说明、ComicDramaState 定义、错误处理策略、batch 持久化
 > - v1.1 (2026-01-29): 确认设计决策，更新架构图
 > - v1.0 (2026-01-29): 初稿
