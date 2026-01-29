@@ -107,6 +107,21 @@ class ComicDramaState(TypedDict, total=False):
     thread_id: str  # LangGraph thread_id（用于 Checkpointer）
     user_id: int  # 用户 ID
 
+    # ==================== 对话相关（新增） ====================
+    user_message: Optional[str]  # 当前用户消息
+    messages: List[Dict[str, Any]]  # 对话历史（LangChain BaseMessage 格式）
+    
+    # 意图识别结果
+    detected_intent: Optional[str]  # 具体意图: analyze_character, generate_video...
+    intent_category: Optional[str]  # 意图分类: task_intent, status_query, asset_action
+    intent_confidence: float  # 置信度 0.0-1.0
+    intent_details: Optional[Dict[str, Any]]  # 意图详情: {"target": "character_1", "action": "regenerate"}
+    
+    # 用户 Action（Human Review 响应）
+    user_action: Optional[str]  # approve, reject, modify
+    user_action_data: Optional[Dict[str, Any]]  # action 附加数据
+    pending_action: Optional[str]  # 待处理的 action
+
     # ==================== 输入数据 ====================
     script_text: Optional[str]  # 原始剧本文本（用户上传或输入）
     script_url: Optional[str]  # 剧本文件 URL（US3）

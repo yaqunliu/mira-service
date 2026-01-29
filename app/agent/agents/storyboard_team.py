@@ -8,10 +8,9 @@ from typing import Dict, Any, List, Optional
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from app.agent.state.schemas import ComicDramaState
-from app.agent.tools.generation_tools import (
-    GenerateStoryboardImageTool,
-    GeneratePromptTool
-)
+# 使用新的 LangChain @tool 函数
+from app.agent.tools.agent_generation_tools import generate_shot_image
+from app.agent.tools.analysis_tools import generate_image_prompt
 from app.core.logger import logger
 from app.core.config import settings
 import json
@@ -20,16 +19,16 @@ import json
 class StoryboardTeam:
     """分镜团队"""
     
-    def __init__(self):
+    def __init__(self, creation_uuid: str = ""):
         """初始化分镜团队"""
+        self.creation_uuid = creation_uuid
         self.llm = ChatOpenAI(
             model=settings.LLM_MODEL_SCENE_ANALYSIS,
             api_key=settings.OPENAI_API_KEY,
             base_url=settings.OPENAI_BASE_URL,
             temperature=0.4
         )
-        self.generate_image_tool = GenerateStoryboardImageTool()
-        self.generate_prompt_tool = GeneratePromptTool()
+        # 不再实例化旧的 Tool 类，而是使用导入的 @tool 函数
         logger.info("分镜团队初始化完成")
     
     async def create_storyboards(
@@ -151,6 +150,7 @@ class StoryboardTeam:
             生成结果
         """
         storyboards = state.get("storyboards", [])
+        creation_uuid = state.get("creation_uuid", self.creation_uuid)
         
         if not storyboards:
             return {"success": False, "error": "没有分镜数据"}
@@ -174,25 +174,29 @@ class StoryboardTeam:
             try:
                 description = sb.get("description", "")
                 action = sb.get("action", "")
-                
                 full_description = f"{description} {action}"
                 
-                # 生成优化的提示词
-                prompt_result = await self.generate_prompt_tool.execute(
-                    state=state,
-                    description=full_description,
-                    prompt_type="image"
-                )
+                # 使用新的 @tool 函数生成优化的提示词
+                prompt_result = await generate_image_prompt.ainvoke({
+                    "description": full_description,
+                    "style": state.get("style", {}),
+                })
                 
-                if prompt_result.get("success"):
-                    image_result = await self.generate_image_tool.execute(
-                        state=state,
-                        storyboard_description=prompt_result.get("prompt", full_description)
-                    )
+                if prompt_result.get("status") == "success":
+                    enhanced_prompt = prompt_result.get("prompt", full_description)
                     
-                    if image_result.get("success"):
+                    # 使用新的 @tool 函数生成图片
+                    image_result = await generate_shot_image.ainvoke({
+                        "creation_uuid": creation_uuid,
+                        "shot_id": sb.get("shot_id", 0),
+                        "prompt": enhanced_prompt,
+                        "frame_type": "both",
+                        "style": state.get("style"),
+                    })
+                    
+                    if image_result.get("status") == "success":
                         sb["image_url"] = image_result.get("image_url")
-                        sb["prompt_used"] = image_result.get("prompt_used")
+                        sb["prompt_used"] = enhanced_prompt
                         
                         results.append({
                             "storyboard_id": sb.get("id"),

@@ -8,7 +8,8 @@ from typing import Dict, Any, List, Optional
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from app.agent.state.schemas import ComicDramaState
-from app.agent.tools.generation_tools import GenerateAudioTool
+# 使用新的 LangChain @tool 函数
+from app.agent.tools.agent_generation_tools import generate_audio
 from app.core.logger import logger
 from app.core.config import settings
 import json
@@ -17,15 +18,16 @@ import json
 class AudioTeam:
     """音频团队"""
     
-    def __init__(self):
+    def __init__(self, creation_uuid: str = ""):
         """初始化音频团队"""
+        self.creation_uuid = creation_uuid
         self.llm = ChatOpenAI(
             model=settings.LLM_MODEL_SCRIPT_GENERATION,
             api_key=settings.OPENAI_API_KEY,
             base_url=settings.OPENAI_BASE_URL,
             temperature=0.3
         )
-        self.generate_audio_tool = GenerateAudioTool()
+        # 不再实例化旧的 Tool 类，而是使用导入的 @tool 函数
         logger.info("音频团队初始化完成")
     
     async def extract_dialogues(
@@ -123,6 +125,7 @@ class AudioTeam:
             if char_name and "voice_id" in char:
                 voice_map[char_name] = char["voice_id"]
         
+        creation_uuid = state.get("creation_uuid", self.creation_uuid)
         results = []
         
         for scene in dialogues:
@@ -141,12 +144,17 @@ class AudioTeam:
                 try:
                     logger.info(f"生成配音: {character} - {text[:30]}...")
                     
-                    audio_result = await self.generate_audio_tool.execute(
-                        state=state,
-                        text=text,
-                        voice_id=voice_id,
-                        speed=1.0
-                    )
+                    # 使用新的 @tool 函数
+                    audio_result = await generate_audio.ainvoke({
+                        "creation_uuid": creation_uuid,
+                        "shot_id": scene.get("scene_index", 0) * 100 + i,  # 生成唯一 shot_id
+                        "text": text,
+                        "voice_id": voice_id or settings.FISH_AUDIO_DEFAULT_VOICE_ID,
+                        "audio_type": "narration" if line.get("is_narration") else "dialogue",
+                        "speed": 1.0,
+                    })
+                    
+                    is_success = audio_result.get("status") == "success"
                     
                     audio_segment = {
                         "id": f"audio_{scene.get('scene_index', 0)}_{i}",
@@ -154,12 +162,12 @@ class AudioTeam:
                         "scene_name": scene_name,
                         "character": character,
                         "text": text,
-                        "audio_url": audio_result.get("audio_url") if audio_result.get("success") else None,
+                        "audio_url": audio_result.get("audio_url") if is_success else None,
                         "duration": audio_result.get("duration"),
                         "voice_id": voice_id,
                         "emotion": line.get("emotion"),
-                        "status": "completed" if audio_result.get("success") else "failed",
-                        "error": audio_result.get("error") if not audio_result.get("success") else None
+                        "status": "completed" if is_success else "failed",
+                        "error": audio_result.get("error") if not is_success else None
                     }
                     
                     results.append(audio_segment)
