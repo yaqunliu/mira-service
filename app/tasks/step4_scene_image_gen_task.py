@@ -234,7 +234,7 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
                 current_shot_desc = first_shot.description
                 # 获取该分镜中的角色档案
                 for char in first_shot.characters:
-                    profile = f"{char.name}（{char.role_type}）：{char.appearance_desc}"
+                    profile = f"{char.name}：{char.appearance or char.basic_info or '无描述'}"
                     character_profiles.append(profile)
 
             # 加载 V2 模板

@@ -346,6 +346,17 @@ class CreationService:
                 Character.deleted_at.is_(None)
             ).all()
             creation.characters = characters
+            
+        # 根据 scene_ids 字段查询场景（包括复用的场景）
+        if creation.scene_ids and len(creation.scene_ids) > 0:
+            scenes = db.query(Scene).options(
+                selectinload(Scene.shots).selectinload(Shot.characters)
+            ).filter(
+                Scene.scene_id.in_(creation.scene_ids),
+                Scene.deleted_at.is_(None)
+            ).order_by(Scene.scene_id).all()
+            # 手动设置场景关系
+            creation.scenes = scenes
         
         return creation
     
@@ -389,6 +400,17 @@ class CreationService:
                 Character.deleted_at.is_(None)
             ).all()
             creation.characters = characters
+            
+        # 根据 scene_ids 字段查询场景（包括复用的场景）
+        if creation.scene_ids and len(creation.scene_ids) > 0:
+            scenes = db.query(Scene).options(
+                selectinload(Scene.shots).selectinload(Shot.characters)
+            ).filter(
+                Scene.scene_id.in_(creation.scene_ids),
+                Scene.deleted_at.is_(None)
+            ).order_by(Scene.scene_id).all()
+            # 手动设置场景关系
+            creation.scenes = scenes
         
         return creation
 

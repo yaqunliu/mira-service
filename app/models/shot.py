@@ -46,6 +46,7 @@ class Shot(Base):
     
     # 外键
     scene_id = Column(Integer, ForeignKey("scenes.scene_id"), nullable=False)
+    creation_id = Column(Integer, ForeignKey("creations.creation_id"), nullable=True)  # 关联的创作ID，用于区分不同创作的分镜
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

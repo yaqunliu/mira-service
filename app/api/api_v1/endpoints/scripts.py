@@ -28,7 +28,12 @@ async def create_script_group(
         # Override type to ensure it's 'script'
         script_in.type = 'script'
         
-        script = await NovelAsyncService.create_project_service(db=db, novel_in=script_in, user_id=user.user_id)
+        script = await NovelAsyncService.create_project_service(
+            db=db, 
+            title=script_in.title,
+            user_id=user.user_id,
+            author=script_in.author if hasattr(script_in, 'author') else None
+        )
         return success_response(
             data={
                 "script_id": script.novel_id,
@@ -339,11 +344,12 @@ async def update_script_group(
         if script.type != 'script':
             raise HTTPException(status_code=404, detail="文案组不存在")
             
+        # 将 script_update 转换为字典并过滤掉 None 值
+        update_data = script_update.model_dump(exclude_unset=True)
         script = await NovelAsyncService.update_novel_service(
             db=db,
             novel_id=script.novel_id,
-            novel_update=script_update,
-            user_id=user.user_id
+            **update_data
         )
     except BaseServiceException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
@@ -413,7 +419,7 @@ async def delete_script_group(
         if script.type != 'script':
             raise HTTPException(status_code=404, detail="文案组不存在")
             
-        await NovelAsyncService.delete_novel_service(db=db, novel_id=script.novel_id, user_id=user.user_id)
+        await NovelAsyncService.delete_novel_service(db=db, novel_id=script.novel_id)
     except BaseServiceException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     

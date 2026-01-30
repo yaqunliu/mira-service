@@ -112,7 +112,8 @@ async def create_shot(
         description=shot_data.description,
         narration=narration_data,
         image_prompt=shot_data.image_prompt,
-        scene_id=shot_data.scene_id
+        scene_id=shot_data.scene_id,
+        creation_id=scene.creation_id
     )
     
     db.add(shot)
@@ -405,7 +406,6 @@ async def generate_shot_image(
         shot_id=shot.shot_id,
         creation_id=creation_id,
         model_name=request.model_name,
-        custom_prompt=request.image_prompt,
         freeze_record_id=freeze_record.record_id
     )
     
@@ -548,7 +548,6 @@ async def regenerate_shot_image(
         shot_id=shot.shot_id,
         creation_id=creation_id,
         model_name=request.model_name,
-        custom_prompt=request.image_prompt if request.image_prompt else None,
         freeze_record_id=freeze_record.record_id,
         frame_type=frame_type,
         force_regen_prompt=force_regen_prompt
@@ -687,4 +686,144 @@ async def apply_shot_image_version(
             "image_prompt": shot.image_prompt
         },
         message="应用历史图片成功"
+    )
+
+
+@router.post("/{shot_uuid}/generate-video")
+async def generate_shot_video(
+    shot_uuid: str,
+    request: ShotGenerateVideoRequest,
+    db: AsyncSession = Depends(get_async_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    生成分镜视频
+    """
+    result = await db.execute(
+        select(Shot).options(
+            selectinload(Shot.scene).selectinload(Scene.creation)
+        ).where(Shot.uuid == shot_uuid)
+    )
+    shot = result.scalar_one_or_none()
+
+    if not shot:
+        raise HTTPException(status_code=404, detail="分镜不存在")
+
+    if shot.scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限操作该分镜")
+
+    if not shot.image_url:
+        raise HTTPException(status_code=400, detail="分镜没有图片，无法生成视频")
+
+    # 计算所需积分
+    creation_id = shot.scene.creation.creation_id
+    video_duration = shot.video_duration or 5
+
+    try:
+        freeze_record = await PointsAsyncService.freeze_points(
+            db=db,
+            user_id=user.user_id,
+            points=int(video_duration * 10),  # 每秒10积分
+            operation_type="generate_video",
+            extra_data={
+                "shot_id": shot.shot_id,
+                "creation_id": creation_id,
+                "video_duration": video_duration,
+                "task_type": "video_generation"
+            }
+        )
+    except InsufficientPointsError as e:
+        raise HTTPException(status_code=402, detail=str(e))
+
+    # 启动视频生成任务
+    task = generate_single_shot_video_task.delay(
+        shot_id=shot.shot_id,
+        creation_id=creation_id,
+        freeze_record_id=freeze_record.record_id,
+        model_name=request.model_name,
+        last_frame_image_url=request.last_frame_image_url
+    )
+
+    logger.info(f"分镜 {shot_uuid} 视频生成任务已启动: task_id={task.id}, freeze_record_id={freeze_record.record_id}")
+
+    return success_response(
+        data={
+            "task_id": task.id,
+            "shot_uuid": shot_uuid,
+            "video_duration": video_duration,
+            "required_points": freeze_record.points
+        },
+        message="视频生成任务已启动"
+    )
+
+
+@router.post("/{shot_uuid}/regenerate-video")
+async def regenerate_shot_video(
+    shot_uuid: str,
+    request: ShotRegenerateVideoRequest,
+    db: AsyncSession = Depends(get_async_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    重新生成分镜视频
+    """
+    result = await db.execute(
+        select(Shot).options(
+            selectinload(Shot.scene).selectinload(Scene.creation)
+        ).where(Shot.uuid == shot_uuid)
+    )
+    shot = result.scalar_one_or_none()
+
+    if not shot:
+        raise HTTPException(status_code=404, detail="分镜不存在")
+
+    if shot.scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限操作该分镜")
+
+    if not shot.image_url:
+        raise HTTPException(status_code=400, detail="分镜没有图片，无法生成视频")
+
+    # 清除视频URL
+    shot.video_url = None
+    await db.commit()
+
+    # 计算所需积分
+    creation_id = shot.scene.creation.creation_id
+    video_duration = shot.video_duration or 5
+
+    try:
+        freeze_record = await PointsAsyncService.freeze_points(
+            db=db,
+            user_id=user.user_id,
+            points=int(video_duration * 10),  # 每秒10积分
+            operation_type="generate_video",
+            extra_data={
+                "shot_id": shot.shot_id,
+                "creation_id": creation_id,
+                "video_duration": video_duration,
+                "task_type": "video_regeneration"
+            }
+        )
+    except InsufficientPointsError as e:
+        raise HTTPException(status_code=402, detail=str(e))
+
+    # 启动视频生成任务
+    task = generate_single_shot_video_task.delay(
+        shot_id=shot.shot_id,
+        creation_id=creation_id,
+        freeze_record_id=freeze_record.record_id,
+        model_name=request.model_name,
+        last_frame_image_url=request.last_frame_image_url
+    )
+
+    logger.info(f"分镜 {shot_uuid} 视频重新生成任务已启动: task_id={task.id}, freeze_record_id={freeze_record.record_id}")
+
+    return success_response(
+        data={
+            "task_id": task.id,
+            "shot_uuid": shot_uuid,
+            "video_duration": video_duration,
+            "required_points": freeze_record.points
+        },
+        message="视频重新生成任务已启动"
     )

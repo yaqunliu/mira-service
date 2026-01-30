@@ -218,7 +218,7 @@ class NovelAsyncService:
         return novel
     
     get_novel_by_uuid_service = get_novel_by_uuid
-    
+
     @staticmethod
     async def get_novel_by_id(
         db: AsyncSession,
@@ -231,7 +231,32 @@ class NovelAsyncService:
             select(Novel).where(Novel.novel_id == novel_id)
         )
         return result.scalar_one_or_none()
-    
+
+    @staticmethod
+    async def get_novel_by_id_service(
+        db: AsyncSession,
+        novel_id: int,
+        user_id: int
+    ) -> Optional[Novel]:
+        """
+        根据 ID 获取小说（服务层，带权限检查）
+        """
+        result = await db.execute(
+            select(Novel).where(Novel.novel_id == novel_id).options(
+                selectinload(Novel.characters),
+                selectinload(Novel.creations)
+            )
+        )
+        novel = result.scalar_one_or_none()
+
+        if not novel:
+            return None
+
+        if novel.owner_id != user_id:
+            return None
+
+        return novel
+
     @staticmethod
     async def get_user_novels(
         db: AsyncSession,
@@ -266,7 +291,7 @@ class NovelAsyncService:
         db: AsyncSession,
         title: str,
         user_id: int,
-        description: Optional[str] = None
+        author: Optional[str] = None
     ) -> Novel:
         """
         创建小说
@@ -274,7 +299,7 @@ class NovelAsyncService:
         novel = Novel(
             uuid=str(uuid.uuid4()),
             title=title,
-            description=description,
+            author=author,
             owner_id=user_id
         )
         db.add(novel)
@@ -455,22 +480,59 @@ class ChapterAsyncService:
         db: AsyncSession,
         novel_id: int,
         title: str,
-        order: int,
-        content: Optional[str] = None
+        chapter_number: int,
+        content: Optional[str] = None,
+        user_id: Optional[int] = None
     ) -> Chapter:
         """
         创建章节
         """
+        # 计算字数预览
+        word_count = len(content) if content else 0
+        preview = content[:100] if content else None
+        
         chapter = Chapter(
             uuid=str(uuid.uuid4()),
             novel_id=novel_id,
             title=title,
-            order=order,
-            content=content
+            chapter_number=chapter_number,
+            word_count=word_count,
+            preview=preview
         )
         db.add(chapter)
         await db.commit()
         await db.refresh(chapter)
+        
+        # 如果有内容，保存到 US3 对象存储
+        if content:
+            try:
+                # 生成文件名
+                filename = f"chapter_{chapter.chapter_id}_{int(time.time())}.txt"
+                
+                # 获取用户 UUID 用于生成路径
+                user_uuid = str(user_id) if user_id else "anonymous"
+                
+                # 使用流式上传保存内容
+                content_bytes = content.encode('utf-8')
+                upload_result = upload_helper.upload_file_stream(
+                    file_data=content_bytes,
+                    user_uuid=user_uuid,
+                    file_type="chapters",
+                    filename=filename
+                )
+                
+                if upload_result.get('success'):
+                    chapter.content_url = upload_result.get('external_url')
+                    await db.commit()
+                    await db.refresh(chapter)
+                    logger.info(f"章节内容已保存到 US3: {chapter.content_url}")
+                else:
+                    logger.error(f"章节内容上传失败: {upload_result.get('message')}")
+                    
+            except Exception as e:
+                logger.error(f"保存章节内容失败: {e}", exc_info=True)
+                # 不影响章节创建，只是 content_url 为 null
+        
         return chapter
     
     @staticmethod

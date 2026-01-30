@@ -70,6 +70,11 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         )
         if not shot:
             raise NotFoundError(detail=f"分镜不存在: shot_id={shot_id}")
+        
+        # 设置分镜状态为生成中
+        shot.status = "generating"
+        db.commit()
+        
         # 记录初始加载状态
         initial_image_url = shot.image_url
         initial_image_prompt = shot.image_prompt
