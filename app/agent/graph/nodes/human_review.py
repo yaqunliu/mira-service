@@ -31,6 +31,18 @@ async def human_review_node(state: Dict[str, Any]) -> Dict[str, Any]:
     checkpoint_data = state.get("checkpoint_data", {})
     checkpoint_type = checkpoint_data.get("checkpoint_type", "unknown")
     
+    # 如果上一个节点已经设置了完整的响应消息，则不再生成重复消息
+    existing_response = state.get("response_text", "")
+    already_pending = state.get("pending_approval", False)
+    
+    if existing_response and already_pending:
+        logger.info(f"[Node] human_review: 上一节点已设置响应，跳过消息生成")
+        # 保持现有状态，只确保 pending_approval 为 True
+        return {
+            "pending_approval": True,
+            "updated_at": datetime.now().isoformat(),
+        }
+    
     try:
         # 根据检查点类型生成确认消息
         message, options = _generate_review_message(checkpoint_type, checkpoint_data)

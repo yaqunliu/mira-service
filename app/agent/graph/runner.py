@@ -6,6 +6,7 @@ Graph Runner 模块
 
 from typing import Dict, Any, Optional, AsyncIterator
 from datetime import datetime
+import asyncio
 
 from app.core.logger import logger
 
@@ -167,67 +168,212 @@ class GraphRunner:
             last_node_reported = ""
             streaming_node = ""  # 当前正在流式输出的节点
             
-            # 只有这些节点的 LLM 输出需要流式发送给用户
-            USER_VISIBLE_NODES = {"clarify", "status_query", "task_execution"}
+            # 去重集合：防止同一节点的消息重复发送
+            sent_start_nodes = set()     # 已发送开始消息的节点
+            sent_complete_nodes = set()  # 已发送完成消息的节点
+            sent_response_nodes = set()  # 已发送 response_text 的节点
+            
+            # 只有这些节点的 LLM 输出需要流式发送给用户（token by token）
+            # - clarify: 澄清对话
+            # - status_query: 状态查询
+            # - task_execution: 任务执行（保持 SSE 连接活跃）
+            # - human_review: 人机交互确认请求
+            # 注意：asset_generation 不在此列表，因为它的 LLM 输出是内部提示词，不应显示给用户
+            USER_VISIBLE_NODES = {"clarify", "status_query", "task_execution", "human_review"}
+            
+            # 不应发送 response_text 的节点（分析/内部过程）
+            INTERNAL_NODES = {"storyboard_generation", "audio_processing", "video_generation", "editing", "entry", "intent_detection", "router", "response_formatter", "stage_complete"}
+            
+            # 需要发送开始消息的节点（用户可见的阶段）
+            START_MESSAGE_NODES = {
+                "script_analysis": "📖 好的，正在分析剧本内容，识别角色和场景信息，请稍候...",
+                "asset_generation": "🎨 好的，开始为您生成角色和场景图片，请稍候...",
+                "storyboard_generation": "🎬 好的，正在生成分镜脚本，请稍候...",
+                "audio_processing": "🎤 好的，正在处理音频内容，请稍候...",
+                "video_generation": "🎥 好的，正在生成视频内容，请稍候...",
+            }
+            
+            # 需要发送完成消息的节点（只有这些节点发送自动完成消息）
+            # script_analysis 不在此列表，因为它的 response_text 已包含结果
+            COMPLETE_MESSAGE_NODES = {
+                "asset_generation": "✅ 图片生成任务已提交！",
+                "storyboard_generation": "✅ 分镜脚本生成完成！",
+                "audio_processing": "✅ 音频处理完成！",
+                "video_generation": "✅ 视频生成完成！",
+            }
+            
+            # 需要发送 response_text 的节点
+            # 只有外层包装节点发送，内部子图节点（如 script_analysis）不在此列表
+            # storyboard_creation 需要发送完成消息到 SSE
+            RESPONSE_TEXT_NODES = {"human_review", "clarify", "status_query", "task_execution", "storyboard_creation", "asset_generation"}
             
             config = {"configurable": {"thread_id": self.thread_id}}
             
-            async for event in runner.graph.astream_events(initial_state, config, version="v2"):
-                event_kind = event.get("event", "")
-                
-                # 节点开始事件 - 追踪当前节点
-                if event_kind == "on_chain_start":
-                    node_name = event.get("name", "")
-                    if node_name and node_name != last_node_reported and not node_name.startswith("_"):
-                        last_node_reported = node_name
-                        # 记录当前处理的节点（用于过滤 LLM 输出）
-                        if node_name in USER_VISIBLE_NODES:
-                            streaming_node = node_name
+            # 使用 asyncio.Queue 来合并事件和心跳
+            import time
+            HEARTBEAT_INTERVAL = 5  # 每 5 秒发送一次心跳
+            event_queue = asyncio.Queue()
+            graph_done = asyncio.Event()
+            
+            async def heartbeat_producer():
+                """后台任务：定期发送心跳事件"""
+                while not graph_done.is_set():
+                    try:
+                        await asyncio.sleep(HEARTBEAT_INTERVAL)
+                        if not graph_done.is_set():
+                            await event_queue.put({
+                                "_type": "heartbeat",
+                                "node": last_node_reported or "processing",
+                            })
+                    except asyncio.CancelledError:
+                        break
+            
+            async def event_producer():
+                """后台任务：收集 graph 事件"""
+                try:
+                    async for event in runner.graph.astream_events(initial_state, config, version="v2"):
+                        await event_queue.put({"_type": "graph_event", "event": event})
+                finally:
+                    graph_done.set()
+                    await event_queue.put({"_type": "done"})
+            
+            # 启动后台任务
+            heartbeat_task = asyncio.create_task(heartbeat_producer())
+            event_task = asyncio.create_task(event_producer())
+            
+            try:
+                while True:
+                    item = await event_queue.get()
+                    
+                    if item["_type"] == "done":
+                        break
+                    elif item["_type"] == "heartbeat":
+                        # 发送进度心跳
                         yield formatter._format_sse({
                             "event": "progress",
                             "data": {
-                                "node": node_name,
+                                "node": item["node"],
                                 "status": "processing",
                             },
                         })
-                
-                # LLM 流式 token 事件 - 只输出用户可见节点的内容！
-                elif event_kind == "on_chat_model_stream":
-                    # 只有当前节点是用户可见节点时才输出
-                    if streaming_node in USER_VISIBLE_NODES:
-                        chunk = event.get("data", {}).get("chunk")
-                        if chunk and hasattr(chunk, "content") and chunk.content:
-                            content = chunk.content
-                            full_response += content
-                            yield formatter._format_sse({
-                                "event": "message.delta",
-                                "data": {
-                                    "id": message_id,
-                                    "content": content,
-                                    "node": streaming_node,
-                                },
-                            })
-                
-                # 节点完成事件
-                elif event_kind == "on_chain_end":
-                    node_name = event.get("name", "")
-                    if node_name:
-                        current_node = node_name
-                        # 如果节点输出有 response_text 且之前没流式输出，补充发送
-                        output = event.get("data", {}).get("output", {})
-                        if isinstance(output, dict) and "response_text" in output:
-                            resp_text = output["response_text"]
-                            if resp_text and not full_response:
-                                # 没有流式输出过，一次性发送
+                        logger.debug(f"[GraphRunner] 发送进度心跳 node={item['node']}")
+                        continue
+                    
+                    # 处理 graph 事件
+                    event = item["event"]
+                    
+                    event_kind = event.get("event", "")
+                    
+                    # 节点开始事件 - 追踪当前节点
+                    if event_kind == "on_chain_start":
+                        node_name = event.get("name", "")
+                        if node_name and node_name != last_node_reported and not node_name.startswith("_"):
+                            last_node_reported = node_name
+                            # 记录当前处理的节点（用于过滤 LLM 输出）
+                            if node_name in USER_VISIBLE_NODES:
+                                streaming_node = node_name
+                            else:
+                                streaming_node = ""  # 非可见节点，停止流式输出
+                            
+                            # 为特定阶段发送开始消息（只发送一次）
+                            if node_name in START_MESSAGE_NODES and node_name not in sent_start_nodes:
+                                sent_start_nodes.add(node_name)
+                                start_msg = START_MESSAGE_NODES[node_name]
                                 yield formatter._format_sse({
                                     "event": "message.delta",
                                     "data": {
                                         "id": message_id,
-                                        "content": resp_text,
+                                        "content": start_msg + "\n\n",
                                         "node": node_name,
                                     },
                                 })
-                                full_response = resp_text
+                                full_response += start_msg + "\n\n"
+                            
+                            yield formatter._format_sse({
+                                "event": "progress",
+                                "data": {
+                                    "node": node_name,
+                                    "status": "processing",
+                                },
+                            })
+                    
+                    # LLM 流式 token 事件 - 只输出用户可见节点的内容！
+                    elif event_kind == "on_chat_model_stream":
+                        # 只有当前节点是用户可见节点时才输出
+                        if streaming_node in USER_VISIBLE_NODES:
+                            chunk = event.get("data", {}).get("chunk")
+                            if chunk and hasattr(chunk, "content") and chunk.content:
+                                content = chunk.content
+                                full_response += content
+                                yield formatter._format_sse({
+                                    "event": "message.delta",
+                                    "data": {
+                                        "id": message_id,
+                                        "content": content,
+                                        "node": streaming_node,
+                                    },
+                                })
+                    
+                    # 节点完成事件
+                    elif event_kind == "on_chain_end":
+                        node_name = event.get("name", "")
+                        if node_name:
+                            current_node = node_name
+                            output = event.get("data", {}).get("output", {})
+                            
+                            # 调试日志
+                            if node_name in RESPONSE_TEXT_NODES and isinstance(output, dict) and "response_text" in output:
+                                logger.info(f"[GraphRunner] on_chain_end: node={node_name}, has_response_text=True, already_sent={node_name in sent_response_nodes}")
+                            
+                            # 检查是否有错误
+                            has_error = isinstance(output, dict) and output.get("errors")
+                            
+                            # 为特定阶段发送完成/错误消息（只发送一次）
+                            # 只对 COMPLETE_MESSAGE_NODES 中的节点发送完成消息
+                            if node_name in COMPLETE_MESSAGE_NODES and node_name not in sent_complete_nodes:
+                                sent_complete_nodes.add(node_name)
+                                
+                                if has_error:
+                                    error_msg = output.get("errors", [{}])[0].get("message", "未知错误")
+                                    complete_msg = f"❌ {node_name} 执行失败：{error_msg}"
+                                else:
+                                    complete_msg = COMPLETE_MESSAGE_NODES[node_name]
+                                
+                                yield formatter._format_sse({
+                                    "event": "message.delta",
+                                    "data": {
+                                        "id": message_id,
+                                        "content": complete_msg + "\n\n",
+                                        "node": node_name,
+                                    },
+                                })
+                                full_response += complete_msg + "\n\n"
+                            
+                            # 如果节点输出有 response_text，根据白名单决定是否发送
+                            if isinstance(output, dict) and "response_text" in output:
+                                # 只有在 RESPONSE_TEXT_NODES 白名单中的节点才发送 response_text
+                                # 同时检查是否已经发送过（防止重复）
+                                if node_name in RESPONSE_TEXT_NODES and node_name not in sent_response_nodes:
+                                    resp_text = output["response_text"]
+                                    if resp_text:
+                                        sent_response_nodes.add(node_name)
+                                        # 发送响应内容
+                                        yield formatter._format_sse({
+                                            "event": "message.delta",
+                                            "data": {
+                                                "id": message_id,
+                                                "content": resp_text,
+                                                "node": node_name,
+                                            },
+                                        })
+                                        full_response += resp_text
+            finally:
+                # 清理后台任务
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
             
             # 3. 发送消息结束
             yield formatter._format_sse({

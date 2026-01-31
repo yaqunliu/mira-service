@@ -19,14 +19,15 @@ NODE_VISIBILITY = {
     "task_execution": "user",
     "clarify": "user",
     "response_formatter": "user",
+    "human_review": "user",          # 人机交互结果需要流式展示给用户
     
-    # 业务执行层 - 仅持久化，思考过程可选展示
-    "script_analysis": "thinking",
-    "asset_generation": "thinking",
-    "storyboard_generation": "thinking",
-    "audio_processing": "thinking",
-    "video_generation": "thinking",
-    "editing": "thinking",
+    # 业务执行层 - 分析过程不展示，仅内部记录
+    "script_analysis": "internal",   # 剧本分析/提示词生成不流式展示
+    "asset_generation": "internal",  # 图片生成不流式展示
+    "storyboard_generation": "internal",
+    "audio_processing": "internal",
+    "video_generation": "internal",
+    "editing": "internal",
 }
 
 

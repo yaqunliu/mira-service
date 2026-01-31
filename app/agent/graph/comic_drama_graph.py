@@ -195,7 +195,7 @@ class ComicDramaGraph:
         
         # 编译图
         self.graph = workflow.compile(checkpointer=self.checkpointer)
-        
+        self.graph.astream()
         logger.info("ComicDramaGraph 构建完成")
         return workflow
     

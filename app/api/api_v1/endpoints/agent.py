@@ -80,7 +80,8 @@ async def get_or_create_session(
 ) -> AgentSession:
     """获取或创建 Agent 会话"""
     stmt = select(AgentSession).where(
-        AgentSession.creation_uuid == creation_uuid
+        AgentSession.creation_uuid == creation_uuid,
+        AgentSession.deleted_at.is_(None)  # 只查活跃的 Session
     ).order_by(desc(AgentSession.created_at))
     
     result = await db.execute(stmt)
@@ -290,7 +291,8 @@ async def interrupt_session(
     """
     try:
         stmt = select(AgentSession).where(
-            AgentSession.creation_uuid == creation_uuid
+            AgentSession.creation_uuid == creation_uuid,
+            AgentSession.deleted_at.is_(None)
         ).order_by(desc(AgentSession.created_at))
         
         result = await db.execute(stmt)
@@ -359,7 +361,8 @@ async def reset_session(
     """
     try:
         stmt = select(AgentSession).where(
-            AgentSession.creation_uuid == creation_uuid
+            AgentSession.creation_uuid == creation_uuid,
+            AgentSession.deleted_at.is_(None)
         ).order_by(desc(AgentSession.created_at))
         
         result = await db.execute(stmt)
@@ -440,7 +443,8 @@ async def get_session_status(
         
         session_stmt = select(AgentSession).where(
             AgentSession.creation_uuid == creation_uuid,
-            AgentSession.user_id == current_user.user_id
+            AgentSession.user_id == current_user.user_id,
+            AgentSession.deleted_at.is_(None)  # 只查活跃的 Session
         ).order_by(AgentSession.created_at.desc())
         
         result = await db.execute(session_stmt)

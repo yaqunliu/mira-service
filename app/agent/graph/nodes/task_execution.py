@@ -10,29 +10,35 @@ from app.core.logger import logger
 
 
 # 意图到 Tool 的映射
+# 注意：此映射需与 prompts/intent_detection.md 中的意图定义保持一致
 INTENT_TOOL_MAPPING = {
-    # 生成类任务
+    # ========== 分析类任务 (task_intent) ==========
+    "analyze_script": "analyze_script",           # 完整剧本分析
+    "extract_characters": "extract_characters",   # 提取角色
+    "extract_scenes": "extract_scenes",           # 提取场景
+    
+    # ========== 生成类任务 (task_intent) ==========
     "generate_character_images": "generate_character_image",
     "generate_scene_images": "generate_scene_image",
     "generate_shot_images": "generate_shot_image",
     "generate_videos": "generate_video",
     "generate_audio": "generate_audio",
+    "auto_create": "auto_create",                 # 一键自动创作（全流程）
     
-    # 分析类任务
-    "analyze_script": "analyze_script",
-    "extract_characters": "extract_characters",
-    "extract_scenes": "extract_scenes",
-    
-    # 修改类任务
+    # ========== 资产操作 - 修改类 (asset_action) ==========
     "modify_character_prompt": "update_character",
     "modify_scene_prompt": "update_scene",
     "modify_shot_prompt": "update_shot",
     
-    # 重新生成
+    # ========== 资产操作 - 重新生成 (asset_action) ==========
     "regenerate_character_image": "generate_character_image",
     "regenerate_scene_image": "generate_scene_image",
     "regenerate_shot_image": "generate_shot_image",
     "regenerate_video": "generate_video",
+    
+    # ========== 资产操作 - 其他 (asset_action) ==========
+    "select_option": "select_option",             # 选择候选项
+    "delete": "delete_asset",                     # 删除资产
 }
 
 

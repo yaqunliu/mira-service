@@ -31,6 +31,8 @@ app = Celery(
         "app.agent.tasks.image_tasks",
         "app.agent.tasks.video_tasks",
         "app.agent.tasks.audio_tasks",
+        "app.tasks.agent_shot_task",
+        "app.tasks.agent_video_task",
     ]
 )
 

@@ -451,7 +451,7 @@ async def delete_creation(
     success = await CreationAsyncService.delete_creation(db, creation.creation_id)
     
     if success:
-        return success_response(message="删除创作成功")
+        return success_response(data={}, message="删除创作成功")
     else:
         raise HTTPException(status_code=500, detail="删除创作失败")
 

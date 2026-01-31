@@ -5,6 +5,7 @@ LangGraph State Schemas
 
 from typing import TypedDict, Optional, List, Dict, Any, Literal
 from datetime import datetime
+from enum import StrEnum
 
 
 # ==================== 子状态定义 ====================
@@ -78,7 +79,7 @@ class VideoSegmentState(TypedDict, total=False):
 
 class CheckpointData(TypedDict, total=False):
     """检查点数据（待审核）"""
-    checkpoint_type: Literal["script_analysis", "asset_finalization", "storyboard_batch", "final_review"]
+    checkpoint_type: Literal["script_analysis", "asset_finalization", "storyboard_batch", "audio_confirmation", "final_review"]
     data: Dict[str, Any]  # 待审核的数据
     message: str  # 提示信息
     suggestions: Optional[List[str]]  # 建议
@@ -91,6 +92,65 @@ class UserFeedback(TypedDict, total=False):
     modifications: Optional[Dict[str, Any]]  # 修改内容
     approved_items: Optional[List[int]]  # 部分通过的项目 ID 列表
     rejected_items: Optional[List[int]]  # 驳回的项目 ID 列表
+
+
+class ProductionStage(StrEnum):
+    """
+    制作阶段枚举
+    
+    用于子图内的阶段路由，比 current_stage 更细粒度
+    """
+    # 初始阶段
+    INIT = "init"                           # 初始状态
+    SCRIPT_UPLOADED = "script_uploaded"     # 剧本已上传
+    
+    # 剧本分析阶段
+    SCRIPT_ANALYZING = "script_analyzing"   # 剧本分析中
+    SCRIPT_ANALYZED = "script_analyzed"     # 剧本分析完成，待确认
+    
+    # 资产生成阶段
+    ASSETS_GENERATING = "assets_generating" # 资产生成中
+    ASSETS_READY = "assets_ready"           # 资产待确认（检查点）
+
+    
+    # 分镜创建阶段
+    STORYBOARD_GENERATING = "storyboard_generating"
+    STORYBOARD_READY = "storyboard_ready"   # 分镜待确认（检查点）
+
+    
+    # 音频处理阶段
+    AUDIO_PROCESSING = "audio_processing"
+    AUDIO_READY = "audio_ready"             # 音频待确认（检查点）
+    
+    # 视频生成阶段
+    VIDEO_GENERATING = "video_generating"
+    VIDEO_READY = "video_ready"             # 视频待确认（检查点）
+    
+    # 最终阶段
+    EDITING = "editing"
+    COMPLETED = "completed"
+    ERROR = "error"
+
+
+class BoardAction(TypedDict, total=False):
+    """看板联动动作 - 控制前端看板的行为"""
+    type: Literal["switch_view", "highlight", "scroll", "update", "refresh"]
+    target: str  # 目标元素 ID 或视图名称
+    data: Optional[Dict[str, Any]]  # 附加数据
+
+
+class ProductionProgress(TypedDict, total=False):
+    """
+    各阶段制作进度详情
+    
+    用于子图路由决策和进度展示
+    """
+    script_analysis: Dict[str, Any]  # {"status": "completed", "characters": 5, "scenes": 3}
+    asset_generation: Dict[str, Any]  # {"status": "in_progress", "completed": 3, "total": 8}
+    storyboard: Dict[str, Any]        # {"status": "pending", "completed": 0, "total": 24}
+    audio: Dict[str, Any]
+    video: Dict[str, Any]
+    editing: Dict[str, Any]
 
 
 # ==================== 主状态定义 ====================
@@ -125,6 +185,7 @@ class ComicDramaState(TypedDict, total=False):
     # 响应文本（用于 SSE 输出）
     response_text: Optional[str]  # 节点生成的响应文本
     awaiting_clarification: bool  # 是否等待用户澄清
+    board_actions: List[BoardAction]  # 看板联动指令列表
 
     # ==================== 输入数据 ====================
     script_text: Optional[str]  # 原始剧本文本（用户上传或输入）
@@ -142,6 +203,10 @@ class ComicDramaState(TypedDict, total=False):
         "completed",  # 完成
         "error",  # 错误
     ]
+    
+    # 子图阶段（更细粒度）
+    production_stage: ProductionStage  # 细粒度制作阶段
+    production_progress: ProductionProgress  # 各阶段详细进度
 
     # ==================== 剧本分析结果 ====================
     script_summary: Optional[str]  # 剧本摘要

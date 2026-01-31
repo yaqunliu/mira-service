@@ -72,3 +72,5 @@ api_router.include_router(orders.router, prefix="/orders", tags=["订单"])
 api_router.include_router(subscriptions.router, prefix="/subscriptions", tags=["订阅"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 
+# Agent 对话路由
+api_router.include_router(agent.router, prefix="/creations", tags=["Agent"])

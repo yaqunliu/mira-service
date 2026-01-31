@@ -396,7 +396,7 @@ class CreationAsyncService:
     
     @staticmethod
     async def delete_creation(db: AsyncSession, creation_id: int) -> bool:
-        """删除创作"""
+        """删除创作（软删除）"""
         result = await db.execute(
             select(Creation).where(Creation.creation_id == creation_id)
         )
@@ -405,7 +405,15 @@ class CreationAsyncService:
         if not creation:
             return False
         
-        await db.delete(creation)
+        # 假删除关联的 agent_sessions（设置 deleted_at）
+        await db.execute(
+            sa_text("UPDATE agent_sessions SET deleted_at = now(), status = 'archived' WHERE creation_id = :creation_id"),
+            {"creation_id": creation_id}
+        )
+        
+        # 软删除 creation（设置 deleted_at）
+        from datetime import datetime
+        creation.deleted_at = datetime.utcnow()
         await db.commit()
         
         return True

@@ -14,15 +14,19 @@ max_tokens: 500
 
 ### 任务意图 (task_intent)
 用户想要执行某个创作任务：
-- `analyze_character` - 分析/提取角色
-- `analyze_scene` - 分析/提取场景
-- `analyze_shot` - 分析/分解分镜
+
+**分析类任务：**
+- `analyze_script` - 分析剧本（完整分析，含角色/场景/分镜）
+- `extract_characters` - 提取/分析角色
+- `extract_scenes` - 提取/分析场景
+
+**生成类任务：**
 - `generate_character_images` - 生成角色图片
 - `generate_scene_images` - 生成场景图片
 - `generate_shot_images` - 生成分镜图片
 - `generate_videos` - 生成视频
 - `generate_audio` - 生成音频
-- `auto_create` - 一键自动创作
+- `auto_create` - 一键自动创作（从头到尾全流程）
 
 ### 状态查询 (status_query)
 用户想要查询当前状态：
@@ -35,8 +39,19 @@ max_tokens: 500
 
 ### 资产操作 (asset_action)
 用户想要对已有资产进行操作：
-- `modify_prompt` - 修改提示词
-- `regenerate` - 重新生成
+
+**修改提示词：**
+- `modify_character_prompt` - 修改角色提示词
+- `modify_scene_prompt` - 修改场景提示词
+- `modify_shot_prompt` - 修改分镜提示词
+
+**重新生成：**
+- `regenerate_character_image` - 重新生成角色图片
+- `regenerate_scene_image` - 重新生成场景图片
+- `regenerate_shot_image` - 重新生成分镜图片
+- `regenerate_video` - 重新生成视频
+
+**其他操作：**
 - `select_option` - 选择候选项
 - `delete` - 删除资产
 

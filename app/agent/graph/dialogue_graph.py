@@ -14,11 +14,11 @@ from app.agent.graph.nodes import (
     intent_detection_node,
     router_node,
     status_query_node,
-    task_execution_node,
     clarify_node,
     response_formatter_node,
     human_review_node,
 )
+from app.agent.graph.comic_drama_subgraph import build_comic_drama_subgraph
 from app.core.logger import logger
 
 
@@ -56,7 +56,11 @@ def build_dialogue_graph() -> StateGraph:
     
     # 处理节点
     workflow.add_node("status_query", status_query_node)
-    workflow.add_node("task_execution", task_execution_node)
+    
+    # task_execution 使用子图而不是普通节点
+    comic_drama_subgraph = build_comic_drama_subgraph()
+    workflow.add_node("task_execution", comic_drama_subgraph)
+    
     workflow.add_node("clarify", clarify_node)
     
     # 输出节点
