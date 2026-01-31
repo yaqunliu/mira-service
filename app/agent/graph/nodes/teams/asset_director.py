@@ -5,6 +5,7 @@
 通过 LLM 生成图片提示词，创建 Celery 任务异步生成图片。
 """
 
+from pathlib import Path
 from typing import Dict, Any, List
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
@@ -25,18 +26,50 @@ class AssetDirectorNode:
     3. 创建 Celery 任务异步生成图片
     """
     
-    PROMPT_TEMPLATE = """你是专业的AI绘画提示词专家。根据以下{subject_type}描述，生成一个高质量的英文图片提示词。
+    # 角色图提示词模板 - 用于四视图角色参考图
+    CHARACTER_PROMPT_TEMPLATE = """你是专业的AI绘画提示词专家。请根据以下角色特征，生成一个用于角色参考图（四视图）的高质量英文提示词。
 
-## 描述
-{description}
+## 角色特征
+{character_features}
+
+## 视觉风格
+{visual_style}
 
 ## 要求
-1. 输出英文提示词，风格为日本动漫风格
-2. 提示词应详细描述外观特征
-3. 只输出提示词，不要其他内容
+1. **核心要求**：提示词必须包含"横版构图"、"四视图布局(面部正面特写、正面全身、侧面全身、背面全身)"、"{visual_style}"、"纯白色背景"。
+2. **构图布局规范**：必须采用横向排版（Landscape orientation），画面中应明确平铺包含四个独立部分：
+    - 一个清晰的角色脸部正面大特写（Large facial close-up）
+    - 角色的正面全身站立姿态（Full body front view）
+    - 角色的侧面全身站立姿态（Full body side view）
+    - 角色的背面全身站立姿态（Full body back view）
+3. **背景与质量规范**：
+    - 背景必须是纯白色（Pure white background），严禁出现任何背景装饰、场景或杂物
+    - 严禁画面中出现任何文字、字母、数字、水印或签名（No text, no watermarks, no letters, no words）
+4. **语言**：输出英文提示词
+5. **格式**：只输出提示词，不要其他内容
 
-## 示例格式
-1girl, long black hair, brown eyes, school uniform, standing, anime style, high quality"""
+## 输出示例格式
+Landscape orientation, character reference sheet with four views (large facial close-up, full body front view, full body side view, full body back view), anime style, pure white background, no text, no watermarks. A young woman with long flowing black hair and bright amber eyes..."""
+
+    # 场景图提示词模板 - 用于场景建立图
+    SCENE_PROMPT_TEMPLATE = """你是专业的场景建立图提示词生成专家。请根据以下场景设定，生成一个用于场景建立图的高质量英文提示词。
+
+## 场景环境
+{scene_environment}
+
+## 视觉风格
+{visual_style}
+
+## 要求
+1. **日本动漫风格**：必须是日本动漫风格，不能是写实风格或真实照片
+2. **场景建立**：重点展示完整的环境背景和空间布局
+3. **16:9横版构图**：适合横版画面的构图和视角
+4. **环境与氛围**：详细描述建筑、景观、光线（如黄昏的斜阳、霓虹闪烁的深夜）、天气与质感（雨滴、雾气、光影流动等）
+5. **语言**：输出英文提示词
+6. **格式**：只输出提示词，不要其他内容
+
+## 输出示例格式
+Anime style, high quality animation illustration, wide shot, 16:9 widescreen composition. A cozy coffee shop interior bathed in warm afternoon sunlight, large windows revealing a rainy street outside, wooden tables and comfortable armchairs, steam rising from coffee cups, soft golden hour lighting, detailed anime art style, atmospheric..."""
     
     def __init__(self):
         """初始化 LLM"""
@@ -45,7 +78,7 @@ class AssetDirectorNode:
             api_key=settings.OPENAI_API_KEY,
             base_url=settings.OPENAI_BASE_URL,
             temperature=0.5,
-            timeout=30,  # 30秒超时
+            timeout=60,  # 60秒超时（专业模板需要更多时间）
             max_retries=2,
         )
     
@@ -60,6 +93,12 @@ class AssetDirectorNode:
             执行结果
         """
         creation_uuid = state.get("creation_uuid")
+        
+        # 获取视觉风格设定
+        visual_style = "日本动漫风格"  # 默认风格
+        if state.get("creation_extra_data"):
+            extra_data = state.get("creation_extra_data", {})
+            visual_style = extra_data.get("visual_style", visual_style)
         
         try:
             # 使用 Tool 查询待生成图片的资产
@@ -80,20 +119,23 @@ class AssetDirectorNode:
             # 构建资产列表并生成提示词
             assets_to_generate = []
             
-            # 生成角色提示词
+            # 生成角色提示词（使用专业四视图模板）
             for char in pending_characters:
-                prompt = await self._generate_prompt("角色", char["appearance"] or char["name"])
+                # 构建角色特征描述
+                character_features = self._build_character_features(char)
+                prompt = await self._generate_character_prompt(character_features, visual_style)
                 assets_to_generate.append({
                     "type": "character",
                     "id": char["id"],
                     "name": char["name"],
                     "prompt": prompt,
                 })
-                logger.info(f"[AssetDirector] 准备角色图片任务: {char['name']}")
+                logger.info(f"[AssetDirector] 准备角色图片任务: {char['name']}（四视图）")
             
-            # 生成场景提示词
+            # 生成场景提示词（使用场景建立图模板）
             for scene in pending_scenes:
-                prompt = await self._generate_prompt("场景", scene["description"] or scene["title"])
+                scene_environment = scene.get("description") or scene.get("title", "")
+                prompt = await self._generate_scene_prompt(scene_environment, visual_style)
                 assets_to_generate.append({
                     "type": "scene",
                     "id": scene["id"],
@@ -251,18 +293,59 @@ class AssetDirectorNode:
                 "errors": [{"message": str(e)}],
             }
     
-    async def _generate_prompt(self, subject_type: str, description: str) -> str:
-        """使用 LLM 生成图片提示词"""
+    def _build_character_features(self, char: Dict) -> str:
+        """构建角色特征描述"""
+        features = []
+        
+        # 基础信息
+        if char.get("name"):
+            features.append(f"角色名称: {char['name']}")
+        
+        # 外貌特征
+        if char.get("appearance"):
+            features.append(f"外貌描述: {char['appearance']}")
+        
+        # 其他特征（如果有）
+        if char.get("gender"):
+            features.append(f"性别: {char['gender']}")
+        if char.get("age"):
+            features.append(f"年龄: {char['age']}")
+        if char.get("personality"):
+            features.append(f"性格特点: {char['personality']}")
+        if char.get("costume"):
+            features.append(f"服装: {char['costume']}")
+        
+        return "\n".join(features) if features else char.get("name", "未知角色")
+    
+    async def _generate_character_prompt(self, character_features: str, visual_style: str) -> str:
+        """使用专业模板生成角色图提示词（四视图）"""
         try:
-            prompt = self.PROMPT_TEMPLATE.format(
-                subject_type=subject_type,
-                description=description
+            prompt = self.CHARACTER_PROMPT_TEMPLATE.format(
+                character_features=character_features,
+                visual_style=visual_style
             )
             response = await self.llm.ainvoke(prompt)
-            return response.content.strip()
+            result = response.content.strip()
+            logger.info(f"[AssetDirector] 角色提示词生成成功，长度: {len(result)}")
+            return result
         except Exception as e:
-            logger.warning(f"[AssetDirector] 生成提示词失败: {e}，使用原始描述")
-            return description
+            logger.warning(f"[AssetDirector] 角色提示词生成失败: {e}，使用默认格式")
+            return f"Landscape orientation, character reference sheet with four views, anime style, pure white background. {character_features}"
+    
+    async def _generate_scene_prompt(self, scene_environment: str, visual_style: str) -> str:
+        """使用专业模板生成场景图提示词"""
+        try:
+            prompt = self.SCENE_PROMPT_TEMPLATE.format(
+                scene_environment=scene_environment,
+                visual_style=visual_style
+            )
+            response = await self.llm.ainvoke(prompt)
+            result = response.content.strip()
+            logger.info(f"[AssetDirector] 场景提示词生成成功，长度: {len(result)}")
+            return result
+        except Exception as e:
+            logger.warning(f"[AssetDirector] 场景提示词生成失败: {e}，使用默认格式")
+            return f"Anime style, high quality animation illustration, wide shot, 16:9 widescreen composition. {scene_environment}"
 
 
 # 便捷函数

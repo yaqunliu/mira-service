@@ -60,32 +60,69 @@ class StoryboardDirectorNode:
 
 只输出 JSON，不要其他内容。"""
 
-    # 第二步：生成图片提示词
-    PROMPT_GENERATION_PROMPT = """你是一位专业的分镜图片提示词生成专家。根据分镜描述生成首帧和尾帧的图片提示词。
+    # 第二步：生成图片提示词 - 专业版（参考 shot_image_v4.md）
+    PROMPT_GENERATION_PROMPT = """你是一位世界级电影导演兼专业布景师，负责为分镜生成首帧和尾帧的静态图片提示词。
+
+## 视觉风格
+{visual_style}
+
+## 角色档案
+{character_profiles}
+
+## 场景环境
+{scene_environment}
+
+## 核心创作原则
+
+### 1. 情绪分析（必须）
+在生成每个分镜的提示词前，先分析角色的情绪状态：
+- 表面情绪与内心情绪
+- 情绪转变（首帧 → 尾帧）
+- 通过面部表情、眼神、肢体语言传达
+
+### 2. 景别选择（灵活）
+根据故事需要选择最合适的景别：
+- **远景/全景**：建立空间感、交代环境
+- **中景**：展示肢体动作、多人互动
+- **近景/特写**：强调面部表情、传达情绪
+
+### 3. 首尾帧区分
+- **首帧**：分镜开始时的画面状态（动作起点 + 起始情绪）
+- **尾帧**：分镜结束时的画面状态，可以是：
+  - 眼睛特写（情感高潮）
+  - 手部特写（动作/情绪细节）
+  - 物品特写（象征意义）
+  - 脚步特写（奔跑/离别）
+
+### 4. 禁止事项
+- ❌ 禁止镜头运动描述（推镜、拉镜、平移）
+- ❌ 禁止动态过程（"从...到..."、"逐渐..."）
+- ✅ 只描述固定的瞬间画面
+
+## 分镜列表
+{shots_description}
 
 ## 输出格式
 返回 JSON 数组，每项包含：
-- shot_number: 分镜编号（从 1 开始）
-- image_prompt: 首帧图片提示词（英文）
-- end_frame_prompt: 尾帧图片提示词（英文）
-
-## 图片提示词要求
-1. **必须使用英文**
-2. 包含：人物（外观、姿态、表情）、场景（环境、物品）、光线（氛围、色调）、镜头（角度、景别）
-3. 首帧和尾帧应体现动作的起止状态
-4. 风格统一，适合漫剧/动漫风格
-5. 提示词长度 50-100 个英文单词
-
-## 输出示例
 ```json
 [
-    {
+    {{
         "shot_number": 1,
-        "image_prompt": "A young woman with long black hair sitting by a window in a cozy cafe, reading a book, warm sunlight streaming through glass, soft golden hour lighting, medium shot, anime style, peaceful expression",
-        "end_frame_prompt": "Same young woman looking up from her book with a surprised expression, sunlight highlighting her face, eyes wide with curiosity, anime style, medium shot"
-    }
+        "emotion_analysis": {{
+            "character": "角色名",
+            "start_emotion": "首帧情绪",
+            "end_emotion": "尾帧情绪"
+        }},
+        "image_prompt": "首帧提示词（英文，包含风格、景别、角色外貌、表情、服装、场景、光影）",
+        "end_frame_prompt": "尾帧提示词（英文，可以是特写或不同景别，体现情绪/动作变化）"
+    }}
 ]
 ```
+
+## 提示词模板
+首帧：`{visual_style}, [景别], [视角]视角, 16:9宽屏构图. [场景描述]. [角色名]([外貌特征], [服装], [表情], [眼神], [肢体语言]), 位于画面[位置]. [光影氛围], high quality, 8K detail.`
+
+尾帧（特写模式）：`{visual_style}, extreme close-up, 16:9构图. [聚焦部位]的特写: [细节描述], [情绪体现]. [光影], high quality, 8K detail.`
 
 只输出 JSON，不要其他内容。"""
     
@@ -232,7 +269,7 @@ class StoryboardDirectorNode:
             
             # ========== Step 3 & 4: 生成并保存图片提示词 ==========
             if progress["step"] < 3:
-                logger.info("[StoryboardDirector] Step 3: LLM 生成图片提示词...")
+                logger.info("[StoryboardDirector] Step 3: LLM 生成图片提示词（专业版）...")
                 
                 # 需要从 DB 获取分镜描述
                 if not shots_data:
@@ -252,14 +289,62 @@ class StoryboardDirectorNode:
                         for i, s in enumerate(shots_data)
                     ])
                 
-                prompt_request = f"""为以下 {shot_count} 个分镜生成首帧和尾帧图片提示词：
-
-{shots_desc}
-
-请按顺序生成所有分镜的图片提示词。"""
+                # 获取视觉风格
+                visual_style = "日本动漫风格"  # 默认
+                if state.get("creation_extra_data"):
+                    extra_data = state.get("creation_extra_data", {})
+                    visual_style = extra_data.get("visual_style", visual_style)
+                
+                # 获取角色档案
+                character_profiles = "未指定角色"
+                try:
+                    from app.agent.tools.db_tools import query_characters
+                    chars_result = await query_characters.ainvoke({"creation_uuid": creation_uuid})
+                    if chars_result.get("success"):
+                        characters = chars_result.get("characters", [])
+                        if characters:
+                            profiles = []
+                            for char in characters:
+                                profile = f"- {char.get('name', '未知')}"
+                                if char.get("appearance"):
+                                    profile += f": {char['appearance']}"
+                                if char.get("costume"):
+                                    profile += f"，服装: {char['costume']}"
+                                profiles.append(profile)
+                            character_profiles = "\n".join(profiles)
+                except Exception as e:
+                    logger.warning(f"[StoryboardDirector] 获取角色档案失败: {e}")
+                
+                # 获取场景环境
+                scene_environment = "未指定场景"
+                try:
+                    from app.agent.tools.db_tools import query_scenes
+                    scenes_result = await query_scenes.ainvoke({"creation_uuid": creation_uuid})
+                    if scenes_result.get("success"):
+                        scenes = scenes_result.get("scenes", [])
+                        if scenes:
+                            scene_descs = []
+                            for scene in scenes:
+                                desc = f"- {scene.get('title', '未知场景')}"
+                                if scene.get("description"):
+                                    desc += f": {scene['description']}"
+                                scene_descs.append(desc)
+                            scene_environment = "\n".join(scene_descs)
+                except Exception as e:
+                    logger.warning(f"[StoryboardDirector] 获取场景信息失败: {e}")
+                
+                # 格式化专业模板
+                formatted_prompt = self.PROMPT_GENERATION_PROMPT.format(
+                    visual_style=visual_style,
+                    character_profiles=character_profiles,
+                    scene_environment=scene_environment,
+                    shots_description=shots_desc,
+                )
+                
+                prompt_request = f"""为以下 {shot_count} 个分镜生成首帧和尾帧图片提示词，请严格按照上述专业要求生成。"""
                 
                 prompt_response = await self.llm.ainvoke([
-                    SystemMessage(content=self.PROMPT_GENERATION_PROMPT),
+                    SystemMessage(content=formatted_prompt),
                     HumanMessage(content=prompt_request)
                 ])
                 
@@ -267,7 +352,7 @@ class StoryboardDirectorNode:
                 if not prompts_data:
                     logger.warning("[StoryboardDirector] 图片提示词生成失败")
                 else:
-                    logger.info(f"[StoryboardDirector] LLM 生成 {len(prompts_data)} 个提示词")
+                    logger.info(f"[StoryboardDirector] LLM 生成 {len(prompts_data)} 个专业提示词")
                     
                     # Step 4: 保存提示词
                     logger.info("[StoryboardDirector] Step 4: 保存图片提示词...")
