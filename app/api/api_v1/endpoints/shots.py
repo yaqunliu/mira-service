@@ -59,88 +59,14 @@ async def get_scene_shots(
     result = await db.execute(
         select(Shot).options(
             selectinload(Shot.characters)
-        ).where(Shot.scene_id == scene.scene_id).order_by(Shot.shot_number)
+        ).where(Shot.scene_id == scene.scene_id)
+        .order_by(Shot.sequence_number)
     )
     shots = result.scalars().all()
     
-    shot_responses = [ShotResponse.from_db_model(shot) for shot in shots]
-    
     return success_response(
-        data={
-            "items": [shot.model_dump() for shot in shot_responses],
-            "total": len(shot_responses)
-        },
+        data=[ShotResponse.model_validate(shot) for shot in shots],
         message="获取分镜列表成功"
-    )
-
-
-@router.post("/")
-async def create_shot(
-    shot_data: ShotCreate,
-    db: AsyncSession = Depends(get_async_db),
-    user: User = Depends(get_current_user)
-):
-    """创建新分镜"""
-    result = await db.execute(
-        select(Scene).options(
-            selectinload(Scene.creation)
-        ).where(Scene.scene_id == shot_data.scene_id)
-    )
-    scene = result.scalar_one_or_none()
-    
-    if not scene:
-        raise HTTPException(status_code=404, detail="场景不存在")
-    
-    if scene.creation.owner_id != user.user_id:
-        raise HTTPException(status_code=403, detail="无权限访问该场景")
-    
-    shot_number = shot_data.shot_number
-    if shot_number is None:
-        result = await db.execute(
-            select(func.max(Shot.shot_number)).where(Shot.scene_id == shot_data.scene_id)
-        )
-        max_number = result.scalar()
-        shot_number = (max_number or 0) + 1
-    
-    narration_data = shot_data.narration
-    if isinstance(narration_data, list):
-        narration_data = json.dumps([item.model_dump(by_alias=True) for item in narration_data], ensure_ascii=False)
-        
-    shot = Shot(
-        title=shot_data.title,
-        shot_number=shot_number,
-        description=shot_data.description,
-        narration=narration_data,
-        image_prompt=shot_data.image_prompt,
-        scene_id=shot_data.scene_id,
-        creation_id=scene.creation_id
-    )
-    
-    db.add(shot)
-    await db.flush()
-    
-    if shot_data.associated_characters:
-        result = await db.execute(
-            select(Character).where(Character.character_id.in_(shot_data.associated_characters))
-        )
-        characters = result.scalars().all()
-        shot.characters = characters
-    
-    await db.commit()
-    await db.refresh(shot)
-    
-    result = await db.execute(
-        select(Shot).options(
-            selectinload(Shot.characters)
-        ).where(Shot.shot_id == shot.shot_id)
-    )
-    shot = result.scalar_one_or_none()
-    
-    shot_response = ShotResponse.from_db_model(shot)
-    
-    return success_response(
-        data=shot_response.model_dump(),
-        message="分镜创建成功"
     )
 
 
@@ -150,11 +76,11 @@ async def get_shot(
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
-    """根据UUID获取分镜详情"""
+    """获取分镜详情"""
     result = await db.execute(
         select(Shot).options(
-            selectinload(Shot.characters),
-            selectinload(Shot.scene).selectinload(Scene.creation)
+            selectinload(Shot.scene).selectinload(Scene.creation),
+            selectinload(Shot.characters)
         ).where(Shot.uuid == shot_uuid)
     )
     shot = result.scalar_one_or_none()
@@ -165,26 +91,84 @@ async def get_shot(
     if shot.scene.creation.owner_id != user.user_id:
         raise HTTPException(status_code=403, detail="无权限访问该分镜")
     
-    shot_response = ShotResponse.from_db_model(shot)
+    return success_response(
+        data=ShotResponse.model_validate(shot),
+        message="获取分镜详情成功"
+    )
+
+
+@router.post("/scene/{scene_uuid}")
+async def create_shot(
+    scene_uuid: str,
+    shot_data: ShotCreate,
+    db: AsyncSession = Depends(get_async_db),
+    user: User = Depends(get_current_user)
+):
+    """创建分镜"""
+    result = await db.execute(
+        select(Scene).options(
+            selectinload(Scene.creation)
+        ).where(Scene.uuid == scene_uuid)
+    )
+    scene = result.scalar_one_or_none()
+    
+    if not scene:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    
+    if scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限在该场景下创建分镜")
+    
+    # 获取当前最大序号
+    result = await db.execute(
+        select(func.max(Shot.sequence_number))
+        .where(Shot.scene_id == scene.scene_id)
+    )
+    max_sequence = result.scalar() or 0
+    
+    shot = Shot(
+        scene_id=scene.scene_id,
+        title=shot_data.title,
+        description=shot_data.description,
+        sequence_number=max_sequence + 1,
+        narration=shot_data.narration,
+        character_ids=shot_data.character_ids,
+        video_duration=shot_data.video_duration or 5
+    )
+    
+    db.add(shot)
+    await db.commit()
+    await db.refresh(shot)
+    
+    # 关联角色
+    if shot_data.character_ids:
+        result = await db.execute(
+            select(Character).where(
+                Character.character_id.in_(shot_data.character_ids),
+                Character.creation_id == scene.creation_id
+            )
+        )
+        characters = result.scalars().all()
+        shot.characters = characters
+        await db.commit()
     
     return success_response(
-        data=shot_response.model_dump(),
-        message="获取分镜成功"
+        data=ShotResponse.model_validate(shot),
+        message="分镜创建成功"
     )
 
 
 @router.put("/{shot_uuid}")
 async def update_shot(
     shot_uuid: str,
-    shot_update: ShotUpdate,
+    shot_data: ShotUpdate,
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
-    """更新分镜信息"""
+    """更新分镜"""
     result = await db.execute(
         select(Shot).options(
-            selectinload(Shot.characters),
-            selectinload(Shot.scene).selectinload(Scene.creation)
+            selectinload(Shot.scene).selectinload(Scene.creation),
+            selectinload(Shot.characters)
         ).where(Shot.uuid == shot_uuid)
     )
     shot = result.scalar_one_or_none()
@@ -193,55 +177,32 @@ async def update_shot(
         raise HTTPException(status_code=404, detail="分镜不存在")
     
     if shot.scene.creation.owner_id != user.user_id:
-        raise HTTPException(status_code=403, detail="无权限修改该分镜")
+        raise HTTPException(status_code=403, detail="无权限更新该分镜")
     
-    if shot_update.title is not None:
-        shot.title = shot_update.title
-    if shot_update.shot_number is not None:
-        shot.shot_number = shot_update.shot_number
-    if shot_update.description is not None:
-        shot.description = shot_update.description
-    if shot_update.narration is not None:
-        if isinstance(shot_update.narration, list):
-            shot.narration = json.dumps([item.model_dump(by_alias=True) for item in shot_update.narration], ensure_ascii=False)
-        else:
-            shot.narration = shot_update.narration
-    if shot_update.image_prompt is not None:
-        shot.image_prompt = shot_update.image_prompt
-    if shot_update.image_url is not None:
-        shot.image_url = shot_update.image_url
-    if shot_update.video_duration is not None:
-        shot.video_duration = shot_update.video_duration
-    if shot_update.extra_data is not None:
-        shot.extra_data = shot_update.extra_data
-        from sqlalchemy.orm.attributes import flag_modified
-        flag_modified(shot, 'extra_data')
-    
-    if shot_update.scene_id is not None:
+    # 更新字段
+    if shot_data.title is not None:
+        shot.title = shot_data.title
+    if shot_data.description is not None:
+        shot.description = shot_data.description
+    if shot_data.narration is not None:
+        shot.narration = shot_data.narration
+    if shot_data.character_ids is not None:
         result = await db.execute(
-            select(Scene).where(Scene.scene_id == shot_update.scene_id)
-        )
-        new_scene = result.scalar_one_or_none()
-        if not new_scene:
-            raise HTTPException(status_code=404, detail="目标场景不存在")
-        if new_scene.creation_id != shot.scene.creation_id:
-            raise HTTPException(status_code=400, detail="目标场景不属于当前创作")
-        shot.scene_id = shot_update.scene_id
-
-    if shot_update.associated_characters is not None:
-        result = await db.execute(
-            select(Character).where(Character.character_id.in_(shot_update.associated_characters))
+            select(Character).where(
+                Character.character_id.in_(shot_data.character_ids),
+                Character.creation_id == shot.scene.creation_id
+            )
         )
         characters = result.scalars().all()
         shot.characters = characters
+    if shot_data.video_duration is not None:
+        shot.video_duration = shot_data.video_duration
     
     await db.commit()
     await db.refresh(shot)
     
-    shot_response = ShotResponse.from_db_model(shot)
-    
     return success_response(
-        data=shot_response.model_dump(),
+        data=ShotResponse.model_validate(shot),
         message="分镜更新成功"
     )
 
@@ -249,15 +210,15 @@ async def update_shot(
 @router.put("/{shot_uuid}/characters")
 async def update_shot_characters(
     shot_uuid: str,
-    payload: ShotCharactersUpdateRequest,
+    request: ShotCharactersUpdateRequest,
     db: AsyncSession = Depends(get_async_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user)
 ):
-    """仅更新分镜关联的角色"""
+    """更新分镜关联的角色"""
     result = await db.execute(
         select(Shot).options(
-            selectinload(Shot.characters),
-            selectinload(Shot.scene).selectinload(Scene.creation)
+            selectinload(Shot.scene).selectinload(Scene.creation),
+            selectinload(Shot.characters)
         ).where(Shot.uuid == shot_uuid)
     )
     shot = result.scalar_one_or_none()
@@ -266,23 +227,22 @@ async def update_shot_characters(
         raise HTTPException(status_code=404, detail="分镜不存在")
     
     if shot.scene.creation.owner_id != user.user_id:
-        raise HTTPException(status_code=403, detail="无权限修改该分镜")
+        raise HTTPException(status_code=403, detail="无权限更新该分镜")
     
-    if payload.associated_characters:
+    # 更新角色关联
+    if request.character_ids is not None:
         result = await db.execute(
-            select(Character).where(Character.character_id.in_(payload.associated_characters))
+            select(Character).where(
+                Character.character_id.in_(request.character_ids),
+                Character.creation_id == shot.scene.creation_id
+            )
         )
         characters = result.scalars().all()
         shot.characters = characters
-    else:
-        shot.characters = []
+        await db.commit()
     
-    await db.commit()
-    await db.refresh(shot)
-    
-    shot_response = ShotResponse.from_db_model(shot)
     return success_response(
-        data=shot_response.model_dump(),
+        data=ShotResponse.model_validate(shot),
         message="分镜角色更新成功"
     )
 
@@ -290,14 +250,13 @@ async def update_shot_characters(
 @router.put("/{shot_uuid}/narration")
 async def update_shot_narration(
     shot_uuid: str,
-    payload: ShotNarrationUpdateRequest,
+    request: ShotNarrationUpdateRequest,
     db: AsyncSession = Depends(get_async_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user)
 ):
     """更新分镜旁白"""
     result = await db.execute(
         select(Shot).options(
-            selectinload(Shot.characters),
             selectinload(Shot.scene).selectinload(Scene.creation)
         ).where(Shot.uuid == shot_uuid)
     )
@@ -307,21 +266,20 @@ async def update_shot_narration(
         raise HTTPException(status_code=404, detail="分镜不存在")
     
     if shot.scene.creation.owner_id != user.user_id:
-        raise HTTPException(status_code=403, detail="无权限修改该分镜")
+        raise HTTPException(status_code=403, detail="无权限更新该分镜")
     
-    shot.narration = json.dumps([item.model_dump(by_alias=True) for item in payload.narration], ensure_ascii=False)
+    # 更新旁白
+    if request.narration is not None:
+        shot.narration = request.narration
+        await db.commit()
     
-    await db.commit()
-    await db.refresh(shot)
-    
-    shot_response = ShotResponse.from_db_model(shot)
     return success_response(
-        data=shot_response.model_dump(),
+        data=ShotResponse.model_validate(shot),
         message="分镜旁白更新成功"
     )
 
 
-@router.post("/{shot_uuid}/generate-image")
+@router.post("/{shot_uuid}/generate")
 async def generate_shot_image(
     shot_uuid: str,
     request: ShotRegenerateRequest = ShotRegenerateRequest(),
@@ -336,23 +294,19 @@ async def generate_shot_image(
         ).where(Shot.uuid == shot_uuid)
     )
     shot = result.scalar_one_or_none()
-    
+
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
-    
+
     if shot.scene.creation.owner_id != user.user_id:
         raise HTTPException(status_code=403, detail="无权限操作该分镜")
-    
-    if request.image_prompt:
-        shot.image_prompt = request.image_prompt
-        await db.commit()
-        await db.refresh(shot)
-    
-    if not shot.image_prompt:
-        raise HTTPException(status_code=400, detail="分镜没有图片提示词，无法生成图片")
-    
+
+    if not shot.description:
+        raise HTTPException(status_code=400, detail="分镜没有描述，无法生成图片")
+
+    # 计算所需积分
     creation_id = shot.scene.creation.creation_id
-    
+
     extra_data = shot.scene.creation.extra_data or {}
     image_model = (
         request.model_name
@@ -363,17 +317,17 @@ async def generate_shot_image(
         or settings.IMAGE_MODEL_NAME
         or "black-forest-labs/flux-kontext-pro/multi"
     )
-    
+
     reference_image_count = 0
     if shot.characters:
         reference_image_count = sum(1 for c in shot.characters if getattr(c, "image_url", None))
-    
+
     try:
         model_config = ModelConfigService.get_model_config(image_model, "image_to_image")
         image_size = model_config.get("image_size", "2K") if model_config else "2K"
     except Exception:
         image_size = "2K"
-    
+
     cost = ModelPrices.calculate_image_cost(
         image_model,
         1,
@@ -383,7 +337,7 @@ async def generate_shot_image(
     required_points = int(math.ceil(cost * 100))
     if required_points <= 0:
         required_points = 1
-    
+
     try:
         freeze_record = await PointsAsyncService.freeze_points(
             db=db,
@@ -401,16 +355,16 @@ async def generate_shot_image(
         )
     except InsufficientPointsError as e:
         raise HTTPException(status_code=402, detail=str(e))
-    
+
     task = generate_single_shot_image_task.delay(
         shot_id=shot.shot_id,
         creation_id=creation_id,
         model_name=request.model_name,
         freeze_record_id=freeze_record.record_id
     )
-    
+
     logger.info(f"分镜 {shot_uuid} 图片生成任务已启动: task_id={task.id}, freeze_record_id={freeze_record.record_id}")
-    
+
     return success_response(
         data={
             "task_id": task.id,
@@ -446,7 +400,7 @@ async def regenerate_shot_image(
 
     frame_type = request.frame_type or "both"
     force_regen_prompt = request.refresh_prompt
-    
+
     if request.image_prompt is not None:
         if frame_type in ("start", "both"):
             shot.image_prompt = request.image_prompt
@@ -480,7 +434,7 @@ async def regenerate_shot_image(
     if frame_type in ("start", "both"):
         shot.image_url = None
         logger.info(f"分镜 {shot_uuid} [{frame_type}] 清空首帧 image_url")
-    
+
     if frame_type in ("end", "both"):
         if shot.extra_data and "end_frame_image_url" in shot.extra_data:
             shot.extra_data["end_frame_image_url"] = None
@@ -503,17 +457,17 @@ async def regenerate_shot_image(
         or settings.IMAGE_MODEL_NAME
         or "black-forest-labs/flux-kontext-pro/multi"
     )
-    
+
     reference_image_count = 0
     if shot.characters:
         reference_image_count = sum(1 for c in shot.characters if getattr(c, "image_url", None))
-    
+
     try:
         model_config = ModelConfigService.get_model_config(image_model, "image_to_image")
         image_size = model_config.get("image_size", "2K") if model_config else "2K"
     except Exception:
         image_size = "2K"
-    
+
     cost = ModelPrices.calculate_image_cost(
         image_model,
         1,
@@ -523,7 +477,7 @@ async def regenerate_shot_image(
     required_points = int(math.ceil(cost * 100))
     if required_points <= 0:
         required_points = 1
-    
+
     try:
         freeze_record = await PointsAsyncService.freeze_points(
             db=db,
@@ -543,7 +497,7 @@ async def regenerate_shot_image(
         )
     except InsufficientPointsError as e:
         raise HTTPException(status_code=402, detail=str(e))
-    
+
     task = generate_single_shot_image_task.delay(
         shot_id=shot.shot_id,
         creation_id=creation_id,
@@ -552,9 +506,9 @@ async def regenerate_shot_image(
         frame_type=frame_type,
         force_regen_prompt=force_regen_prompt
     )
-    
+
     logger.info(f"分镜 {shot_uuid} [{frame_type}] 图片重新生成任务已启动: task_id={task.id}, freeze_record_id={freeze_record.record_id}")
-    
+
     return success_response(
         data={
             "task_id": task.id,
@@ -581,16 +535,16 @@ async def delete_shot(
         ).where(Shot.uuid == shot_uuid)
     )
     shot = result.scalar_one_or_none()
-    
+
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
-    
+
     if shot.scene.creation.owner_id != user.user_id:
         raise HTTPException(status_code=403, detail="无权限删除该分镜")
-    
+
     await db.delete(shot)
     await db.commit()
-    
+
     return success_response(
         data={"shot_uuid": shot_uuid},
         message="分镜删除成功"
@@ -616,15 +570,15 @@ async def get_shot_image_history(
         ).where(Shot.uuid == shot_uuid)
     )
     shot = result.scalar_one_or_none()
-    
+
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
-    
+
     if shot.scene.creation.owner_id != user.user_id:
         raise HTTPException(status_code=403, detail="无权限访问该分镜")
-    
+
     image_history = shot.extra_data.get('image_history', []) if shot.extra_data else []
-    
+
     return success_response(
         data={
             "current_image_url": shot.image_url,
@@ -649,33 +603,33 @@ async def apply_shot_image_version(
         ).where(Shot.uuid == shot_uuid)
     )
     shot = result.scalar_one_or_none()
-    
+
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
-    
+
     if shot.scene.creation.owner_id != user.user_id:
         raise HTTPException(status_code=403, detail="无权限操作该分镜")
-    
+
     image_history = shot.extra_data.get('image_history', []) if shot.extra_data else []
-    
+
     version_found = any(v.get('version_id') == request.version_id for v in image_history)
-    
+
     if not version_found:
         raise HTTPException(status_code=404, detail="指定的版本不存在")
-    
+
     shot.image_url = request.image_url
     if request.image_prompt:
         shot.image_prompt = request.image_prompt
 
     for version in image_history:
         version['is_current'] = version.get('version_id') == request.version_id
-    
+
     if shot.extra_data is None:
         shot.extra_data = {}
     shot.extra_data['image_history'] = image_history
     from sqlalchemy.orm.attributes import flag_modified
     flag_modified(shot, "extra_data")
-    
+
     await db.commit()
     await db.refresh(shot)
 
@@ -827,3 +781,86 @@ async def regenerate_shot_video(
         },
         message="视频重新生成任务已启动"
     )
+
+
+# ==================== Narration Audio Generation API ====================
+
+class GenerateNarrationAudioRequest(BaseModel):
+    """生成 narration 音频请求"""
+    narration_index: int
+    speaker: str
+    text: str
+
+
+@router.post("/{shot_id}/generate-narration-audio")
+async def generate_narration_audio(
+    shot_id: int,
+    request: GenerateNarrationAudioRequest,
+    db: AsyncSession = Depends(get_async_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    为 narration 生成音频
+
+    - shot_id: 分镜 ID
+    - narration_index: narration 数组索引
+    - speaker: 说话者名称
+    - text: 文本内容
+    """
+    from app.agent.tools.audio_tools import GenerateNarrationAudioBatchTool
+    from app.agent.state.schemas import ComicDramaState
+
+    # 获取 shot
+    result = await db.execute(
+        select(Shot).options(
+            selectinload(Shot.scene).selectinload(Scene.creation),
+            selectinload(Shot.characters)
+        ).where(Shot.shot_id == shot_id)
+    )
+    shot = result.scalar_one_or_none()
+
+    if not shot:
+        raise HTTPException(status_code=404, detail="分镜不存在")
+
+    if shot.scene.creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权限操作该分镜")
+
+    try:
+        # 创建工具实例
+        audio_batch_tool = GenerateNarrationAudioBatchTool()
+
+        # 创建状态对象
+        state = ComicDramaState(creation_uuid=shot.scene.creation.uuid)
+
+        # 生成音频（传入已存在的 db 会话）
+        result = await audio_batch_tool.execute(
+            state=state,
+            shot_id=shot_id,
+            force_regenerate=True,  # 强制重新生成
+            db=db  # 使用 API 的 db 会话
+        )
+
+        if result.get("success"):
+            data = result.get("data", {})
+            narrations = data.get("narrations", [])
+
+            # 找到对应的 narration
+            if request.narration_index < len(narrations):
+                narration_data = narrations[request.narration_index]
+                return success_response(
+                    data={
+                        "audio_url": narration_data.get("audio_url"),
+                        "audio_historys": narration_data.get("audio_historys", [])
+                    },
+                    message="音频生成成功"
+                )
+            else:
+                raise HTTPException(status_code=500, detail="narration 索引超出范围")
+        else:
+            error_msg = result.get("error", "音频生成失败")
+            logger.error(f"生成 narration 音频失败: {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+
+    except Exception as e:
+        logger.exception(f"生成 narration 音频异常: {e}")
+        raise HTTPException(status_code=500, detail=f"音频生成失败: {str(e)}")

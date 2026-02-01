@@ -262,22 +262,116 @@ class GenerateAudioTool(BaseTool):
             speed: 语速（0.5-2.0）
         """
         try:
-            from app.services.audio_service import AudioService
+            from app.utils.fish_audio import FishAudioClient
+            from app.utils.us3 import US3Client
+            import asyncio
+            import re
             
             logger.info(f"生成音频: {text[:50]}...")
             
-            # 使用 AudioService 生成音频
-            audio_service = AudioService()
-            result = await audio_service.generate_speech(
-                text=text,
-                voice_id=voice_id or settings.FISH_AUDIO_DEFAULT_VOICE_ID,
-                speed=speed
+            # Step 1: 使用 LLM 为文本添加 Fish Audio 情感标签
+            ai_client = AIClient()
+            
+            system_prompt = """你是一个专业的语音情感分析专家。你的任务是为文本添加 Fish Audio TTS 系统的情感标签。
+
+Fish Audio 支持以下基本情感标签：
+- happy: 愉快、乐观
+- sad: 忧郁、低落  
+- angry: 愤怒、激动
+- excited: 充满活力、热情
+- calm: 平静、放松
+- nervous: 焦虑、不确定
+- confident: 自信、肯定
+- surprised: 震惊、惊奇
+- whispering: 小声、耳语
+- laughing: 笑声
+- sighing: 叹气
+
+使用规则：
+1. 分析文本的情感基调，选择最匹配的1-2个情感标签
+2. 将情感标签用括号包裹，放在句首，如：(happy)今天天气真好！
+3. 只输出添加标签后的文本，不要其他解释
+
+示例：
+输入：今天天气真好，我们去公园玩吧！
+输出：(happy)今天天气真好，我们去公园玩吧！
+
+输入：我...我不知道该怎么办...
+输出：(nervous,whispering)我...我不知道该怎么办..."""
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"文本：{text}"}
+            ]
+            
+            result = await asyncio.to_thread(
+                ai_client.chat_completion,
+                messages=messages,
+                model=getattr(settings, 'LLM_MODEL_EXTRACTION', None) or settings.LLM_MODEL_DEFAULT,
+                temperature=0.3
             )
+            
+            text_with_emotion = result.get("content", "").strip()
+            
+            # 如果 LLM 返回空或格式不对，使用原文本
+            if not text_with_emotion or len(text_with_emotion) < len(text) * 0.5:
+                logger.warning(f"LLM 情感标签生成失败，使用原文本")
+                text_with_emotion = text
+            
+            # 打印 LLM 输出结果
+            logger.info(f"[GenerateAudio] 原始文本: {text}")
+            logger.info(f"[GenerateAudio] LLM 输出(带情感标签): {text_with_emotion}")
+            
+            # Step 2: 使用 FishAudioClient 生成音频
+            client = FishAudioClient()
+            
+            # 在线程池中执行同步的 TTS 调用
+            loop = asyncio.get_event_loop()
+            audio_bytes = await loop.run_in_executor(
+                None,
+                lambda: client.text_to_speech(
+                    text=text_with_emotion,
+                    reference_id=voice_id or settings.FISH_AUDIO_DEFAULT_VOICE_ID,
+                    speed=speed if speed != 1.0 else None
+                )
+            )
+            
+            # 上传音频到 US3
+            us3_client = US3Client()
+            creation_uuid = state.get("creation_uuid") or "default"
+            
+            # 使用文案前10个字作为文件名（去除特殊字符）
+            import re
+            safe_text = re.sub(r'[^\w\u4e00-\u9fff]+', '_', text[:10]).strip('_')
+            if not safe_text:
+                safe_text = "audio"
+            file_name = f"audio/{creation_uuid}/{safe_text}.mp3"
+            
+            # 设置 Content-Type 头
+            header = {
+                'Content-Type': 'audio/mpeg'
+            }
+            
+            upload_result = await loop.run_in_executor(
+                None,
+                lambda: us3_client.upload_file_stream(
+                    file_stream=audio_bytes,
+                    put_key=file_name,
+                    header=header,
+                    content_type="audio/mpeg"
+                )
+            )
+            
+            # 检查上传是否成功并生成 URL
+            if isinstance(upload_result, dict) and upload_result.get("success"):
+                audio_url = us3_client.get_file_url(file_name)
+            else:
+                error_msg = upload_result.get("message", "上传失败") if isinstance(upload_result, dict) else "上传失败"
+                raise Exception(f"US3上传失败: {error_msg}")
             
             return {
                 "success": True,
-                "audio_url": result.get("audio_url"),
-                "duration": result.get("duration"),
+                "audio_url": audio_url,
                 "voice_id": voice_id
             }
                 
@@ -390,4 +484,153 @@ class GeneratePromptTool(BaseTool):
                 
         except Exception as e:
             logger.error(f"生成提示词失败: {e}")
+            return {"success": False, "error": str(e)}
+
+
+class GenerateAudioWithEmotionTool(BaseTool):
+    """生成带情感标签的音频工具
+    
+    使用 LLM 分析文本情感并添加 Fish Audio 情感标签，然后生成音频
+    """
+    
+    name = "generate_audio_with_emotion"
+    description = "使用 LLM 为文本添加情感标签后生成音频"
+    
+    async def execute(
+        self,
+        state: ComicDramaState,
+        text: str,
+        voice_id: Optional[str] = None,
+        speaker: Optional[str] = None,
+        speed: float = 1.0,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        生成带情感标签的音频
+        
+        Args:
+            text: 要合成的文本
+            voice_id: 音色 ID（可选）
+            speaker: 说话者角色（旁白/角色名，用于判断情感）
+            speed: 语速（0.5-2.0）
+        """
+        try:
+            from app.utils.fish_audio import FishAudioClient, BasicEmotion
+            from app.utils.us3 import US3Client
+            import re
+            
+            logger.info(f"生成带情感标签的音频: {text[:50]}...")
+            
+            # Step 1: 使用 LLM 分析文本并添加 Fish Audio 情感标签
+            ai_client = AIClient()
+            
+            system_prompt = """你是一个专业的语音情感分析专家。你的任务是为文本添加 Fish Audio TTS 系统的情感标签。
+
+Fish Audio 支持以下基本情感标签（适用于所有模型）：
+- happy: 愉快、乐观
+- sad: 忧郁、低落
+- angry: 愤怒、激动
+- excited: 充满活力、热情
+- calm: 平静、放松
+- nervous: 焦虑、不确定
+- confident: 自信、肯定
+- surprised: 震惊、惊奇
+- whispering: 小声、耳语
+- laughing: 笑声
+- sighing: 叹气
+- neutral: 中性
+
+使用规则：
+1. 分析文本的情感基调，选择最匹配的1-2个情感标签
+2. 将情感标签用括号包裹，放在句首，如：(happy)今天天气真好！
+3. 如果是旁白，通常使用 calm 或 confident
+4. 如果是角色对话，根据内容选择合适的情感
+5. 只输出添加标签后的文本，不要其他解释
+
+示例：
+输入：今天天气真好，我们去公园玩吧！
+输出：(happy)今天天气真好，我们去公园玩吧！
+
+输入：我...我不知道该怎么办...
+输出：(nervous,whispering)我...我不知道该怎么办..."""
+
+            user_prompt = f"说话者：{speaker or '未知'}\n文本：{text}\n\n请为上述文本添加合适的情感标签："
+            
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+            
+            # 使用非-thinking 模式
+            result = await asyncio.to_thread(
+                ai_client.chat_completion,
+                messages=messages,
+                model=getattr(settings, 'LLM_MODEL_EXTRACTION', None) or settings.LLM_MODEL_DEFAULT,
+                temperature=0.3
+            )
+            
+            text_with_emotion = result.get("content", "").strip()
+            
+            # 如果 LLM 返回空或格式不对，使用原文本
+            if not text_with_emotion or len(text_with_emotion) < len(text) * 0.5:
+                logger.warning(f"LLM 情感标签生成失败，使用原文本")
+                text_with_emotion = text
+            
+            logger.info(f"添加情感标签后的文本: {text_with_emotion[:100]}...")
+            
+            # Step 2: 使用 Fish Audio 生成音频
+            client = FishAudioClient()
+            
+            loop = asyncio.get_event_loop()
+            audio_bytes = await loop.run_in_executor(
+                None,
+                lambda: client.text_to_speech(
+                    text=text_with_emotion,
+                    reference_id=voice_id or settings.FISH_AUDIO_DEFAULT_VOICE_ID,
+                    speed=speed if speed != 1.0 else None
+                )
+            )
+            
+            # Step 3: 上传音频到 US3
+            us3_client = US3Client()
+            creation_uuid = state.get("creation_uuid") or "default"
+            
+            # 使用文案前10个字作为文件名
+            safe_text = re.sub(r'[^\w\u4e00-\u9fff]+', '_', text[:10]).strip('_')
+            if not safe_text:
+                safe_text = "audio"
+            file_name = f"audio/{creation_uuid}/{safe_text}.mp3"
+            
+            header = {
+                'Content-Type': 'audio/mpeg'
+            }
+            
+            upload_result = await loop.run_in_executor(
+                None,
+                lambda: us3_client.upload_file_stream(
+                    file_stream=audio_bytes,
+                    put_key=file_name,
+                    header=header,
+                    content_type="audio/mpeg"
+                )
+            )
+            
+            # 检查上传是否成功并生成 URL
+            if isinstance(upload_result, dict) and upload_result.get("success"):
+                audio_url = us3_client.get_file_url(file_name)
+            else:
+                error_msg = upload_result.get("message", "上传失败") if isinstance(upload_result, dict) else "上传失败"
+                raise Exception(f"US3上传失败: {error_msg}")
+            
+            return {
+                "success": True,
+                "audio_url": audio_url,
+                "text_with_emotion": text_with_emotion,
+                "original_text": text,
+                "voice_id": voice_id,
+                "speaker": speaker
+            }
+                
+        except Exception as e:
+            logger.error(f"生成带情感标签的音频失败: {e}")
             return {"success": False, "error": str(e)}

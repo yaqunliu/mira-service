@@ -33,9 +33,8 @@ from app.agent.tools.storyboard_tools import (
 )
 
 # 音视频工具
-from app.agent.tools.audio_tools import (
+from app.agent.tools.video_tools import (
     VideoPromptGenerationTool,
-    AudioGenerationTool,
 )
 
 from app.agent.tools.video_tools import (
@@ -105,7 +104,6 @@ __all__ = [
 
     # 音视频
     "VideoPromptGenerationTool",
-    "AudioGenerationTool",
     "SceneVideoGenerationTool",
     "SingleShotVideoGenerationTool",
     "VideoEditingTool",

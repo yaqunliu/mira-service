@@ -20,6 +20,7 @@ class CharacterState(TypedDict, total=False):
     image_prompt: Optional[str]  # 图像生成提示词
     image_url: Optional[str]  # 角色形象图 URL
     voice_id: Optional[str]  # 语音模型 ID（Fish Audio）
+    voice_speed: Optional[str]  # 语速 (0.5-2.0)
     status: Literal["pending", "generating", "completed", "failed"]  # 生成状态
     error: Optional[str]  # 错误信息
 

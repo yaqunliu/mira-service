@@ -1,15 +1,6 @@
 """
 音频工程师 Node - Audio Engineer
 
-<<<<<<< Updated upstream
-负责为分镜生成配音音频。
-管理批量音频生成任务。
-"""
-
-from typing import Dict, Any
-from app.agent.state.schemas import ComicDramaState, ProductionStage
-from app.core.logger import logger
-=======
 负责为分镜生成配音音频，包括：
 1. 为角色选择合适的 Fish Audio 音色
 2. 为 narration 添加音频标签（voice_id, emotion_tags, voice_speed）
@@ -28,7 +19,6 @@ from app.agent.tools.voice_selection_tools import (
 )
 from app.core.logger import logger
 from app.core.config import settings
->>>>>>> Stashed changes
 
 
 class AudioEngineerNode:
@@ -36,12 +26,6 @@ class AudioEngineerNode:
     音频工程师 Node
     
     职责：
-<<<<<<< Updated upstream
-    1. 查询待配音的分镜
-    2. 为每个分镜创建音频生成任务
-    """
-    
-=======
     1. 查询待配音的分镜和角色
     2. 为没有 voice_id 的角色选择合适的 Fish Audio 音色
     3. 为每个 narration 条目添加音频标签（voice_id, emotion_tags, voice_speed）
@@ -68,7 +52,6 @@ class AudioEngineerNode:
             settings.FISH_AUDIO_DEFAULT_VOICE_ID
         )
     
->>>>>>> Stashed changes
     async def run(self, state: ComicDramaState) -> Dict[str, Any]:
         """
         执行音频处理
@@ -82,11 +65,7 @@ class AudioEngineerNode:
         creation_uuid = state.get("creation_uuid")
         
         try:
-<<<<<<< Updated upstream
-            # 使用 Tool 查询待生成音频的分镜
-=======
             # 1. 使用 Tool 查询待生成音频的分镜和角色
->>>>>>> Stashed changes
             from app.agent.tools.db_tools import query_pending_audio_shots
             
             result = await query_pending_audio_shots.ainvoke({"creation_uuid": creation_uuid})
@@ -99,8 +78,6 @@ class AudioEngineerNode:
                 }
             
             audio_items = result.get("audio_items", [])
-<<<<<<< Updated upstream
-=======
             characters = result.get("characters", [])
             
             # 2. 为没有 voice_id 的角色选择音色（无论是否有 audio_items 都要执行）
@@ -117,7 +94,6 @@ class AudioEngineerNode:
                     "production_stage": ProductionStage.STORYBOARD_READY,
                     "pending_approval": False,
                 }
->>>>>>> Stashed changes
             
             if not audio_items:
                 production_progress = dict(state.get("production_progress", {}))
@@ -134,28 +110,6 @@ class AudioEngineerNode:
                     },
                 }
             
-<<<<<<< Updated upstream
-            # 创建批量音频任务
-            from app.agent.tasks.audio_tasks import agent_generate_batch_audio_task
-            
-            task = agent_generate_batch_audio_task.delay(
-                creation_uuid=creation_uuid,
-                audio_items=audio_items,
-            )
-            
-            production_progress = dict(state.get("production_progress", {}))
-            production_progress["audio_processing"] = {
-                "status": "processing",
-                "total": len(audio_items),
-                "completed": 0,
-                "task_id": task.id,
-            }
-            
-            return {
-                "response_text": f"""开始生成配音！
-
-🎤 **共 {len(audio_items)} 条音频待生成**
-=======
             # 3. 提取需要生成音频的 shot_ids
             shot_ids = list(set([item.get("shot_id") for item in audio_items if item.get("shot_id")]))
             logger.info(f"[AudioEngineer] 需要生成音频的 shots: {shot_ids}")
@@ -187,7 +141,6 @@ class AudioEngineerNode:
 🎤 **共 {len(shot_ids)} 个分镜待生成音频**
 
 {voice_summary}
->>>>>>> Stashed changes
 
 音频生成需要一些时间，完成后我会通知您。""",
                 "production_stage": ProductionStage.AUDIO_PROCESSING,
@@ -205,8 +158,6 @@ class AudioEngineerNode:
                 "production_stage": ProductionStage.STORYBOARD_READY,
                 "errors": [{"message": str(e)}],
             }
-<<<<<<< Updated upstream
-=======
     
     async def _select_voices_for_characters(
         self,
@@ -544,7 +495,6 @@ class AudioEngineerNode:
                 lines.append(f"- {char_name}: 分配失败 ❌")
         
         return "\n".join(lines)
->>>>>>> Stashed changes
 
 
 # 便捷函数

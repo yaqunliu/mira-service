@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     
     # 安全配置
     SECRET_KEY: str = ""
-    ALGORITHM: str = "HS256"
+    ALGORITHM: str = "ES256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24小时
     
     # CORS配置
@@ -158,6 +158,7 @@ class Settings(BaseSettings):
     # Fish Audio 配置
     FISH_AUDIO_API_KEY: str = ""
     FISH_AUDIO_DEFAULT_VOICE_ID: str = ""  # 默认语音模型 ID，如 "54a5170264694bfc8e9ad98df7bd89c3" (丁真)
+    FISH_AUDIO_DEFAULT_MODEL: str = "s1"  # 默认 TTS 模型，可选值：s1, speech-1.6, speech-1.5
     
     # 字体配置
     FONT_DIR: str = "static/fonts"  # 字体文件本地存储目录

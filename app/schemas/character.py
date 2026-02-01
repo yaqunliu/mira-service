@@ -13,6 +13,8 @@ class CharacterBase(BaseModel):
     clothing: Optional[str] = None
     tags: Optional[List[str]] = None  # JSON数组
     voice_description: Optional[str] = None
+    voice_id: Optional[str] = None  # Fish Audio 语音模型 ID
+    voice_speed: Optional[str] = None  # 语速 (0.5-2.0)
     image_prompt: Optional[str] = None
     visual_style: Optional[str] = None
 
@@ -32,6 +34,8 @@ class CharacterUpdate(BaseModel):
     clothing: Optional[str] = None
     tags: Optional[List[str]] = None  # JSON数组
     voice_description: Optional[str] = None
+    voice_id: Optional[str] = None  # Fish Audio 语音模型 ID
+    voice_speed: Optional[str] = None  # 语速 (0.5-2.0)
     image_prompt: Optional[str] = None
     visual_style: Optional[str] = None
     image_url: Optional[str] = None

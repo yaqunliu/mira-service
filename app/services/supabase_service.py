@@ -1,9 +1,33 @@
 import os
+import base64
 from typing import Optional, Dict, Any
 from supabase import create_client, Client
 from jose import jwt, JWTError
 from app.core.config import settings
 from app.core.logger import logger
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.backends import default_backend
+
+
+def _get_supabase_ec_public_key():
+    """获取 Supabase 的 EC P-256 公钥用于 ES256 验证
+    
+    JWK 格式的坐标是 Base64URL 编码的，需要正确解码
+    """
+    x_b64url = "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4"
+    y_b64url = "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ"
+    
+    x_bytes = base64.urlsafe_b64decode(x_b64url + "==")
+    y_bytes = base64.urlsafe_b64decode(y_b64url + "==")
+    
+    uncompressed_point = b"\x04" + x_bytes + y_bytes
+    
+    public_key = ec.EllipticCurvePublicKey.from_encoded_point(
+        ec.SECP256R1(),
+        uncompressed_point
+    )
+    
+    return public_key
 
 
 class SupabaseService:
@@ -29,8 +53,7 @@ class SupabaseService:
         验证 Supabase JWT token
         返回解码后的 payload，如果无效则返回 None
         
-        注意：Supabase 在签发 token 时使用的是它内部的 JWT secret（自动生成或配置的）
-        后端验证时需要知道这个相同的 secret 才能验证 token 的签名
+        自动检测 token 的算法（HS256 或 ES256）并使用对应的验证方式
         """
         try:
             if not self.supabase_jwt_secret:
@@ -38,34 +61,68 @@ class SupabaseService:
                 logger.warning("请运行 'supabase status --output json' 获取 JWT_SECRET 值")
                 return None
             
-            # 先尝试解码 token（不验证签名和 audience）以获取信息用于调试
-            try:
-                # jose 库的 decode 需要 key 参数，即使不验证签名也需要提供
-                # 需要同时禁用签名验证和 audience 验证
-                unverified_payload = jwt.decode(
-                    token, 
-                    key="",  # 空 key，配合 options 不验证签名
-                    algorithms=["HS256"],
-                    options={
-                        "verify_signature": False,
-                        "verify_aud": False,  # 不验证 audience
-                        "verify_exp": False,   # 不验证过期时间（先获取信息）
-                    }
-                )
-                # logger.info(f"Token payload (未验证签名): aud={unverified_payload.get('aud')}, sub={unverified_payload.get('sub')}, exp={unverified_payload.get('exp')}, iss={unverified_payload.get('iss')}")
-                # 检查 token 是否过期
-                import time
-                exp = unverified_payload.get('exp')
-                if exp and exp < time.time():
-                    logger.warning(f"Token 已过期: exp={exp}, current={time.time()}")
-                    return None
-            except Exception as e:
-                logger.warning(f"无法解码 token: {str(e)}")
+            alg = self._get_token_algorithm(token)
+            logger.info(f"检测到 token 算法: {alg}")
+            
+            if alg == "ES256":
+                return self._verify_token_es256(token)
+            else:
+                return self._verify_token_hs256(token)
+        except JWTError as e:
+            logger.error(f"Token 验证失败: {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"验证 token 时发生错误: {str(e)}")
+            return None
+    
+    def _get_token_algorithm(self, token: str) -> str:
+        """从 token header 中提取算法"""
+        try:
+            header = jwt.get_unverified_header(token)
+            return header.get("alg", "HS256")
+        except Exception:
+            return "HS256"
+    
+    def _verify_token_es256(self, token: str) -> Optional[Dict[str, Any]]:
+        """使用 ES256 验证 JWT token"""
+        try:
+            public_key = _get_supabase_ec_public_key()
+            
+            payload = jwt.decode(
+                token,
+                public_key,
+                algorithms=["ES256"],
+                options={
+                    "verify_exp": True,
+                    "verify_aud": False
+                }
+            )
+            logger.info("Token 验证成功（ES256）")
+            return payload
+        except JWTError as e:
+            logger.error(f"ES256 Token 验证失败: {str(e)}")
+            return None
+    
+    def _verify_token_hs256(self, token: str) -> Optional[Dict[str, Any]]:
+        """使用 HS256 验证 JWT token"""
+        try:
+            unverified_payload = jwt.decode(
+                token, 
+                key="",
+                algorithms=["HS256"],
+                options={
+                    "verify_signature": False,
+                    "verify_aud": False,
+                    "verify_exp": False,
+                }
+            )
+            
+            import time
+            exp = unverified_payload.get('exp')
+            if exp and exp < time.time():
+                logger.warning(f"Token 已过期: exp={exp}")
                 return None
             
-            # 验证并解码 token
-            # Supabase 的 JWT token 通常 audience 是 "authenticated"
-            # 先尝试带 audience 验证
             try:
                 payload = jwt.decode(
                     token,
@@ -73,12 +130,8 @@ class SupabaseService:
                     algorithms=["HS256"],
                     audience="authenticated"
                 )
-                # logger.info("Token 验证成功（带 audience）")
                 return payload
             except JWTError as audience_error:
-                # 如果带 audience 验证失败，尝试不带 audience 验证
-                # logger.warning(f"带 audience 验证失败: {str(audience_error)}")
-                # logger.warning(f"尝试不带 audience 验证...")
                 try:
                     payload = jwt.decode(
                         token,
@@ -86,18 +139,13 @@ class SupabaseService:
                         algorithms=["HS256"],
                         options={"verify_aud": False}
                     )
-                    logger.info("Token 验证成功（不带 audience）")
+                    logger.info("Token 验证成功（HS256，不带 audience）")
                     return payload
                 except JWTError as no_audience_error:
-                    logger.error(f"Token 验证失败（不带 audience）: {str(no_audience_error)}")
-                    logger.error(f"JWT_SECRET 配置可能不正确，当前值前20字符: {self.supabase_jwt_secret[:20]}...")
-                    logger.error("请确认 SUPABASE_JWT_SECRET 与 Supabase 的 JWT_SECRET 一致")
+                    logger.error(f"HS256 Token 验证失败: {str(no_audience_error)}")
                     return None
-        except JWTError as e:
-            logger.error(f"Token 验证失败: {str(e)}")
-            return None
         except Exception as e:
-            logger.error(f"验证 token 时发生错误: {str(e)}")
+            logger.error(f"HS256 Token 验证错误: {str(e)}")
             return None
     
     def get_user_from_token(self, token: str) -> Optional[Dict[str, Any]]:

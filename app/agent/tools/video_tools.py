@@ -3,10 +3,145 @@
 调用视频生成和剪辑任务
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from app.agent.tools.base import CeleryTaskTool, BaseTool
-from app.agent.state.schemas import ComicDramaState
+from app.agent.state.schemas import ComicDramaState, StoryboardState
 from app.core.logger import logger
+
+
+class VideoPromptGenerationTool(BaseTool):
+    """
+    视频提示词生成工具
+
+    根据分镜信息生成用于图生视频的提示词
+    """
+
+    @property
+    def name(self) -> str:
+        return "generate_video_prompt"
+
+    @property
+    def description(self) -> str:
+        return (
+            "根据分镜信息和场景描述生成视频生成提示词。"
+            "用于 AI 图生视频模型的输入。"
+            "使用场景：视频生成阶段，在生成视频之前执行。"
+        )
+
+    async def execute(
+        self,
+        state: ComicDramaState,
+        shot_id: int,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        生成分镜的视频提示词
+
+        Args:
+            state: 当前状态
+            shot_id: 分镜 ID
+
+        Returns:
+            视频提示词信息
+        """
+        try:
+            from app.models.shot import Shot
+            from app.agent.tools.async_db import get_async_db_session
+
+            async with get_async_db_session() as db:
+                shot = await db.get(Shot, shot_id)
+                if not shot:
+                    return self._create_error_result(
+                        message=f"分镜不存在: {shot_id}",
+                        error="shot_not_found"
+                    )
+
+                shot_data = shot.to_dict() if hasattr(shot, 'to_dict') else {
+                    "shot_id": shot.shot_id,
+                    "title": shot.title,
+                    "description": shot.description,
+                    "shot_type": shot.shot_type,
+                    "camera_movement": shot.camera_movement,
+                }
+
+                video_prompt = self._generate_video_prompt(shot_data)
+
+                return self._create_success_result(
+                    message=f"视频提示词生成成功",
+                    data={
+                        "shot_id": shot_id,
+                        "video_prompt": video_prompt,
+                        "prompt_style": self._get_prompt_style(shot_data)
+                    }
+                )
+
+        except Exception as e:
+            logger.exception(f"生成视频提示词失败: {e}")
+            return self._create_error_result(
+                message="视频提示词生成失败",
+                error=str(e)
+            )
+
+    def _generate_video_prompt(self, shot_data: Dict[str, Any]) -> str:
+        """生成视频提示词"""
+        parts = []
+
+        shot_type = shot_data.get("shot_type", "")
+        camera_movement = shot_data.get("camera_movement", "")
+
+        if shot_type:
+            shot_descriptions = {
+                "远景": "wide shot, establishing shot",
+                "全景": "full shot showing entire figure",
+                "中景": "medium shot",
+                "中近景": "medium close-up",
+                "特写": "close-up",
+                "大特写": "extreme close-up",
+            }
+            for cn, en in shot_descriptions.items():
+                if cn in shot_type or shot_type in cn:
+                    parts.append(en)
+                    break
+
+        if camera_movement:
+            movement_descriptions = {
+                "推": "slow push in, approaching",
+                "拉": "slow pull back, revealing",
+                "摇": "pan shot",
+                "移": "tracking shot",
+                "跟": "following shot",
+                "升降": "boom shot, crane shot",
+                "旋转": "spinning rotation",
+                "固定": "static shot, stationary",
+            }
+            for cn, en in movement_descriptions.items():
+                if cn in camera_movement or camera_movement in cn:
+                    parts.append(en)
+                    break
+
+        if not parts:
+            parts = ["cinematic shot"]
+
+        prompt = ", ".join(parts)
+        prompt += ", smooth motion, high quality, professional cinematography"
+
+        return prompt
+
+    def _get_prompt_style(self, shot_data: Dict[str, Any]) -> str:
+        """获取提示词风格"""
+        description = shot_data.get("description", "")
+        mood = shot_data.get("mood", "")
+
+        if "紧张" in description or "紧张" in mood:
+            return "tense, fast-paced"
+        elif "浪漫" in description or "浪漫" in mood:
+            return "romantic, soft lighting"
+        elif "动作" in description or "动作" in mood:
+            return "dynamic, action-packed"
+        elif "恐怖" in description or "恐怖" in mood:
+            return "dark, suspenseful"
+        else:
+            return "neutral, balanced"
 
 
 class SceneVideoGenerationTool(CeleryTaskTool):
