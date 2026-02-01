@@ -89,7 +89,6 @@ def route_by_production_stage(state: ComicDramaState) -> str:
     
     target_index = STAGE_ORDER.index(target_stage) if target_stage in STAGE_ORDER else 0
     
-
     # 特殊处理：音色选择可以跳过视频生成阶段
     if intent == "select_voice":
         # 只需要检查 audio_processing 之前的必要阶段（不包括 video_generation）
@@ -220,7 +219,6 @@ def check_continue_or_return(state: ComicDramaState) -> str:
         logger.info("[SubgraphRouter] 分镜图生成中，返回主图等待任务完成")
         return "return"
     
-
     if production_stage == ProductionStage.AUDIO_GENERATING:
         logger.info("[SubgraphRouter] 音频生成中，返回主图等待任务完成")
         return "return"
