@@ -37,6 +37,14 @@ INTENT_TARGET_STAGE = {
     "generate_videos": "video_generation",
     "generate_audio": "audio_processing",
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+    "select_voice": "audio_processing",  # 音色选择
+>>>>>>> Stashed changes
+=======
+    "select_voice": "audio_processing",  # 音色选择
+>>>>>>> Stashed changes
 =======
     "select_voice": "audio_processing",  # 音色选择
 >>>>>>> Stashed changes
@@ -94,7 +102,13 @@ def route_by_production_stage(state: ComicDramaState) -> str:
     target_index = STAGE_ORDER.index(target_stage) if target_stage in STAGE_ORDER else 0
     
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
     # 特殊处理：音色选择可以跳过视频生成阶段
     if intent == "select_voice":
         # 只需要检查 audio_processing 之前的必要阶段（不包括 video_generation）
@@ -107,6 +121,12 @@ def route_by_production_stage(state: ComicDramaState) -> str:
         logger.info(f"[SubgraphRouter] 执行音色选择目标阶段: audio_processing")
         return "audio_processing"
     
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
     # 检查前置阶段是否完成
     for i, stage in enumerate(STAGE_ORDER[:target_index]):
@@ -227,8 +247,18 @@ def check_continue_or_return(state: ComicDramaState) -> str:
         return "return"
     
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
     if production_stage == ProductionStage.AUDIO_GENERATING:
         logger.info("[SubgraphRouter] 音频生成中，返回主图等待任务完成")
+=======
+    if production_stage == ProductionStage.AUDIO_PROCESSING:
+        logger.info("[SubgraphRouter] 音频处理中，返回主图等待任务完成")
+>>>>>>> Stashed changes
+=======
+    if production_stage == ProductionStage.AUDIO_PROCESSING:
+        logger.info("[SubgraphRouter] 音频处理中，返回主图等待任务完成")
+>>>>>>> Stashed changes
 =======
     if production_stage == ProductionStage.AUDIO_PROCESSING:
         logger.info("[SubgraphRouter] 音频处理中，返回主图等待任务完成")

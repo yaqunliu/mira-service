@@ -5,6 +5,14 @@
 """
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+import json
+>>>>>>> Stashed changes
+=======
+import json
+>>>>>>> Stashed changes
 =======
 import json
 >>>>>>> Stashed changes
@@ -606,7 +614,13 @@ async def update_character(
 
 @tool
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
 async def update_character_voice(
     character_id: int,
     voice_id: str,
@@ -653,6 +667,12 @@ async def update_character_voice(
 
 
 @tool
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 async def update_scene(
     scene_id: int,
@@ -1210,6 +1230,16 @@ async def query_pending_audio_shots(
     查询待生成音频的分镜
     
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+    解析 narration JSON 格式，返回每个说话者的音频项
+    
+>>>>>>> Stashed changes
+=======
+    解析 narration JSON 格式，返回每个说话者的音频项
+    
+>>>>>>> Stashed changes
 =======
     解析 narration JSON 格式，返回每个说话者的音频项
     
@@ -1219,7 +1249,15 @@ async def query_pending_audio_shots(
         
     Returns:
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
         待生成音频的分镜列表
+=======
+        待生成音频的分镜列表和角色列表
+>>>>>>> Stashed changes
+=======
+        待生成音频的分镜列表和角色列表
+>>>>>>> Stashed changes
 =======
         待生成音频的分镜列表和角色列表
 >>>>>>> Stashed changes
@@ -1228,9 +1266,15 @@ async def query_pending_audio_shots(
     from app.models.creation import Creation
     from app.models.shot import Shot
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
     from sqlalchemy import select
     
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
     from app.models.character import Character
     from app.models.scene import Scene
     from sqlalchemy import select
@@ -1247,6 +1291,12 @@ async def query_pending_audio_shots(
             # 如果不是 JSON，作为纯文本返回
             return [{"角色": "旁白", "内容": narration_json}]
     
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
     try:
         async with get_async_db_session() as db:
@@ -1259,9 +1309,15 @@ async def query_pending_audio_shots(
             
             creation_id = creation.creation_id
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
             default_voice_id = "fish_default_voice"
             
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
             
             # 查询所有角色（用于音色选择）
             char_stmt = select(Character).where(
@@ -1285,6 +1341,12 @@ async def query_pending_audio_shots(
             ]
             
             # 查询所有分镜
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
             shot_stmt = select(Shot).where(
                 Shot.creation_id == creation_id,
@@ -1296,6 +1358,8 @@ async def query_pending_audio_shots(
             for shot in shots:
                 extra_data = shot.extra_data or {}
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
                 has_audio = extra_data.get("dialogue_audio_url") or extra_data.get("narration_audio_url")
                 
                 if not has_audio and shot.narration:
@@ -1305,6 +1369,10 @@ async def query_pending_audio_shots(
                         "voice_id": default_voice_id,
                         "audio_type": "narration",
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
                 
                 # 检查是否已有音频
                 has_audio = extra_data.get("dialogue_audio_url") or extra_data.get("narration_audio_url")
@@ -1326,6 +1394,12 @@ async def query_pending_audio_shots(
                         "speaker": speaker,
                         "text": content,
                         "shot_number": shot.shot_number,
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
                     })
             
@@ -1334,6 +1408,16 @@ async def query_pending_audio_shots(
                 "creation_id": creation_id,
                 "audio_items": audio_items,
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+                "characters": character_list,
+                "total_items": len(audio_items),
+>>>>>>> Stashed changes
+=======
+                "characters": character_list,
+                "total_items": len(audio_items),
+>>>>>>> Stashed changes
 =======
                 "characters": character_list,
                 "total_items": len(audio_items),

@@ -2,6 +2,8 @@
 音频工程师 Node - Audio Engineer
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 负责为分镜生成配音音频。
 管理批量音频生成任务。
 """
@@ -10,6 +12,10 @@ from typing import Dict, Any
 from app.agent.state.schemas import ComicDramaState, ProductionStage
 from app.core.logger import logger
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
 负责为分镜生成配音音频，包括：
 1. 为角色选择合适的 Fish Audio 音色
 2. 为 narration 添加音频标签（voice_id, emotion_tags, voice_speed）
@@ -28,6 +34,12 @@ from app.agent.tools.voice_selection_tools import (
 )
 from app.core.logger import logger
 from app.core.config import settings
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
 
@@ -37,11 +49,17 @@ class AudioEngineerNode:
     
     职责：
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
     1. 查询待配音的分镜
     2. 为每个分镜创建音频生成任务
     """
     
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
     1. 查询待配音的分镜和角色
     2. 为没有 voice_id 的角色选择合适的 Fish Audio 音色
     3. 为每个 narration 条目添加音频标签（voice_id, emotion_tags, voice_speed）
@@ -68,6 +86,12 @@ class AudioEngineerNode:
             settings.FISH_AUDIO_DEFAULT_VOICE_ID
         )
     
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
     async def run(self, state: ComicDramaState) -> Dict[str, Any]:
         """
@@ -83,7 +107,15 @@ class AudioEngineerNode:
         
         try:
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
             # 使用 Tool 查询待生成音频的分镜
+=======
+            # 1. 使用 Tool 查询待生成音频的分镜和角色
+>>>>>>> Stashed changes
+=======
+            # 1. 使用 Tool 查询待生成音频的分镜和角色
+>>>>>>> Stashed changes
 =======
             # 1. 使用 Tool 查询待生成音频的分镜和角色
 >>>>>>> Stashed changes
@@ -100,7 +132,13 @@ class AudioEngineerNode:
             
             audio_items = result.get("audio_items", [])
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
             characters = result.get("characters", [])
             
             # 2. 为没有 voice_id 的角色选择音色（无论是否有 audio_items 都要执行）
@@ -117,6 +155,12 @@ class AudioEngineerNode:
                     "production_stage": ProductionStage.STORYBOARD_READY,
                     "pending_approval": False,
                 }
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
             
             if not audio_items:
@@ -134,6 +178,8 @@ class AudioEngineerNode:
                     },
                 }
             
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 <<<<<<< Updated upstream
             # 创建批量音频任务
             from app.agent.tasks.audio_tasks import agent_generate_batch_audio_task
@@ -156,6 +202,10 @@ class AudioEngineerNode:
 
 🎤 **共 {len(audio_items)} 条音频待生成**
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
             # 3. 提取需要生成音频的 shot_ids
             shot_ids = list(set([item.get("shot_id") for item in audio_items if item.get("shot_id")]))
             logger.info(f"[AudioEngineer] 需要生成音频的 shots: {shot_ids}")
@@ -187,6 +237,12 @@ class AudioEngineerNode:
 🎤 **共 {len(shot_ids)} 个分镜待生成音频**
 
 {voice_summary}
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
 音频生成需要一些时间，完成后我会通知您。""",
@@ -206,7 +262,13 @@ class AudioEngineerNode:
                 "errors": [{"message": str(e)}],
             }
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
     
     async def _select_voices_for_characters(
         self,
@@ -544,6 +606,12 @@ class AudioEngineerNode:
                 lines.append(f"- {char_name}: 分配失败 ❌")
         
         return "\n".join(lines)
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
 

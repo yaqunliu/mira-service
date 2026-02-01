@@ -1,4 +1,6 @@
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 """
 Agent 专用音频生成 Tasks
 
@@ -135,6 +137,10 @@ def agent_generate_batch_audio_task(
             ]
         
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
 
 
 
@@ -161,6 +167,12 @@ def agent_generate_shot_audio_batch_task(
         shot_ids: Shot ID 列表
         force_regenerate: 是否强制重新生成
 
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
     Returns:
         {
@@ -171,6 +183,8 @@ def agent_generate_shot_audio_batch_task(
         }
     """
     try:
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 <<<<<<< Updated upstream
         logger.info(f"[Agent Task] 开始批量生成音频: {len(audio_items)} 条")
         
@@ -209,6 +223,10 @@ def agent_generate_shot_audio_batch_task(
                 results.append({
                     "shot_id": item["shot_id"],
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
         logger.info(f"[Agent Task] 开始批量生成 Shot 音频: {len(shot_ids)} shots")
 
         import asyncio
@@ -272,11 +290,19 @@ def agent_generate_shot_audio_batch_task(
                 logger.error(f"[Agent Task] Shot {shot_id} 音频生成异常: {e}")
                 results.append({
                     "shot_id": shot_id,
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
                     "status": "failed",
                     "error": str(e),
                 })
                 failed_count += 1
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 <<<<<<< Updated upstream
         
         status = "success" if failed_count == 0 else "partial" if success_count > 0 else "failed"
@@ -284,6 +310,10 @@ def agent_generate_shot_audio_batch_task(
         logger.info(f"[Agent Task] 批量音频生成完成: success={success_count}, failed={failed_count}")
         
 =======
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
 
         loop.close()
 
@@ -291,6 +321,12 @@ def agent_generate_shot_audio_batch_task(
 
         logger.info(f"[Agent Task] 批量 Shot 音频生成完成: success={success_count}, failed={failed_count}")
 
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
         return {
             "status": status,
@@ -299,9 +335,21 @@ def agent_generate_shot_audio_batch_task(
             "failed_count": failed_count,
         }
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
         
     except Exception as e:
         logger.error(f"[Agent Task] 批量音频生成失败: {e}")
+=======
+
+    except Exception as e:
+        logger.error(f"[Agent Task] 批量 Shot 音频生成任务失败: {e}")
+>>>>>>> Stashed changes
+=======
+
+    except Exception as e:
+        logger.error(f"[Agent Task] 批量 Shot 音频生成任务失败: {e}")
+>>>>>>> Stashed changes
 =======
 
     except Exception as e:
@@ -313,7 +361,15 @@ def agent_generate_shot_audio_batch_task(
             "results": [],
             "success_count": 0,
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
             "failed_count": len(audio_items),
+=======
+            "failed_count": len(shot_ids),
+>>>>>>> Stashed changes
+=======
+            "failed_count": len(shot_ids),
+>>>>>>> Stashed changes
 =======
             "failed_count": len(shot_ids),
 >>>>>>> Stashed changes
