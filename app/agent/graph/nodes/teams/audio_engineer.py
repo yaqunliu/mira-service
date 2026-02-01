@@ -8,6 +8,7 @@
 """
 
 import json
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
@@ -64,42 +65,186 @@ class AudioEngineerNode:
         """
         creation_uuid = state.get("creation_uuid")
         
+        # 使用单一 db 会话处理所有操作
+        from app.agent.tools.async_db import get_async_db_session
+        from app.models.creation import Creation
+        from app.models.shot import Shot
+        from app.models.character import Character
+        from app.models.scene import Scene
+        from sqlalchemy import select
+        from app.agent.tools.audio_tools import GenerateNarrationAudioBatchTool
+        
+        def parse_narration(narration_json):
+            """解析旁白 JSON"""
+            if not narration_json:
+                return []
+            try:
+                if isinstance(narration_json, str):
+                    return json.loads(narration_json)
+                return narration_json
+            except (json.JSONDecodeError, TypeError):
+                return [{"角色": "旁白", "内容": narration_json}]
+        
         try:
-            # 1. 使用 Tool 查询待生成音频的分镜和角色
-            from app.agent.tools.db_tools import query_pending_audio_shots
+            async with get_async_db_session() as db:
+                # 1. 查询 creation
+                stmt = select(Creation).where(Creation.uuid == creation_uuid)
+                result = await db.execute(stmt)
+                creation = result.scalar_one_or_none()
+                
+                if not creation:
+                    return {
+                        "response_text": "创作项目不存在",
+                        "production_stage": ProductionStage.STORYBOARD_READY,
+                        "errors": [{"message": "创作项目不存在"}],
+                    }
+                
+                creation_id = creation.creation_id
+                
+                # 2. 查询所有角色
+                char_stmt = select(Character).where(
+                    Character.creation_id == creation_id,
+                    Character.deleted_at.is_(None),
+                )
+                char_result = await db.execute(char_stmt)
+                characters = char_result.scalars().all()
+                
+                # 转换为字典列表
+                character_list = []
+                for char in characters:
+                    # 从 basic_info 或 voice_description 推断性别
+                    gender = self._infer_gender(char.basic_info, char.voice_description, char.name)
+                    
+                    character_list.append({
+                        "character_id": char.character_id,
+                        "name": char.name,
+                        "description": char.voice_description or char.basic_info or "",  # 优先使用 voice_description
+                        "voice_id": char.voice_id,
+                        "voice_speed": char.voice_speed,
+                        "gender": gender,
+                    })
+                
+                # 3. 查询所有分镜和 narration
+                shot_stmt = select(Shot).join(Scene).where(
+                    Scene.creation_id == creation_id,
+                    Shot.narration.isnot(None),
+                )
+                shot_result = await db.execute(shot_stmt)
+                shots = shot_result.scalars().all()
+                
+                # 解析 narration，找出需要生成音频的项
+                audio_items = []
+                for shot in shots:
+                    narration_list = parse_narration(shot.narration)
+                    for idx, narration in enumerate(narration_list):
+                        speaker = narration.get("角色", "旁白")
+                        text = narration.get("内容", "")
+                        
+                        if not text:
+                            continue
+                        
+                        # 检查是否已有音频
+                        has_audio = narration.get("audio_url") is not None
+                        
+                        audio_items.append({
+                            "shot_id": shot.shot_id,
+                            "narration_index": idx,
+                            "speaker": speaker,
+                            "text": text,
+                            "has_audio": has_audio,
+                        })
+                
+                # 4. 为没有 voice_id 的角色选择音色
+                logger.info(f"[AudioEngineer] 开始为角色选择音色...")
+                voice_selection_results = await self._select_voices_for_characters(state, character_list, db)
+                
+                # 检查是否是仅选择音色的意图
+                intent = state.get("detected_intent", "")
+                if intent == "select_voice" and not audio_items:
+                    voice_summary = self._build_voice_summary(voice_selection_results)
+                    return {
+                        "response_text": f"已为角色选择合适的音色！\n\n{voice_summary}",
+                        "production_stage": ProductionStage.STORYBOARD_READY,
+                        "pending_approval": False,
+                    }
+                
+                if not audio_items:
+                    production_progress = dict(state.get("production_progress", {}))
+                    production_progress["audio_processing"] = {"status": "completed"}
+                    return {
+                        "response_text": "所有音频已生成完成！请在分镜中试听确认。",
+                        "production_stage": ProductionStage.AUDIO_READY,
+                        "production_progress": production_progress,
+                        "pending_approval": True,
+                        "checkpoint_data": {
+                            "checkpoint_type": "audio_confirmation",
+                            "data": {},
+                            "message": "请确认配音效果",
+                        },
+                    }
+                
+                # 5. 提取需要生成音频的 shot_ids
+                shot_ids = list(set([item.get("shot_id") for item in audio_items if item.get("shot_id")]))
+                logger.info(f"[AudioEngineer] 需要生成音频的 shots: {shot_ids}")
+
+                # 6. 直接在 Node 中批量生成音频（使用同一个 db 会话）
+                logger.info(f"[AudioEngineer] 开始批量生成音频，共 {len(shot_ids)} 个分镜")
+                
+                audio_batch_tool = GenerateNarrationAudioBatchTool()
+                
+                success_count = 0
+                failed_count = 0
+                results = []
+                
+                for shot_id in shot_ids:
+                    try:
+                        result = await audio_batch_tool.execute(
+                            state=state,
+                            shot_id=shot_id,
+                            force_regenerate=False,
+                            db=db  # 传入同一个 db 会话
+                        )
+                        
+                        if result.get("success"):
+                            success_count += 1
+                            logger.info(f"[AudioEngineer] Shot {shot_id} 音频生成成功")
+                        else:
+                            failed_count += 1
+                            logger.error(f"[AudioEngineer] Shot {shot_id} 音频生成失败: {result.get('error')}")
+                        
+                        results.append({"shot_id": shot_id, "result": result})
+                        
+                    except Exception as e:
+                        failed_count += 1
+                        logger.error(f"[AudioEngineer] Shot {shot_id} 音频生成异常: {e}")
+                        results.append({"shot_id": shot_id, "error": str(e)})
+                
+                # 所有 shot 处理完成后，提交事务
+                if success_count > 0:
+                    await db.commit()
+                    logger.info(f"[AudioEngineer] 已提交 {success_count} 个分镜的音频更新")
             
-            result = await query_pending_audio_shots.ainvoke({"creation_uuid": creation_uuid})
+            # 构建响应文本
+            voice_summary = self._build_voice_summary(voice_selection_results)
             
-            if not result.get("success"):
-                return {
-                    "response_text": f"查询分镜失败：{result.get('error')}",
-                    "production_stage": ProductionStage.STORYBOARD_READY,
-                    "errors": [{"message": result.get("error")}],
-                }
-            
-            audio_items = result.get("audio_items", [])
-            characters = result.get("characters", [])
-            
-            # 2. 为没有 voice_id 的角色选择音色（无论是否有 audio_items 都要执行）
-            logger.info(f"[AudioEngineer] 开始为角色选择音色...")
-            voice_selection_results = await self._select_voices_for_characters(state, characters)
-            
-            # 检查是否是仅选择音色的意图
-            intent = state.get("detected_intent", "")
-            if intent == "select_voice" and not audio_items:
-                # 如果只是选择音色，且没有待生成的音频，直接返回结果
-                voice_summary = self._build_voice_summary(voice_selection_results)
-                return {
-                    "response_text": f"已为角色选择合适的音色！\n\n{voice_summary}",
-                    "production_stage": ProductionStage.STORYBOARD_READY,
-                    "pending_approval": False,
-                }
-            
-            if not audio_items:
+            # 根据生成结果返回不同状态
+            if success_count == len(shot_ids):
+                # 全部成功
                 production_progress = dict(state.get("production_progress", {}))
-                production_progress["audio_processing"] = {"status": "completed"}
+                production_progress["audio_processing"] = {
+                    "status": "completed",
+                    "total": len(shot_ids),
+                    "completed": success_count,
+                }
+                
                 return {
-                    "response_text": "所有音频已生成完成！请在分镜中试听确认。",
+                    "response_text": f"""配音生成完成！
+
+🎤 **共 {success_count} 个分镜音频生成成功**
+
+{voice_summary}
+
+请在分镜中试听确认配音效果。""",
                     "production_stage": ProductionStage.AUDIO_READY,
                     "production_progress": production_progress,
                     "pending_approval": True,
@@ -108,48 +253,44 @@ class AudioEngineerNode:
                         "data": {},
                         "message": "请确认配音效果",
                     },
+                    "board_actions": [
+                        {"type": "switch_view", "target": "storyboards"},
+                    ],
                 }
-            
-            # 3. 提取需要生成音频的 shot_ids
-            shot_ids = list(set([item.get("shot_id") for item in audio_items if item.get("shot_id")]))
-            logger.info(f"[AudioEngineer] 需要生成音频的 shots: {shot_ids}")
+            elif success_count > 0:
+                # 部分成功
+                production_progress = dict(state.get("production_progress", {}))
+                production_progress["audio_processing"] = {
+                    "status": "partial",
+                    "total": len(shot_ids),
+                    "completed": success_count,
+                    "failed": failed_count,
+                }
+                
+                return {
+                    "response_text": f"""配音生成部分完成！
 
-            # 4. 创建批量音频任务（使用新的 GenerateNarrationAudioBatchTool）
-            logger.info(f"[AudioEngineer] 创建批量音频生成任务，共 {len(shot_ids)} 个分镜")
-            from app.agent.tasks.audio_tasks import agent_generate_shot_audio_batch_task
-
-            task = agent_generate_shot_audio_batch_task.delay(
-                creation_uuid=creation_uuid,
-                shot_ids=shot_ids,
-                force_regenerate=False,
-            )
-
-            production_progress = dict(state.get("production_progress", {}))
-            production_progress["audio_processing"] = {
-                "status": "processing",
-                "total": len(shot_ids),
-                "completed": 0,
-                "task_id": task.id,
-            }
-
-            # 构建响应文本
-            voice_summary = self._build_voice_summary(voice_selection_results)
-
-            return {
-                "response_text": f"""开始生成配音！
-
-🎤 **共 {len(shot_ids)} 个分镜待生成音频**
+🎤 **成功：{success_count} 个分镜**
+❌ **失败：{failed_count} 个分镜**
 
 {voice_summary}
 
-音频生成需要一些时间，完成后我会通知您。""",
-                "production_stage": ProductionStage.AUDIO_PROCESSING,
-                "production_progress": production_progress,
-                "pending_approval": False,
-                "board_actions": [
-                    {"type": "switch_view", "target": "storyboards"},
-                ],
-            }
+部分音频生成失败，请检查日志或重试。""",
+                    "production_stage": ProductionStage.AUDIO_READY,
+                    "production_progress": production_progress,
+                    "pending_approval": True,
+                    "errors": [{"message": f"{failed_count} 个分镜音频生成失败"}],
+                    "board_actions": [
+                        {"type": "switch_view", "target": "storyboards"},
+                    ],
+                }
+            else:
+                # 全部失败
+                return {
+                    "response_text": f"音频生成失败，请稍后重试或联系管理员。",
+                    "production_stage": ProductionStage.STORYBOARD_READY,
+                    "errors": [{"message": "所有分镜音频生成失败"}],
+                }
             
         except Exception as e:
             logger.error(f"[AudioEngineer] 执行失败: {e}")
@@ -162,7 +303,8 @@ class AudioEngineerNode:
     async def _select_voices_for_characters(
         self,
         state: ComicDramaState,
-        characters: List[Dict[str, Any]]
+        characters: List[Dict[str, Any]],
+        db=None
     ) -> List[Dict[str, Any]]:
         """
         为没有 voice_id 的角色选择音色
@@ -170,14 +312,12 @@ class AudioEngineerNode:
         Args:
             state: 当前状态
             characters: 角色列表
+            db: 数据库会话（可选，用于直接更新）
             
         Returns:
             音色选择结果列表
         """
         results = []
-        
-        # 导入数据库更新工具
-        from app.agent.tools.db_tools import update_character_voice
         
         # 检查是否需要重新匹配（从用户意图判断）
         intent = state.get("detected_intent", "")
@@ -199,7 +339,7 @@ class AudioEngineerNode:
                 
                 # 更新每个角色的音色
                 for char in characters:
-                    char_id = char.get("id")
+                    char_id = char.get("character_id")
                     char_name = char.get("name")
                     
                     # 查找该角色的选择结果
@@ -217,18 +357,22 @@ class AudioEngineerNode:
                         char["voice_id"] = voice_id
                         char["voice_name"] = voice_title
                         
-                        # 更新数据库中的角色 voice_id
-                        if char_id and voice_id:
+                        # 更新数据库中的角色 voice_id（使用传入的 db 会话）
+                        if char_id and voice_id and db is not None:
                             try:
-                                update_result = await update_character_voice.ainvoke({
-                                    "character_id": char_id,
-                                    "voice_id": voice_id,
-                                    "voice_speed": "1.0"  # 默认语速
-                                })
-                                if update_result.get("success"):
-                                    logger.info(f"[AudioEngineer] 已更新角色 {char_name} 的音色到数据库: {voice_id}")
-                                else:
-                                    logger.warning(f"[AudioEngineer] 更新角色 {char_name} 音色到数据库失败: {update_result.get('error')}")
+                                from sqlalchemy import update
+                                from app.models.character import Character
+                                
+                                await db.execute(
+                                    update(Character)
+                                    .where(Character.character_id == char_id)
+                                    .values(
+                                        voice_id=voice_id,
+                                        voice_speed="1.0",
+                                        updated_at=datetime.now()
+                                    )
+                                )
+                                logger.info(f"[AudioEngineer] 已更新角色 {char_name} 的音色到数据库: {voice_id}")
                             except Exception as db_e:
                                 logger.error(f"[AudioEngineer] 更新角色 {char_name} 音色到数据库异常: {db_e}")
                         
@@ -495,6 +639,37 @@ class AudioEngineerNode:
                 lines.append(f"- {char_name}: 分配失败 ❌")
         
         return "\n".join(lines)
+    
+    def _infer_gender(self, basic_info: str, voice_description: str, name: str) -> str:
+        """
+        从角色信息推断性别
+        
+        Args:
+            basic_info: 角色基本信息
+            voice_description: 声音描述
+            name: 角色名称
+            
+        Returns:
+            推断的性别: "male", "female", 或 "unknown"
+        """
+        # 合并所有文本用于分析
+        text = f"{basic_info or ''} {voice_description or ''} {name or ''}".lower()
+        
+        # 男性关键词
+        male_keywords = ['男', 'boy', 'man', 'male', 'he', 'his', 'him', '他', '哥哥', '弟弟', '爸爸', '爷爷', '先生', '男子', '男孩']
+        # 女性关键词
+        female_keywords = ['女', 'girl', 'woman', 'female', 'she', 'her', 'hers', '她', '姐姐', '妹妹', '妈妈', '奶奶', '女士', '女子', '女孩']
+        
+        male_count = sum(1 for kw in male_keywords if kw in text)
+        female_count = sum(1 for kw in female_keywords if kw in text)
+        
+        if male_count > female_count:
+            return "male"
+        elif female_count > male_count:
+            return "female"
+        else:
+            # 无法确定时返回 unknown
+            return "unknown"
 
 
 # 便捷函数

@@ -140,21 +140,27 @@ class GenerateNarrationAudioBatchTool(BaseTool):
         Returns:
             包含生成结果的字典
         """
-        # 如果外部传入 db 会话，直接使用；否则创建新会话
+        # 如果外部传入 db 会话，直接使用（不提交，由调用方控制）
         if db is not None:
-            return await self._execute_with_db(state, shot_id, force_regenerate, db)
+            return await self._execute_with_db(state, shot_id, force_regenerate, db, auto_commit=False)
 
+        # 否则创建新会话，自动提交
         async with get_async_db_session() as db:
-            return await self._execute_with_db(state, shot_id, force_regenerate, db)
+            return await self._execute_with_db(state, shot_id, force_regenerate, db, auto_commit=True)
 
     async def _execute_with_db(
         self,
         state: ComicDramaState,
         shot_id: int,
         force_regenerate: bool,
-        db: AsyncSession
+        db: AsyncSession,
+        auto_commit: bool = True
     ) -> Dict[str, Any]:
-        """使用已存在的 db 会话执行"""
+        """使用已存在的 db 会话执行
+        
+        Args:
+            auto_commit: 是否自动提交事务。当使用外部传入的会话时应设为 False
+        """
         from app.models.shot import Shot
         from app.models.character import Character
         from sqlalchemy import select, update
@@ -184,13 +190,31 @@ class GenerateNarrationAudioBatchTool(BaseTool):
                 )
 
             # 获取所有角色信息（用于查找 voice_id）
+            # 使用显式查询而不是 relationship 属性，避免 greenlet 问题
             char_voice_map = {}
-            for char in shot.characters:
-                char_voice_map[char.name] = {
-                    "voice_id": char.voice_id,
-                    "voice_speed": float(char.voice_speed) if char.voice_speed else 1.0,
-                    "character_id": char.character_id
-                }
+            try:
+                from app.models.character import Character
+                from app.models.shot import shot_characters
+                
+                # 查询与该 shot 关联的所有角色
+                char_stmt = select(Character).join(
+                    shot_characters, 
+                    Character.character_id == shot_characters.c.character_id
+                ).where(shot_characters.c.shot_id == shot_id)
+                
+                char_result = await db.execute(char_stmt)
+                characters = char_result.scalars().all()
+                
+                for char in characters:
+                    char_voice_map[char.name] = {
+                        "voice_id": char.voice_id,
+                        "voice_speed": float(char.voice_speed) if char.voice_speed else 1.0,
+                        "character_id": char.character_id
+                    }
+                
+                logger.info(f"[GenerateNarrationAudio] Shot {shot_id} 关联角色: {list(char_voice_map.keys())}")
+            except Exception as char_e:
+                logger.warning(f"[GenerateNarrationAudio] 获取角色信息失败: {char_e}")
 
             # 获取 creation 的默认 voice_id
             creation_voice_id = state.get("creation_voice_id") or settings.FISH_AUDIO_DEFAULT_VOICE_ID
@@ -289,9 +313,13 @@ class GenerateNarrationAudioBatchTool(BaseTool):
                 .where(Shot.shot_id == shot_id)
                 .values(**update_values)
             )
-            await db.commit()
-
-            logger.info(f"[GenerateNarrationAudio] 已更新 shot {shot_id} 的 narration 字段")
+            
+            # 只有在 auto_commit=True 时才提交
+            if auto_commit:
+                await db.commit()
+                logger.info(f"[GenerateNarrationAudio] 已更新 shot {shot_id} 的 narration 字段并提交")
+            else:
+                logger.info(f"[GenerateNarrationAudio] 已更新 shot {shot_id} 的 narration 字段（未提交，由调用方控制）")
 
             return self._create_success_result(
                 message=f"成功生成 {success_count}/{len(narration_list)} 个音频",
