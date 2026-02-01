@@ -4,6 +4,10 @@
 提供给 Agent 查询和更新创作资产的工具
 """
 
+<<<<<<< Updated upstream
+=======
+import json
+>>>>>>> Stashed changes
 from typing import Dict, Any, Optional, List
 
 from langchain_core.tools import tool
@@ -601,6 +605,55 @@ async def update_character(
 
 
 @tool
+<<<<<<< Updated upstream
+=======
+async def update_character_voice(
+    character_id: int,
+    voice_id: str,
+    voice_speed: Optional[float] = 1.0
+) -> Dict[str, Any]:
+    """
+    更新角色音色信息
+    
+    Args:
+        character_id: 角色 ID
+        voice_id: Fish Audio 音色 ID
+        voice_speed: 语速（可选，默认 1.0）
+        
+    Returns:
+        更新结果
+    """
+    logger.info(f"[DB Tool] 更新角色音色: character_id={character_id}, voice_id={voice_id}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.character import Character
+    from sqlalchemy import select
+    
+    async with get_async_session() as db:
+        stmt = select(Character).where(Character.character_id == character_id)
+        result = await db.execute(stmt)
+        character = result.scalar_one_or_none()
+        
+        if not character:
+            return {"success": False, "error": "角色不存在"}
+        
+        # 更新音色信息
+        character.voice_id = voice_id
+        character.voice_speed = voice_speed
+        
+        await db.commit()
+        
+        return {
+            "success": True,
+            "character_id": character_id,
+            "voice_id": voice_id,
+            "voice_speed": voice_speed,
+            "updated_fields": ["voice_id", "voice_speed"],
+        }
+
+
+@tool
+>>>>>>> Stashed changes
 async def update_scene(
     scene_id: int,
     name: Optional[str] = None,
@@ -1156,17 +1209,45 @@ async def query_pending_audio_shots(
     """
     查询待生成音频的分镜
     
+<<<<<<< Updated upstream
+=======
+    解析 narration JSON 格式，返回每个说话者的音频项
+    
+>>>>>>> Stashed changes
     Args:
         creation_uuid: 创作项目 UUID
         
     Returns:
+<<<<<<< Updated upstream
         待生成音频的分镜列表
+=======
+        待生成音频的分镜列表和角色列表
+>>>>>>> Stashed changes
     """
     from app.agent.tools.async_db import get_async_db_session
     from app.models.creation import Creation
     from app.models.shot import Shot
+<<<<<<< Updated upstream
     from sqlalchemy import select
     
+=======
+    from app.models.character import Character
+    from app.models.scene import Scene
+    from sqlalchemy import select
+    
+    def parse_narration(narration_json: str) -> list:
+        """解析旁白 JSON"""
+        if not narration_json:
+            return []
+        try:
+            if isinstance(narration_json, str):
+                return json.loads(narration_json)
+            return narration_json
+        except (json.JSONDecodeError, TypeError):
+            # 如果不是 JSON，作为纯文本返回
+            return [{"角色": "旁白", "内容": narration_json}]
+    
+>>>>>>> Stashed changes
     try:
         async with get_async_db_session() as db:
             stmt = select(Creation).where(Creation.uuid == creation_uuid)
@@ -1177,8 +1258,34 @@ async def query_pending_audio_shots(
                 return {"success": False, "error": "创作项目不存在"}
             
             creation_id = creation.creation_id
+<<<<<<< Updated upstream
             default_voice_id = "fish_default_voice"
             
+=======
+            
+            # 查询所有角色（用于音色选择）
+            char_stmt = select(Character).where(
+                Character.creation_id == creation_id,
+                Character.deleted_at.is_(None),
+            )
+            result = await db.execute(char_stmt)
+            characters = result.scalars().all()
+            
+            # 构建角色列表
+            character_list = [
+                {
+                    "id": c.character_id,
+                    "name": c.name,
+                    "basic_info": c.basic_info or "",
+                    "appearance": c.appearance or "",
+                    "voice_id": c.voice_id,
+                    "voice_speed": c.voice_speed,
+                }
+                for c in characters
+            ]
+            
+            # 查询所有分镜
+>>>>>>> Stashed changes
             shot_stmt = select(Shot).where(
                 Shot.creation_id == creation_id,
             ).order_by(Shot.shot_number)
@@ -1188,6 +1295,7 @@ async def query_pending_audio_shots(
             audio_items = []
             for shot in shots:
                 extra_data = shot.extra_data or {}
+<<<<<<< Updated upstream
                 has_audio = extra_data.get("dialogue_audio_url") or extra_data.get("narration_audio_url")
                 
                 if not has_audio and shot.narration:
@@ -1196,12 +1304,40 @@ async def query_pending_audio_shots(
                         "text": shot.narration,
                         "voice_id": default_voice_id,
                         "audio_type": "narration",
+=======
+                
+                # 检查是否已有音频
+                has_audio = extra_data.get("dialogue_audio_url") or extra_data.get("narration_audio_url")
+                if has_audio:
+                    continue
+                
+                # 解析 narration JSON
+                narration_list = parse_narration(shot.narration)
+                
+                for narration in narration_list:
+                    speaker = narration.get("角色", "旁白")
+                    content = narration.get("内容", "")
+                    
+                    if not content:
+                        continue
+                    
+                    audio_items.append({
+                        "shot_id": shot.shot_id,
+                        "speaker": speaker,
+                        "text": content,
+                        "shot_number": shot.shot_number,
+>>>>>>> Stashed changes
                     })
             
             return {
                 "success": True,
                 "creation_id": creation_id,
                 "audio_items": audio_items,
+<<<<<<< Updated upstream
+=======
+                "characters": character_list,
+                "total_items": len(audio_items),
+>>>>>>> Stashed changes
             }
             
     except Exception as e:

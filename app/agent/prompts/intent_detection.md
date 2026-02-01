@@ -25,7 +25,8 @@ max_tokens: 500
 - `generate_scene_images` - 生成场景图片
 - `generate_shot_images` - 生成分镜图片
 - `generate_videos` - 生成视频
-- `generate_audio` - 生成音频
+- `generate_audio` - 生成音频/配音
+- `select_voice` - 选择音色（为角色匹配合适的声音）
 - `auto_create` - 一键自动创作（从头到尾全流程）
 
 ### 状态查询 (status_query)
