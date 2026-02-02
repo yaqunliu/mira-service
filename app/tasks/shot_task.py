@@ -536,34 +536,45 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         db.commit()
         db.refresh(shot)
         
-        # 保存图片生成历史到 shot.extra_data
+        # 保存图片生成历史到 shot.status_detail
         try:
-            if shot.extra_data is None:
-                shot.extra_data = {}
+            # 确保 status_detail 是字典
+            if shot.status_detail is None:
+                shot.status_detail = {}
             
-            image_history = shot.extra_data.get('image_history', [])
+            # 获取现有历史记录
+            image_history = shot.status_detail.get('image_historys', [])
             
+            # 添加新的历史记录（只保留图片链接和提示词）
             new_image_record = {
-                "version_id": str(uuid.uuid4()),
                 "image_url": image_url,
-                "end_frame_image_url": end_frame_image_url,
                 "image_prompt": shot.image_prompt,
-                "model_name": image_to_image_model,
-                "visual_style": visual_style,
                 "generated_at": datetime.now().isoformat(),
-                "success": True,
-                "file_size": len(image_data) if image_data else None,
-                "duration_sec": total_sec,
-                "character_refs": len(character_images),
-                "is_current": False  # 标记为非当前版本
             }
             
             image_history.append(new_image_record)
-            shot.extra_data['image_history'] = image_history
+            shot.status_detail['image_historys'] = image_history
+            
+            # 保存尾帧历史到 last_image_historys
+            if frame_type in ("end", "both") and end_frame_image_url:
+                last_image_history = shot.status_detail.get('last_image_historys', [])
+                
+                # 添加尾帧历史记录（只保留图片链接和提示词）
+                new_last_image_record = {
+                    "image_url": end_frame_image_url,
+                    "image_prompt": end_frame_prompt,
+                    "generated_at": datetime.now().isoformat(),
+                }
+                
+                last_image_history.append(new_last_image_record)
+                shot.status_detail['last_image_historys'] = last_image_history
+            
+            # 显式标记 status_detail 字段已修改（SQLAlchemy JSONB 需要）
+            flag_modified(shot, "status_detail")
             
             db.commit()
             db.refresh(shot)
-            logger.info(f"分镜 {shot_id} 图片生成历史保存成功")
+            logger.info(f"分镜 {shot_id} 图片生成历史保存成功，首帧历史数: {len(image_history)}, 尾帧历史数: {len(shot.status_detail.get('last_image_historys', []))}")
         except Exception as e:
             logger.error(f"保存分镜 {shot_id} 图片生成历史失败: {str(e)}")
             # 历史保存失败不影响主流程

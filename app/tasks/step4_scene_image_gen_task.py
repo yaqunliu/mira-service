@@ -182,6 +182,8 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
     """
     单个场景图片生成任务
     """
+    import time
+    task_start_time = time.perf_counter()
     db: Session = _get_sync_session_factory()()
     try:
         self.update_state(
@@ -323,32 +325,31 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
         scene.image_url = us3_url
         scene.status = "completed"
 
-        # 保存图片生成历史到 scene.extra_data
+        # 保存图片生成历史到 scene.status_detail
         try:
-            if scene.extra_data is None:
-                scene.extra_data = {}
+            # 确保 status_detail 是字典
+            if scene.status_detail is None:
+                scene.status_detail = {}
             
-            image_history = scene.extra_data.get('image_history', [])
+            # 获取现有历史记录
+            image_history = scene.status_detail.get('image_historys', [])
             
+            # 添加新的历史记录（只保留图片链接和提示词）
             new_image_record = {
-                "version_id": str(uuid.uuid4()),
                 "image_url": us3_url,
                 "image_prompt": image_prompt,
-                "model_name": ai_client.text_to_image_model,
-                "visual_style": visual_style,
                 "generated_at": datetime.now().isoformat(),
-                "success": True,
-                "file_size": len(image_data) if image_data else None,
-                "duration_sec": round(time.perf_counter() - task_start_time, 3) if 'task_start_time' in locals() else None,
-                "is_current": False  # 标记为非当前版本
             }
             
             image_history.append(new_image_record)
-            scene.extra_data['image_history'] = image_history
+            scene.status_detail['image_historys'] = image_history
+            
+            # 显式标记 status_detail 字段已修改（SQLAlchemy JSONB 需要）
+            flag_modified(scene, "status_detail")
             
             db.commit()
             db.refresh(scene)
-            logger.info(f"场景 {scene_id} 图片生成历史保存成功")
+            logger.info(f"场景 {scene_id} 图片生成历史保存成功，历史记录数: {len(image_history)}")
         except Exception as e:
             logger.error(f"保存场景 {scene_id} 图片生成历史失败: {str(e)}")
             # 历史保存失败不影响主流程

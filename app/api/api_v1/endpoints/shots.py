@@ -127,6 +127,7 @@ async def create_shot(
     
     shot = Shot(
         scene_id=scene.scene_id,
+        creation_id=scene.creation_id,
         title=shot_data.title,
         description=shot_data.description,
         sequence_number=max_sequence + 1,
@@ -185,11 +186,12 @@ async def update_shot(
     if shot_data.description is not None:
         shot.description = shot_data.description
     if shot_data.narration is not None:
-        shot.narration = shot_data.narration
-    if shot_data.character_ids is not None:
+        import json
+        shot.narration = json.dumps([item.model_dump() for item in shot_data.narration], ensure_ascii=False)
+    if shot_data.associated_characters is not None:
         result = await db.execute(
             select(Character).where(
-                Character.character_id.in_(shot_data.character_ids),
+                Character.character_id.in_(shot_data.associated_characters),
                 Character.creation_id == shot.scene.creation_id
             )
         )
@@ -548,98 +550,6 @@ async def delete_shot(
     return success_response(
         data={"shot_uuid": shot_uuid},
         message="分镜删除成功"
-    )
-
-
-class ApplyShotImageVersionRequest(BaseModel):
-    version_id: str
-    image_url: str
-    image_prompt: Optional[str] = None
-
-
-@router.get("/{shot_uuid}/image-history")
-async def get_shot_image_history(
-    shot_uuid: str,
-    db: AsyncSession = Depends(get_async_db),
-    user: User = Depends(get_current_user)
-):
-    """获取分镜图片生成历史"""
-    result = await db.execute(
-        select(Shot).options(
-            selectinload(Shot.scene).selectinload(Scene.creation)
-        ).where(Shot.uuid == shot_uuid)
-    )
-    shot = result.scalar_one_or_none()
-
-    if not shot:
-        raise HTTPException(status_code=404, detail="分镜不存在")
-
-    if shot.scene.creation.owner_id != user.user_id:
-        raise HTTPException(status_code=403, detail="无权限访问该分镜")
-
-    image_history = shot.extra_data.get('image_history', []) if shot.extra_data else []
-
-    return success_response(
-        data={
-            "current_image_url": shot.image_url,
-            "current_image_prompt": shot.image_prompt,
-            "image_history": image_history
-        },
-        message="获取分镜图片历史成功"
-    )
-
-
-@router.post("/{shot_uuid}/apply-image-version")
-async def apply_shot_image_version(
-    shot_uuid: str,
-    request: ApplyShotImageVersionRequest,
-    db: AsyncSession = Depends(get_async_db),
-    user: User = Depends(get_current_user)
-):
-    """将历史图片应用为分镜的当前图片"""
-    result = await db.execute(
-        select(Shot).options(
-            selectinload(Shot.scene).selectinload(Scene.creation)
-        ).where(Shot.uuid == shot_uuid)
-    )
-    shot = result.scalar_one_or_none()
-
-    if not shot:
-        raise HTTPException(status_code=404, detail="分镜不存在")
-
-    if shot.scene.creation.owner_id != user.user_id:
-        raise HTTPException(status_code=403, detail="无权限操作该分镜")
-
-    image_history = shot.extra_data.get('image_history', []) if shot.extra_data else []
-
-    version_found = any(v.get('version_id') == request.version_id for v in image_history)
-
-    if not version_found:
-        raise HTTPException(status_code=404, detail="指定的版本不存在")
-
-    shot.image_url = request.image_url
-    if request.image_prompt:
-        shot.image_prompt = request.image_prompt
-
-    for version in image_history:
-        version['is_current'] = version.get('version_id') == request.version_id
-
-    if shot.extra_data is None:
-        shot.extra_data = {}
-    shot.extra_data['image_history'] = image_history
-    from sqlalchemy.orm.attributes import flag_modified
-    flag_modified(shot, "extra_data")
-
-    await db.commit()
-    await db.refresh(shot)
-
-    return success_response(
-        data={
-            "shot_uuid": shot_uuid,
-            "image_url": shot.image_url,
-            "image_prompt": shot.image_prompt
-        },
-        message="应用历史图片成功"
     )
 
 

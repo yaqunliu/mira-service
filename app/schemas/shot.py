@@ -161,7 +161,32 @@ class ShotResponse(BaseModel):
     status_detail: Optional[Dict[str, Any]] = None
     extra_data: Optional[Dict[str, Any]] = None
     shot_number: int
-    
+
+    @field_validator('narration', mode='before')
+    @classmethod
+    def validate_narration_response(cls, v: Any) -> List[NarrationItem]:
+        """验证 narration 字段，支持从 JSON 字符串解析"""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            try:
+                data = json.loads(v)
+                if isinstance(data, list):
+                    result = []
+                    for item in data:
+                        if isinstance(item, dict) and "角色" in item and "内容" in item:
+                            result.append(NarrationItem(**item))
+                        elif isinstance(item, str):
+                            result.append(NarrationItem(角色="旁白", 内容=item))
+                    return result
+                else:
+                    return [NarrationItem(角色="旁白", 内容=str(data))]
+            except (json.JSONDecodeError, TypeError):
+                return [NarrationItem(角色="旁白", 内容=v)]
+        return []
+
     class Config:
         from_attributes = True
     

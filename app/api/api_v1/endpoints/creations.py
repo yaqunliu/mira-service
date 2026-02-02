@@ -327,7 +327,7 @@ async def get_creation_detail(
             .order_by(Shot.created_at.asc())
         )
         creation_shots = {s.shot_id: s for s in shots_result.scalars().all()}
-
+        print("分镜数量", len(creation_shots))
         for scene in scenes:
             # 只返回属于当前 creation 的分镜，按 shot_number 排序
             scene_shots = []
@@ -370,8 +370,8 @@ async def get_creation_detail(
                     "video_url": shot.video_url,
                     "audio_url": shot.audio_url,
                     "status": shot.status,
-                    "video_status": shot.video_status,
                     "status_detail": shot.status_detail,
+                    "video_status": shot.video_status,
                     "extra_data": shot.extra_data,
                     "characters": shot_characters,
                     "image_prompt": shot.image_prompt,
@@ -386,7 +386,9 @@ async def get_creation_detail(
                 "space_type": scene.space_type,
                 "atmosphere": scene.atmosphere,
                 "image_url": scene.image_url,
+                "image_prompt": scene.extra_data.get("image_prompt", ""),
                 "status": scene.status,
+                "status_detail": scene.status_detail,
                 "extra_data": scene.extra_data,
                 "shots": scene_shots,
             })
@@ -412,6 +414,7 @@ async def get_creation_detail(
                     "uuid": c.uuid,
                     "name": c.name,
                     "status": c.status,
+                    "status_detail": c.status_detail,
                     "basic_info": c.basic_info,
                     "appearance": c.appearance,
                     "body": c.body,

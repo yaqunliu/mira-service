@@ -1,6 +1,7 @@
 from app.core.celery_app import celery_app
 from app.db.base import _get_sync_session_factory
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from typing import List
 from app.models.character import Character
 from app.models.creation import Creation
@@ -269,31 +270,29 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
 
         # 保存图片生成历史到 character.status_detail
         try:
+            # 确保 status_detail 是字典
             if character.status_detail is None:
                 character.status_detail = {}
             
-            image_history = character.status_detail.get('image_history', [])
+            # 获取现有历史记录
+            image_history = character.status_detail.get('image_historys', [])
             
-            # 添加新的历史记录
+            # 添加新的历史记录（只保留图片链接和提示词）
             new_image_record = {
-                "version_id": str(uuid.uuid4()),
                 "image_url": image_url,
                 "image_prompt": image_prompt,
-                "model_name": text_to_image_model,
-                "visual_style": visual_style,
                 "generated_at": datetime.now().isoformat(),
-                "success": True,
-                "file_size": len(image_data) if image_data else None,
-                "duration_sec": total_sec,
-                "is_current": False  # 标记为非当前版本
             }
             
             image_history.append(new_image_record)
-            character.status_detail['image_history'] = image_history
+            character.status_detail['image_historys'] = image_history
+            
+            # 显式标记 status_detail 字段已修改（SQLAlchemy JSONB 需要）
+            flag_modified(character, "status_detail")
             
             db.commit()
             db.refresh(character)
-            logger.info(f"角色 {character_id} 图片生成历史保存成功")
+            logger.info(f"角色 {character_id} 图片生成历史保存成功，历史记录数: {len(image_history)}")
         except Exception as e:
             logger.error(f"保存角色 {character_id} 图片生成历史失败: {str(e)}")
             # 历史保存失败不影响主流程
