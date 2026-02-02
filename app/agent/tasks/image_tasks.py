@@ -298,6 +298,33 @@ def agent_generate_character_image_task(
                 character.image_url = us3_url
                 character.image_prompt = prompt
                 character.status = "completed"
+                
+                # 保存视觉风格（与专业模式一致）
+                visual_style = style.get("visual_style", "anime") if style else "anime"
+                character.visual_style = visual_style
+                
+                # 保存图片生成历史（与专业模式一致）
+                if character.status_detail is None:
+                    character.status_detail = {}
+                
+                import uuid as uuid_lib
+                from datetime import datetime
+                image_history = character.status_detail.get('image_history', [])
+                image_history.append({
+                    "version_id": str(uuid_lib.uuid4()),
+                    "image_url": us3_url,
+                    "image_prompt": prompt,
+                    "model_name": text_to_image_model,
+                    "visual_style": visual_style,
+                    "generated_at": datetime.now().isoformat(),
+                    "success": True,
+                    "file_size": len(image_data) if image_data else None,
+                    "is_current": False,
+                })
+                character.status_detail['image_history'] = image_history
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(character, "status_detail")
+                
                 db.commit()
             
             if freeze_record_id:
@@ -416,8 +443,38 @@ def agent_generate_scene_image_task(
             scene = db.query(Scene).filter(Scene.scene_id == scene_id).first()
             if scene:
                 scene.image_url = us3_url
-                scene.image_prompt = prompt
                 scene.status = "completed"
+                
+                # 存储提示词到 extra_data
+                if scene.extra_data is None:
+                    scene.extra_data = {}
+                scene.extra_data["image_prompt"] = prompt
+                
+                # 保存图片生成历史到 status_detail
+                import uuid as uuid_lib
+                from datetime import datetime
+                visual_style = style.get("visual_style", "anime") if style else "anime"
+                
+                if scene.status_detail is None:
+                    scene.status_detail = {}
+                image_history = scene.status_detail.get('image_history', [])
+                image_history.append({
+                    "version_id": str(uuid_lib.uuid4()),
+                    "image_url": us3_url,
+                    "image_prompt": prompt,
+                    "model_name": text_to_image_model,
+                    "visual_style": visual_style,
+                    "generated_at": datetime.now().isoformat(),
+                    "success": True,
+                    "file_size": len(image_data) if image_data else None,
+                    "is_current": False,
+                })
+                scene.status_detail['image_history'] = image_history
+                
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(scene, "extra_data")
+                flag_modified(scene, "status_detail")
+                
                 db.commit()
             
             if freeze_record_id:
@@ -601,6 +658,8 @@ def agent_generate_single_shot_image_task(
         # 4. 更新数据库 & 确认积分
         with get_sync_session() as db:
             from sqlalchemy.orm.attributes import flag_modified
+            import uuid as uuid_lib
+            from datetime import datetime
             
             shot = db.query(Shot).filter(Shot.shot_id == shot_id).first()
             if shot:
@@ -612,6 +671,24 @@ def agent_generate_single_shot_image_task(
                     shot_extra["end_frame_image_url"] = end_frame_url
                     shot.extra_data = shot_extra
                     flag_modified(shot, "extra_data")
+                
+                # 保存图片生成历史到 status_detail
+                if shot.status_detail is None:
+                    shot.status_detail = {}
+                image_history = shot.status_detail.get('image_history', [])
+                image_history.append({
+                    "version_id": str(uuid_lib.uuid4()),
+                    "start_frame_url": start_frame_url,
+                    "end_frame_url": end_frame_url,
+                    "image_prompt": image_prompt,
+                    "end_frame_prompt": end_frame_prompt,
+                    "model_name": image_model,
+                    "generated_at": datetime.now().isoformat(),
+                    "success": True,
+                    "is_current": False,
+                })
+                shot.status_detail['image_history'] = image_history
+                flag_modified(shot, "status_detail")
                 
                 db.commit()
             
