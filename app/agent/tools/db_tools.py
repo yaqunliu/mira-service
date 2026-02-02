@@ -908,11 +908,21 @@ async def save_scenes(
                     skipped.append(scene_title)
                     continue
                 
+                # 构建 extra_data（保存背景元素和空间描述等扩展信息）
+                extra_data = {}
+                if scene_data.get("env_description"):
+                    extra_data["env_description"] = scene_data.get("env_description")
+                if scene_data.get("space_description"):
+                    extra_data["space_description"] = scene_data.get("space_description")
+                
                 scene = Scene(
                     creation_id=creation_id,
                     title=scene_title,
                     location=scene_data.get("location", ""),
+                    space_type=scene_data.get("space_type", ""),
                     atmosphere=scene_data.get("atmosphere", ""),
+                    time_setting=scene_data.get("time_setting", ""),
+                    extra_data=extra_data if extra_data else None,
                     status="pending",
                 )
                 db.add(scene)
@@ -999,6 +1009,16 @@ async def save_shots(
             scene_map = {s.title: s.scene_id for s in scenes}
             default_scene_id = scenes[0].scene_id if scenes else None
             
+            # 获取角色 ID 映射
+            from app.models.character import Character
+            char_stmt = select(Character).where(
+                Character.creation_id == creation_id,
+                Character.deleted_at.is_(None),
+            )
+            result = await db.execute(char_stmt)
+            characters = result.scalars().all()
+            char_map = {c.name: c for c in characters}
+            
             saved_count = 0
             for i, shot_data in enumerate(shots):
                 scene_id = scene_map.get(shot_data.get("scene_name"), default_scene_id)
@@ -1018,6 +1038,15 @@ async def save_shots(
                     video_duration=shot_data.get("duration", 5),
                     status="pending",
                 )
+                
+                # 关联角色
+                char_names = shot_data.get("characters", [])
+                if char_names:
+                    for char_name in char_names:
+                        char = char_map.get(char_name)
+                        if char:
+                            shot.characters.append(char)
+                
                 db.add(shot)
                 saved_count += 1
             
@@ -1414,298 +1443,8 @@ async def query_scene_titles(
         return {"success": False, "error": str(e)}
 
 
-# ==================== 资产生成 Tools ====================
 
-@tool
-async def create_asset_generation_tasks(
-    creation_uuid: str,
-    assets: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """
-    创建资产图片生成任务（角色和场景）
-    
-    Args:
-        creation_uuid: 创作项目 UUID
-        assets: 资产列表，每个资产包含 type (character/scene), id, prompt
-        
-    Returns:
-        创建的任务列表
-    """
-    logger.info(f"[create_asset_generation_tasks] 创建资产生成任务: creation_uuid={creation_uuid}, assets={len(assets)}")
-    
-    from app.agent.tasks.image_tasks import (
-        agent_generate_character_image_task,
-        agent_generate_scene_image_task,
-    )
-    
-    try:
-        task_ids = []
-        
-        for asset in assets:
-            asset_type = asset.get("type")
-            asset_id = asset.get("id")
-            prompt = asset.get("prompt", "")
-            
-            if asset_type == "character":
-                task = agent_generate_character_image_task.delay(
-                    creation_uuid=creation_uuid,
-                    character_id=asset_id,
-                    prompt=prompt,
-                )
-                task_ids.append({
-                    "type": "character",
-                    "id": asset_id,
-                    "task_id": task.id,
-                    "name": asset.get("name", ""),
-                })
-                logger.info(f"[create_asset_generation_tasks] 创建角色图片任务: id={asset_id}")
-                
-            elif asset_type == "scene":
-                task = agent_generate_scene_image_task.delay(
-                    creation_uuid=creation_uuid,
-                    scene_id=asset_id,
-                    prompt=prompt,
-                )
-                task_ids.append({
-                    "type": "scene",
-                    "id": asset_id,
-                    "task_id": task.id,
-                    "name": asset.get("name", ""),
-                })
-                logger.info(f"[create_asset_generation_tasks] 创建场景图片任务: id={asset_id}")
-        
-        return {
-            "success": True,
-            "task_ids": task_ids,
-            "total": len(task_ids),
-            "characters_count": len([t for t in task_ids if t["type"] == "character"]),
-            "scenes_count": len([t for t in task_ids if t["type"] == "scene"]),
-        }
-        
-    except Exception as e:
-        logger.error(f"[create_asset_generation_tasks] 创建任务失败: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "task_ids": [],
-        }
-
-
-# ==================== 分镜图片生成 Tools ====================
-
-@tool
-async def generate_shot_images(
-    creation_uuid: str,
-    force_regenerate: bool = False
-) -> Dict[str, Any]:
-    """
-    触发创作项目的分镜图片批量生成任务
-    
-    Args:
-        creation_uuid: 创作项目 UUID
-        force_regenerate: 是否强制重新生成已有图片的分镜
-    
-    Returns:
-        task_id: Celery 任务 ID
-        shot_count: 待生成的分镜数量
-    """
-    from app.agent.tools.async_db import get_async_db_session
-    from app.models import Creation, Scene, Shot
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-    
-    try:
-        async with get_async_db_session() as session:
-            # 查询 creation
-            stmt = select(Creation).where(Creation.uuid == creation_uuid)
-            result = await session.execute(stmt)
-            creation = result.scalar_one_or_none()
-            
-            if not creation:
-                return {
-                    "success": False,
-                    "error": f"创作不存在: {creation_uuid}",
-                }
-            
-            # 查询分镜数量
-            shot_stmt = (
-                select(Shot)
-                .join(Scene, Shot.scene_id == Scene.scene_id)
-                .where(Scene.creation_id == creation.creation_id)
-            )
-            shot_result = await session.execute(shot_stmt)
-            shots = shot_result.scalars().all()
-            
-            # 统计需要生成图片的分镜
-            shots_to_generate = [
-                s for s in shots 
-                if force_regenerate or not s.image_url
-            ]
-            
-            if not shots_to_generate:
-                return {
-                    "success": True,
-                    "task_id": None,
-                    "shot_count": 0,
-                    "message": "所有分镜已有图片，无需生成",
-                }
-            
-            # 调用新的 Agent 专用 Celery Task
-            from app.tasks.agent_shot_task import agent_generate_shot_images_task
-            
-            task = agent_generate_shot_images_task.delay(
-                creation_uuid=creation_uuid,
-            )
-            
-            logger.info(f"[generate_shot_images] 启动 Agent 分镜图片生成任务: task_id={task.id}, shot_count={len(shots_to_generate)}")
-            
-            # 等待批量任务返回 group_id 和 shot_task_ids（派发很快，约1秒）
-            try:
-                import asyncio
-                # 使用 asyncio.to_thread 在异步环境中等待同步操作
-                loop = asyncio.get_event_loop()
-                task_result = await loop.run_in_executor(None, lambda: task.get(timeout=10))
-                
-                return {
-                    "success": True,
-                    "task_id": task.id,
-                    "group_id": task_result.get("group_id"),
-                    "shot_task_ids": task_result.get("shot_task_ids", {}),
-                    "shot_count": task_result.get("total", len(shots_to_generate)),
-                    "total_shots": len(shots),
-                    "message": task_result.get("message", f"已启动分镜图片生成任务"),
-                }
-            except Exception as wait_err:
-                logger.warning(f"[generate_shot_images] 等待任务派发结果失败: {wait_err}, 返回 task_id")
-                return {
-                    "success": True,
-                    "task_id": task.id,
-                    "shot_count": len(shots_to_generate),
-                    "total_shots": len(shots),
-                    "message": f"已启动分镜图片生成任务，共 {len(shots_to_generate)} 个分镜待生成",
-                }
-            
-    except Exception as e:
-        logger.error(f"[generate_shot_images] 启动任务失败: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-        }
-
-
-@tool
-async def check_task_status(task_id: str) -> Dict[str, Any]:
-    """
-    查询 Celery 任务状态
-    
-    Args:
-        task_id: 任务 ID
-        
-    Returns:
-        任务状态信息，包括 status、result、error 等
-    """
-    from celery.result import AsyncResult
-    from app.core.celery_app import celery_app
-    
-    try:
-        result = AsyncResult(task_id, app=celery_app)
-        
-        response = {
-            "task_id": task_id,
-            "status": result.status,
-            "ready": result.ready(),
-        }
-        
-        if result.ready():
-            if result.successful():
-                response["result"] = result.result
-            else:
-                response["error"] = str(result.result) if result.result else "Unknown error"
-        elif result.status == "PROGRESS":
-            response["progress"] = result.info
-            
-        return response
-        
-    except Exception as e:
-        logger.error(f"[check_task_status] 查询失败: {e}")
-        return {"task_id": task_id, "status": "ERROR", "error": str(e)}
-
-
-@tool
-async def check_task_group_status(
-    group_id: str,
-    shot_task_ids: Dict[int, str],
-) -> Dict[str, Any]:
-    """
-    查询任务组状态（用于批量分镜图片生成）
-    
-    Args:
-        group_id: Celery group 任务 ID
-        shot_task_ids: shot_id -> task_id 映射
-        
-    Returns:
-        任务组状态统计
-    """
-    from celery.result import AsyncResult, GroupResult
-    from app.core.celery_app import celery_app
-    
-    try:
-        total = len(shot_task_ids)
-        completed = 0
-        failed = 0
-        pending = 0
-        failed_shots = []
-        completed_shots = []
-        
-        for shot_id, task_id in shot_task_ids.items():
-            result = AsyncResult(task_id, app=celery_app)
-            
-            if result.successful():
-                # Celery 任务成功，但需要检查业务层结果
-                task_result = result.result or {}
-                if isinstance(task_result, dict) and task_result.get("success") == False:
-                    # 业务层失败
-                    failed += 1
-                    failed_shots.append({
-                        "shot_id": shot_id,
-                        "error": task_result.get("error", "Unknown error"),
-                    })
-                else:
-                    # 真正成功
-                    completed += 1
-                    completed_shots.append({
-                        "shot_id": shot_id,
-                        "result": task_result,
-                    })
-            elif result.failed():
-                failed += 1
-                failed_shots.append({
-                    "shot_id": shot_id,
-                    "error": str(result.result) if result.result else "Unknown error",
-                })
-            else:
-                pending += 1
-        
-        all_done = (completed + failed) == total
-        
-        return {
-            "group_id": group_id,
-            "total": total,
-            "completed": completed,
-            "failed": failed,
-            "pending": pending,
-            "all_done": all_done,
-            "success": all_done and failed == 0,
-            "failed_shots": failed_shots if failed > 0 else None,
-            "completed_shots": completed_shots[:3] if completed_shots else None,  # 只返回前3个示例
-        }
-        
-    except Exception as e:
-        logger.error(f"[check_task_group_status] 查询失败: {e}")
-        return {"group_id": group_id, "status": "ERROR", "error": str(e)}
-
-
-# ==================== 视频生成工具 ====================
+# ==================== 视频生成工具 ===================
 
 @tool
 async def save_video_prompts(
@@ -1793,72 +1532,3 @@ async def save_video_prompts(
         logger.error(f"[save_video_prompts] 保存失败: {e}")
         return {"success": False, "error": str(e)}
 
-
-@tool
-async def generate_shot_videos(
-    creation_uuid: str,
-    force_regenerate: bool = False,
-) -> Dict[str, Any]:
-    """
-    创建视频生成任务
-    
-    查询所有需要生成视频的分镜（有 video_prompt 但无 video_url），
-    批量派发 Celery 任务。
-    
-    Args:
-        creation_uuid: 创作 UUID
-        force_regenerate: 是否强制重新生成已有视频的分镜
-        
-    Returns:
-        {
-            "success": True/False,
-            "task_id": str,
-            "group_id": str,
-            "shot_task_ids": {shot_id: task_id, ...},
-            "shot_count": int,
-            "message": str,
-        }
-    """
-    from app.tasks.agent_video_task import agent_generate_shot_videos_task
-    
-    logger.info(f"[generate_shot_videos] 创建视频生成任务: creation_uuid={creation_uuid}")
-    
-    try:
-        # 派发批量任务
-        task = agent_generate_shot_videos_task.delay(
-            creation_uuid=creation_uuid,
-        )
-        
-        # 等待批量任务返回 group_id 和 shot_task_ids（派发很快，约1秒）
-        try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            task_result = await loop.run_in_executor(None, lambda: task.get(timeout=10))
-            
-            if task_result.get("success"):
-                return {
-                    "success": True,
-                    "task_id": task.id,
-                    "group_id": task_result.get("group_id"),
-                    "shot_task_ids": task_result.get("shot_task_ids", {}),
-                    "shot_count": task_result.get("total", 0),
-                    "message": task_result.get("message", "已启动视频生成任务"),
-                }
-            else:
-                return {
-                    "success": False,
-                    "task_id": task.id,
-                    "error": task_result.get("error", "未知错误"),
-                }
-                
-        except Exception as wait_err:
-            logger.warning(f"[generate_shot_videos] 等待任务派发结果失败: {wait_err}, 返回 task_id")
-            return {
-                "success": True,
-                "task_id": task.id,
-                "message": "已启动视频生成任务，请稍后查询状态",
-            }
-            
-    except Exception as e:
-        logger.error(f"[generate_shot_videos] 创建任务失败: {e}")
-        return {"success": False, "error": str(e)}

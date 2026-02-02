@@ -36,15 +36,14 @@ class TestGenerationToolsSchema:
         assert 'creation_uuid' in fields
 
     @pytest.mark.asyncio
-    async def test_generate_shot_image_schema(self):
-        """测试分镜图片生成 Tool 模式"""
-        from app.agent.tools.agent_generation_tools import generate_shot_image
+    async def test_generate_shot_images_batch_schema(self):
+        """测试批量分镜图片生成 Tool 模式"""
+        from app.agent.tools.agent_generation_tools import generate_shot_images
         
-        assert hasattr(generate_shot_image, 'ainvoke')
+        assert hasattr(generate_shot_images, 'ainvoke')
         
-        schema = generate_shot_image.args_schema
+        schema = generate_shot_images.args_schema
         fields = schema.model_fields
-        assert 'shot_id' in fields
         assert 'creation_uuid' in fields
 
     @pytest.mark.asyncio
@@ -79,12 +78,11 @@ class TestGenerationToolsExport:
         """验证所有 Tools 正确导出"""
         from app.agent.tools.agent_generation_tools import GENERATION_TOOLS
         
-        assert len(GENERATION_TOOLS) >= 5
+        assert len(GENERATION_TOOLS) >= 4  # character, scene, video, audio
         
         tool_names = [tool.name for tool in GENERATION_TOOLS]
         assert 'generate_character_image' in tool_names
         assert 'generate_scene_image' in tool_names
-        assert 'generate_shot_image' in tool_names
         assert 'generate_video' in tool_names
         assert 'generate_audio' in tool_names
 

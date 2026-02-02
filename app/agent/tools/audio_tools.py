@@ -51,16 +51,82 @@ class GenerateNarrationAudioBatchTool(BaseTool):
 
     def __init__(self, db_factory=None):
         super().__init__(db_factory)
-        # 延迟导入避免循环导入
-        from app.agent.tools.generation_tools import GenerateAudioTool
-        self.generate_audio_tool = GenerateAudioTool(db_factory)
         self.us3_client = None
+
 
     def _get_us3_client(self) -> US3Client:
         """获取 US3 客户端"""
         if self.us3_client is None:
             self.us3_client = US3Client()
         return self.us3_client
+
+    async def _generate_audio(
+        self,
+        state: ComicDramaState,
+        text: str,
+        voice_id: str,
+        speed: float = 1.0,
+    ) -> Dict[str, Any]:
+        """生成音频
+        
+        使用 FishAudioClient 生成音频并上传到 US3
+        
+        Args:
+            state: 当前状态
+            text: 要合成的文本
+            voice_id: 音色 ID
+            speed: 语速 (0.5-2.0)
+        """
+        import asyncio
+        import re
+        
+        try:
+            from app.utils.fish_audio import FishAudioClient
+            
+            client = FishAudioClient()
+            
+            loop = asyncio.get_event_loop()
+            audio_bytes = await loop.run_in_executor(
+                None,
+                lambda: client.text_to_speech(
+                    text=text,
+                    reference_id=voice_id or settings.FISH_AUDIO_DEFAULT_VOICE_ID,
+                    speed=speed if speed != 1.0 else None
+                )
+            )
+            
+            # 上传到 US3
+            us3_client = self._get_us3_client()
+            creation_uuid = state.get("creation_uuid") or "default"
+            
+            safe_text = re.sub(r'[^\w\u4e00-\u9fff]+', '_', text[:10]).strip('_')
+            if not safe_text:
+                safe_text = "audio"
+            file_name = f"audio/{creation_uuid}/{safe_text}.mp3"
+            
+            header = {'Content-Type': 'audio/mpeg'}
+            
+            upload_result = await loop.run_in_executor(
+                None,
+                lambda: us3_client.upload_file_stream(
+                    file_stream=audio_bytes,
+                    put_key=file_name,
+                    header=header,
+                    content_type="audio/mpeg"
+                )
+            )
+            
+            if isinstance(upload_result, dict) and upload_result.get("success"):
+                audio_url = us3_client.get_file_url(file_name)
+                return {"success": True, "audio_url": audio_url, "voice_id": voice_id}
+            else:
+                error_msg = upload_result.get("message", "上传失败") if isinstance(upload_result, dict) else "上传失败"
+                return {"success": False, "error": f"US3上传失败: {error_msg}"}
+                
+        except Exception as e:
+            logger.error(f"生成音频失败: {e}")
+            return {"success": False, "error": str(e)}
+
 
     def _parse_narration(self, narration_data) -> List[Dict[str, str]]:
         """解析 narration 数据"""
@@ -257,8 +323,8 @@ class GenerateNarrationAudioBatchTool(BaseTool):
 
                 logger.info(f"[GenerateNarrationAudio] Shot {shot_id}, Narration {idx}: speaker={speaker}, voice_id={voice_id}")
 
-                # 生成音频
-                audio_result = await self.generate_audio_tool.execute(
+                # 生成音频 - 直接使用 FishAudioClient
+                audio_result = await self._generate_audio(
                     state=state,
                     text=text,
                     voice_id=voice_id,
@@ -269,7 +335,6 @@ class GenerateNarrationAudioBatchTool(BaseTool):
                 updated_narration = dict(narration)
 
                 if audio_result.get("success"):
-                    # GenerateAudioTool 直接返回 audio_url，不在 data 字段中
                     audio_url = audio_result.get("audio_url")
 
                     # 添加 audio_url
@@ -293,6 +358,7 @@ class GenerateNarrationAudioBatchTool(BaseTool):
                 else:
                     logger.error(f"[GenerateNarrationAudio] 生成音频失败 {idx}: {audio_result.get('error')}")
                     updated_narration["audio_error"] = audio_result.get("error")
+
 
                 updated_narration_list.append(updated_narration)
 

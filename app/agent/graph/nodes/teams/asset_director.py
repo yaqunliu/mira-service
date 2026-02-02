@@ -145,7 +145,7 @@ Anime style, high quality animation illustration, wide shot, 16:9 widescreen com
                 logger.info(f"[AssetDirector] 准备场景图片任务: {scene['title']}")
             
             # 使用 Tool 创建生成任务
-            from app.agent.tools.db_tools import create_asset_generation_tasks
+            from app.agent.tools.agent_generation_tools import create_asset_generation_tasks
             
             task_result = await create_asset_generation_tasks.ainvoke({
                 "creation_uuid": creation_uuid,

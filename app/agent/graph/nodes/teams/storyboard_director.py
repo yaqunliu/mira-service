@@ -33,9 +33,10 @@ class StoryboardDirectorNode:
 
 ## 输出格式
 返回 JSON 数组，每个分镜包含：
-- scene_name: 所属场景名称
+- scene_name: 所属场景名称（必须与已有场景标题完全一致）
 - title: 分镜标题
 - description: 画面描述（详细描述镜头内容、人物动作、表情等）
+- characters: 出场角色名称数组（必须与已有角色名称完全一致，如 ["林晚", "李明"]）
 - narration: 旁白或对话内容（JSON数组格式：[{"角色": "角色名", "内容": "对话内容"}]）
 - duration: 预估时长（秒，3-8秒）
 
@@ -44,6 +45,7 @@ class StoryboardDirectorNode:
 2. 每个分镜时长 3-8 秒
 3. 画面描述要详细具体，便于后续生成图片
 4. 保持剧情连贯性和节奏感
+5. **characters 字段必须填写本分镜中出现的所有角色名称**
 
 ## 输出示例
 ```json
@@ -52,6 +54,7 @@ class StoryboardDirectorNode:
         "scene_name": "咖啡厅",
         "title": "初次相遇",
         "description": "女主角坐在靠窗的位置，阳光透过玻璃洒在她的脸上，她正在看书。",
+        "characters": ["林晚"],
         "narration": [{"角色": "旁白", "内容": "那是一个平凡的午后"}],
         "duration": 5
     }
@@ -204,9 +207,9 @@ class StoryboardDirectorNode:
         
         try:
             from app.agent.tools.db_tools import (
-                query_scene_titles, save_shots, save_shot_prompts, 
-                generate_shot_images, query_shots
+                query_scene_titles, save_shots, save_shot_prompts, query_shots
             )
+            from app.agent.tools.agent_generation_tools import generate_shot_images
             
             # ========== 检查当前进度 ==========
             progress = await self._check_progress(creation_uuid, query_shots)
@@ -434,7 +437,7 @@ class StoryboardDirectorNode:
             
             # ========== Step 6: 使用 Task Group 状态轮询 ==========
             import asyncio
-            from app.agent.tools.db_tools import check_task_group_status
+            from app.agent.tools.agent_generation_tools import check_task_group_status
             
             max_wait_time = 600
             poll_interval = 5

@@ -8,18 +8,31 @@ Agent 专用 Celery Tasks 模块
 from .image_tasks import (
     agent_generate_character_image_task,
     agent_generate_scene_image_task,
-    agent_generate_shot_image_task,
+    # 批量分镜图片生成
+    agent_generate_single_shot_image_task,
+    agent_generate_shot_images_task,
 )
-from .video_tasks import agent_generate_video_task
-from .audio_tasks import agent_generate_audio_task
+from .video_tasks import (
+    agent_generate_video_task,
+    # 批量分镜视频生成
+    agent_generate_single_shot_video_task,
+    agent_generate_shot_videos_task,
+)
+from .audio_tasks import agent_generate_shot_audio_batch_task
 
 __all__ = [
     # 图片生成
     "agent_generate_character_image_task",
     "agent_generate_scene_image_task",
-    "agent_generate_shot_image_task",
+    "agent_generate_single_shot_image_task",
+    "agent_generate_shot_images_task",
+
     # 视频生成
     "agent_generate_video_task",
+    "agent_generate_single_shot_video_task",
+    "agent_generate_shot_videos_task",
     # 音频生成
-    "agent_generate_audio_task",
+    "agent_generate_shot_audio_batch_task",
 ]
+
+

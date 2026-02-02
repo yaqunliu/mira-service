@@ -16,12 +16,10 @@ class TestAgentImageTasks:
         from app.agent.tasks import (
             agent_generate_character_image_task,
             agent_generate_scene_image_task,
-            agent_generate_shot_image_task,
         )
         
         assert agent_generate_character_image_task.name == "agent_generate_character_image_task"
         assert agent_generate_scene_image_task.name == "agent_generate_scene_image_task"
-        assert agent_generate_shot_image_task.name == "agent_generate_shot_image_task"
 
     @pytest.mark.asyncio
     async def test_character_image_task_params(self):
@@ -39,11 +37,11 @@ class TestAgentImageTasks:
         assert callable(agent_generate_scene_image_task)
 
     @pytest.mark.asyncio
-    async def test_shot_image_task_params(self):
-        """测试分镜图片任务参数要求"""
-        from app.agent.tasks.image_tasks import agent_generate_shot_image_task
+    async def test_single_shot_image_task_params(self):
+        """测试单个分镜图片任务参数要求"""
+        from app.agent.tasks.image_tasks import agent_generate_single_shot_image_task
         
-        assert callable(agent_generate_shot_image_task)
+        assert callable(agent_generate_single_shot_image_task)
 
 
 class TestAgentVideoTasks:
@@ -99,7 +97,7 @@ class TestTaskIsolation:
         from app.agent.tasks import (
             agent_generate_character_image_task,
             agent_generate_scene_image_task,
-            agent_generate_shot_image_task,
+            agent_generate_single_shot_image_task,
             agent_generate_video_task,
             agent_generate_audio_task,
             agent_generate_batch_audio_task,
@@ -108,14 +106,14 @@ class TestTaskIsolation:
         all_tasks = [
             agent_generate_character_image_task,
             agent_generate_scene_image_task,
-            agent_generate_shot_image_task,
+            agent_generate_single_shot_image_task,
             agent_generate_video_task,
             agent_generate_audio_task,
             agent_generate_batch_audio_task,
         ]
         
         for task in all_tasks:
-            assert task.name.startswith("agent_"), f"Task {task.name} 缺少 agent_ 前缀"
+            assert task.name.startswith("agent"), f"Task {task.name} 缺少 agent 前缀"
 
     def test_tasks_in_agent_module(self):
         """确保任务在正确的模块路径下"""

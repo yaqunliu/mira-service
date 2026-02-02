@@ -11,15 +11,7 @@ from typing import Dict, Any
 
 from app.agent.state.schemas import ComicDramaState
 from app.agent.tools.base import BaseTool
-from app.agent.tools.generation_tools import (
-    GenerateCharacterImageTool,
-    GenerateSceneImageTool,
-    GenerateStoryboardImageTool,
-    GenerateVideoTool,
-    GenerateAudioTool,
-    LLMAnalysisTool,
-    GeneratePromptTool
-)
+# 注意: generation_tools.py 已废弃，以下测试类需要重构使用 agent_generation_tools
 from app.agent.tools.review_tools import (
     ReviewCharacterTool,
     ReviewSceneTool,
@@ -36,6 +28,8 @@ from app.agent.tools.editing_tools import (
 from app.agent.agents.script_analysis_team import ScriptAnalysisTeam
 from app.agent.agents.director import DirectorAgent
 from app.agent.knowledge.base import KnowledgeBase, DirectorKnowledge, PromptKnowledge
+
+
 
 
 class TestComicDramaState:
@@ -105,57 +99,9 @@ class TestBaseTool:
         assert result == {}
 
 
-class TestGenerationTools:
-    """测试生成工具"""
-    
-    @pytest.mark.asyncio
-    async def test_generate_character_image_tool_creation(self):
-        """测试角色图片生成工具创建"""
-        tool = GenerateCharacterImageTool()
-        assert tool.name == "generate_character_image"
-        assert "角色" in tool.description
-    
-    @pytest.mark.asyncio
-    async def test_generate_scene_image_tool_creation(self):
-        """测试场景图片生成工具创建"""
-        tool = GenerateSceneImageTool()
-        assert tool.name == "generate_scene_image"
-        assert "场景" in tool.description
-    
-    @pytest.mark.asyncio
-    async def test_generate_storyboard_image_tool_creation(self):
-        """测试分镜图片生成工具创建"""
-        tool = GenerateStoryboardImageTool()
-        assert tool.name == "generate_storyboard_image"
-        assert "分镜" in tool.description
-    
-    @pytest.mark.asyncio
-    async def test_generate_video_tool_creation(self):
-        """测试视频生成工具创建"""
-        tool = GenerateVideoTool()
-        assert tool.name == "generate_video"
-        assert "视频" in tool.description
-    
-    @pytest.mark.asyncio
-    async def test_generate_audio_tool_creation(self):
-        """测试音频生成工具创建"""
-        tool = GenerateAudioTool()
-        assert tool.name == "generate_audio"
-        assert "音频" in tool.description
-    
-    @pytest.mark.asyncio
-    async def test_llm_analysis_tool_creation(self):
-        """测试 LLM 分析工具创建"""
-        tool = LLMAnalysisTool()
-        assert tool.name == "llm_analysis"
-        assert "LLM" in tool.description
-    
-    @pytest.mark.asyncio
-    async def test_generate_prompt_tool_creation(self):
-        """测试提示词生成工具创建"""
-        tool = GeneratePromptTool()
-        assert tool.name == "generate_prompt"
-        assert "提示词" in tool.description
+
+# 注意: TestGenerationTools 已移除（依赖废弃的 generation_tools.py）
+# 生成类工具的测试请使用 tests/agent/test_generation_tools.py
 
 
 class TestReviewTools:

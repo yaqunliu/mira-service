@@ -219,7 +219,7 @@ class VideoEditorNode:
         Returns:
             最终状态
         """
-        from app.agent.tools.db_tools import check_task_group_status
+        from app.agent.tools.agent_generation_tools import check_task_group_status
         
         start_time = asyncio.get_event_loop().time()
         last_heartbeat = start_time
@@ -336,7 +336,7 @@ class VideoEditorNode:
                     "pending_approval": True,
                 }
             
-            from app.agent.tools.db_tools import generate_shot_videos
+            from app.agent.tools.agent_generation_tools import generate_shot_videos
             
             task_result = await generate_shot_videos.ainvoke({
                 "creation_uuid": creation_uuid,

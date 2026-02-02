@@ -62,7 +62,7 @@ class SupabaseService:
                 return None
             
             alg = self._get_token_algorithm(token)
-            logger.info(f"检测到 token 算法: {alg}")
+            # logger.info(f"检测到 token 算法: {alg}")
             
             if alg == "ES256":
                 return self._verify_token_es256(token)

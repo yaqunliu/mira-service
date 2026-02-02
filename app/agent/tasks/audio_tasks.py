@@ -1,4 +1,11 @@
+"""
+Agent 专用音频生成 Tasks
+"""
 
+from typing import Dict, Any, List
+
+from app.core.celery_app import celery_app
+from app.core.logger import logger
 
 
 @celery_app.task(bind=True, name="agent.generate_shot_audio_batch")

@@ -75,7 +75,7 @@ class TestVideoTools:
 
     def test_generate_shot_videos_tool_exists(self):
         """验证生成视频工具存在"""
-        from app.agent.tools.db_tools import generate_shot_videos
+        from app.agent.tools.agent_generation_tools import generate_shot_videos
         
         assert callable(generate_shot_videos.ainvoke)
 

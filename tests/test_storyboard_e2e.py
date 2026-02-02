@@ -99,7 +99,7 @@ async def test_generate_shot_images_tool():
     print("测试 3: generate_shot_images Tool")
     print("=" * 50)
     
-    from app.agent.tools.db_tools import generate_shot_images
+    from app.agent.tools.agent_generation_tools import generate_shot_images
     
     try:
         result = await generate_shot_images.ainvoke({
