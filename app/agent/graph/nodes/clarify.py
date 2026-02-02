@@ -91,7 +91,7 @@ async def clarify_node(state: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(f"[Node] clarify 错误: {e}")
         
         # 使用默认引导消息
-        fallback_message = _get_fallback_message(current_stage)
+        fallback_message = _get_fallback_message(current_stage, detected_intent)
         
         return {
             "messages": messages + [{
@@ -174,7 +174,9 @@ def _get_available_actions(current_stage: str) -> str:
 
 def _get_clarify_reason(detected_intent: str, confidence: float) -> str:
     """获取需要澄清的原因"""
-    if detected_intent == "unknown":
+    if detected_intent == "out_of_scope":
+        return "超出能力范围"
+    elif detected_intent == "unknown":
         return "无法识别意图"
     elif confidence < 0.5:
         return f"意图置信度过低 ({confidence:.0%})"
@@ -182,8 +184,19 @@ def _get_clarify_reason(detected_intent: str, confidence: float) -> str:
         return "需要更多上下文信息"
 
 
-def _get_fallback_message(current_stage: str) -> str:
+def _get_fallback_message(current_stage: str, detected_intent: str = "unknown") -> str:
     """获取默认引导消息"""
+    # 超出能力范围的明确拒绝
+    if detected_intent == "out_of_scope":
+        return """抱歉，这个问题超出了我的能力范围。
+
+我是**漫剧创作助手**，专注于帮助您：
+- 📊 查询创作进度
+- 🎬 执行漫剧制作任务（分析剧本、生成图片/视频等）
+- 📚 解答漫剧相关知识（构图、镜头、提示词技巧等）
+
+请告诉我您在漫剧创作方面有什么需要帮助的？"""
+    
     if current_stage == "init":
         return "您好！我是漫剧创作助手，请问有什么可以帮您的？\n\n您可以：\n- 上传剧本开始创作\n- 询问系统功能"
     elif current_stage in ["script_analysis", "asset_generation"]:

@@ -18,15 +18,13 @@ def router_node(state: ComicDramaState) -> RouterTarget:
     """
     路由节点 - 根据意图分发到不同节点
     
-    路由规则：
-    | 条件 | 目标节点 | 说明 |
-    |------|----------|------|
-    | intent_category == "status_query" | status_query | 状态查询分支 |
-    | intent_category == "task_intent" && confidence > 0.8 | task_execution | 高置信度任务执行 |
-    | intent_category == "task_intent" && confidence <= 0.8 | clarify | 低置信度需确认 |
-    | intent_category == "asset_action" | task_execution | 资产操作 |
-    | intent_category in ["confirm", "cancel"] | task_execution | 用户确认/取消 |
-    | intent_category == "other" or "unknown" | clarify | 未知意图引导 |
+    路由规则（简化版）：
+    | 意图分类 | 目标节点 | 说明 |
+    |----------|----------|------|
+    | query | status_query | 状态查询 + 知识问答（ReAct Agent） |
+    | production | task_execution | 制作任务（子图） |
+    | confirm | task_execution | 确认/取消（子图） |
+    | out_of_scope | clarify | 超出范围，引导用户 |
     
     Args:
         state: 当前 Graph 状态
@@ -45,30 +43,30 @@ def router_node(state: ComicDramaState) -> RouterTarget:
         f"confidence={confidence}"
     )
     
-    # 状态查询 -> status_query
-    if intent_category == "status_query":
-        logger.info("[Router] -> status_query")
+    # 查询类 -> status_query（ReAct Agent，支持状态查询+知识问答）
+    if intent_category == "query":
+        logger.info("[Router] -> status_query (查询/知识问答)")
         return "status_query"
     
-    # 任务意图
-    if intent_category == "task_intent":
-        if confidence > 0.8:
-            logger.info("[Router] -> task_execution (高置信度)")
-            return "task_execution"
-        else:
-            logger.info("[Router] -> clarify (低置信度)")
-            return "clarify"
-    
-    # 资产操作 -> task_execution
-    if intent_category == "asset_action":
-        logger.info("[Router] -> task_execution (资产操作)")
+    # 制作类 -> task_execution（子图）
+    if intent_category == "production":
+        logger.info("[Router] -> task_execution (制作任务)")
         return "task_execution"
     
-    # 确认/取消 -> task_execution
+    # 确认类 -> task_execution（子图）
     if intent_category == "confirm":
         logger.info("[Router] -> task_execution (确认/取消)")
         return "task_execution"
     
-    # 其他/未知 -> clarify
-    logger.info("[Router] -> clarify (未知意图)")
+    # 兼容旧的意图分类
+    if intent_category == "status_query":
+        logger.info("[Router] -> status_query (兼容旧分类)")
+        return "status_query"
+    
+    if intent_category in ["task_intent", "asset_action"]:
+        logger.info("[Router] -> task_execution (兼容旧分类)")
+        return "task_execution"
+    
+    # 超出范围/其他 -> clarify
+    logger.info("[Router] -> clarify (超出范围或未知)")
     return "clarify"

@@ -175,11 +175,11 @@ class GraphRunner:
             
             # 只有这些节点的 LLM 输出需要流式发送给用户（token by token）
             # - clarify: 澄清对话
-            # - status_query: 状态查询
             # - task_execution: 任务执行（保持 SSE 连接活跃）
             # - human_review: 人机交互确认请求
+            # 注意：status_query 改为 ReAct Agent 后，不应流式输出中间思考过程
             # 注意：asset_generation 不在此列表，因为它的 LLM 输出是内部提示词，不应显示给用户
-            USER_VISIBLE_NODES = {"clarify", "status_query", "task_execution", "human_review"}
+            USER_VISIBLE_NODES = {"clarify", "task_execution", "human_review"}
             
             # 不应发送 response_text 的节点（分析/内部过程）
             INTERNAL_NODES = {"storyboard_generation", "audio_processing", "video_generation", "editing", "entry", "intent_detection", "router", "response_formatter", "stage_complete"}
