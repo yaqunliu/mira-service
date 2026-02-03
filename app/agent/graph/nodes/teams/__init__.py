@@ -8,8 +8,12 @@
 - storyboard_director: 分镜导演 - 生成分镜脚本
 - audio_engineer: 音频工程师 - 生成配音
 - video_editor: 视频编辑师 - 生成视频片段
+
+ReAct 支持：
+- react_worker_base: ReAct Worker 基类
 """
 
+from app.agent.graph.nodes.teams.react_worker_base import ReActWorkerNode
 from app.agent.graph.nodes.teams.script_analyst import ScriptAnalystNode
 from app.agent.graph.nodes.teams.asset_director import AssetDirectorNode
 from app.agent.graph.nodes.teams.storyboard_director import StoryboardDirectorNode
@@ -17,6 +21,7 @@ from app.agent.graph.nodes.teams.audio_engineer import AudioEngineerNode
 from app.agent.graph.nodes.teams.video_editor import VideoEditorNode, FinalEditorNode
 
 __all__ = [
+    "ReActWorkerNode",
     "ScriptAnalystNode",
     "AssetDirectorNode", 
     "StoryboardDirectorNode",
@@ -24,3 +29,4 @@ __all__ = [
     "VideoEditorNode",
     "FinalEditorNode",
 ]
+

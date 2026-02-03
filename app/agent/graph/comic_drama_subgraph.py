@@ -3,6 +3,10 @@ Comic Drama Subgraph - 漫剧业务执行子图
 
 作为 DialogueGraph 的嵌套子图，负责实际的业务执行逻辑。
 根据当前制作阶段和用户意图动态路由到对应的执行节点。
+
+支持两种模式：
+1. Legacy 模式 - 基于 stage_router 的固定流水线
+2. Supervisor 模式 - 基于 ReAct Agent 的智能调度（新）
 """
 
 from typing import Dict, Any, List
@@ -10,6 +14,13 @@ from langgraph.graph import StateGraph, END
 
 from app.agent.state.schemas import ComicDramaState, ProductionStage
 from app.core.logger import logger
+from app.core.config import settings
+
+
+# ==================== Feature Flag ====================
+
+# 是否启用 Supervisor 模式（可通过环境变量控制）
+USE_SUPERVISOR_MODE = getattr(settings, 'USE_SUPERVISOR_MODE', True)
 
 
 # ==================== 阶段顺序定义 ====================
@@ -611,10 +622,14 @@ def build_comic_drama_subgraph() -> StateGraph:
     """
     构建漫剧业务执行子图
     
+    支持两种模式：
+    - Legacy: 基于 stage_router 的固定流水线
+    - Supervisor: 基于 ReAct Agent 的智能调度
+    
     Returns:
         编译后的 StateGraph，可作为节点嵌入主图
     """
-    logger.info("[ComicDramaSubgraph] 构建子图...")
+    logger.info(f"[ComicDramaSubgraph] 构建子图... USE_SUPERVISOR_MODE={USE_SUPERVISOR_MODE}")
     
     workflow = StateGraph(ComicDramaState)
     
@@ -629,24 +644,48 @@ def build_comic_drama_subgraph() -> StateGraph:
     workflow.add_node("stage_complete", stage_complete_node)
     workflow.add_node("error_handler", error_handler_node)
     
-    # 设置入口
-    workflow.set_entry_point("stage_router")
+    # Supervisor 模式：添加 supervisor 节点
+    if USE_SUPERVISOR_MODE:
+        from app.agent.graph.nodes.supervisor import supervisor_node, route_from_supervisor
+        workflow.add_node("supervisor", supervisor_node)
     
-    # 入口路由
-    workflow.add_conditional_edges(
-        "stage_router",
-        route_by_production_stage,
-        {
-            "script_analysis": "script_analysis",
-            "asset_generation": "asset_generation",
-            "storyboard_creation": "storyboard_creation",
-            "audio_processing": "audio_processing",
-            "video_generation": "video_generation",
-            "editing": "editing",
-            "stage_complete": "stage_complete",
-            "error_handler": "error_handler",
-        }
-    )
+    # 设置入口
+    if USE_SUPERVISOR_MODE:
+        # Supervisor 模式：先进 stage_router 加载数据，再进 supervisor
+        workflow.set_entry_point("stage_router")
+        workflow.add_edge("stage_router", "supervisor")
+        
+        # Supervisor 路由到各 Worker 或返回
+        workflow.add_conditional_edges(
+            "supervisor",
+            route_from_supervisor,
+            {
+                "script_analysis": "script_analysis",
+                "asset_generation": "asset_generation",
+                "storyboard_creation": "storyboard_creation",
+                "audio_processing": "audio_processing",
+                "video_generation": "video_generation",
+                "stage_complete": "stage_complete",
+                "return_to_main": END,
+            }
+        )
+    else:
+        # Legacy 模式：原有的 stage_router 路由
+        workflow.set_entry_point("stage_router")
+        workflow.add_conditional_edges(
+            "stage_router",
+            route_by_production_stage,
+            {
+                "script_analysis": "script_analysis",
+                "asset_generation": "asset_generation",
+                "storyboard_creation": "storyboard_creation",
+                "audio_processing": "audio_processing",
+                "video_generation": "video_generation",
+                "editing": "editing",
+                "stage_complete": "stage_complete",
+                "error_handler": "error_handler",
+            }
+        )
     
     # 每个阶段 → stage_complete
     for stage in STAGE_ORDER:
@@ -656,16 +695,29 @@ def build_comic_drama_subgraph() -> StateGraph:
     workflow.add_edge("error_handler", END)
     
     # stage_complete → 继续 or 结束
-    workflow.add_conditional_edges(
-        "stage_complete",
-        check_continue_or_return,
-        {
-            "continue": "stage_router",  # 继续下一阶段
-            "return": END                 # 返回主图
-        }
-    )
+    if USE_SUPERVISOR_MODE:
+        # Supervisor 模式：stage_complete 后回到 supervisor 决策
+        workflow.add_conditional_edges(
+            "stage_complete",
+            check_continue_or_return,
+            {
+                "continue": "supervisor",  # 回到 Supervisor 决策下一步
+                "return": END               # 返回主图
+            }
+        )
+    else:
+        # Legacy 模式：stage_complete 后回到 stage_router
+        workflow.add_conditional_edges(
+            "stage_complete",
+            check_continue_or_return,
+            {
+                "continue": "stage_router",  # 继续下一阶段
+                "return": END                 # 返回主图
+            }
+        )
     
     logger.info("[ComicDramaSubgraph] 子图构建完成")
     
     # 返回编译后的图
     return workflow.compile()
+

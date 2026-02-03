@@ -1,29 +1,35 @@
 """
-剧本分析师 Node - Script Analyst
+剧本分析师 Node - Script Analyst (ReAct 版本)
 
 通过 LLM 多轮思考分析剧本，提取角色和场景信息。
-不依赖任何分析类 Tool，直接由 LLM 完成分析工作。
+支持 ReAct 模式和 Legacy 模式。
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, List
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
-from app.agent.state.schemas import ComicDramaState
+from app.agent.state.schemas import ComicDramaState, ProductionStage
+from app.agent.graph.nodes.teams.react_worker_base import ReActWorkerNode
 from app.core.logger import logger
 from app.core.config import settings
 import json
 import re
 
 
-class ScriptAnalystNode:
+class ScriptAnalystNode(ReActWorkerNode):
     """
-    剧本分析师 Node
+    剧本分析师 Node (ReAct 版本)
     
     职责：
     1. 通过 LLM 分析剧本文本
     2. 提取角色信息（name, basic_info, appearance）
     3. 提取场景信息（title, location, atmosphere, time_setting）
+    
+    支持 ReAct 模式使用工具（如获取上下文、约束检查等）
     """
+    
+    # 启用 ReAct 模式
+    USE_REACT = True
     
     SYSTEM_PROMPT = """你是一名专业的编剧和导演，负责分析剧本内容，提取角色和场景信息。
 
@@ -68,26 +74,59 @@ class ScriptAnalystNode:
 8. 角色 appearance 应尽量详细，便于后续生成形象图片"""
     
     def __init__(self):
-        """初始化 LLM"""
-        self.llm = ChatOpenAI(
-            model="Qwen/Qwen-Plus",  # 使用更稳定的 Qwen 模型
-            api_key=settings.OPENAI_API_KEY,
-            base_url=settings.OPENAI_BASE_URL,
-            temperature=0.3,
-            timeout=60,  # 60秒超时
-            max_retries=2,  # 最多重试2次
-        )
+        """初始化"""
+        super().__init__(model="Qwen/Qwen-Plus", temperature=0.3)
     
-    async def run(self, state: ComicDramaState) -> Dict[str, Any]:
-        """
-        执行剧本分析
+    def get_system_prompt(self, state: ComicDramaState) -> str:
+        """获取系统提示词"""
+        return self.SYSTEM_PROMPT
+    
+    def get_tools(self) -> List:
+        """获取可用工具（Legacy 模式下不使用）"""
+        return []
+    
+    def get_user_message(self, state: ComicDramaState) -> str:
+        """获取用户消息（剧本内容）"""
+        script_text = state.get("script_text", "")
+        return f"请分析以下剧本内容：\n\n{script_text}"
+    
+    async def process_result(self, state: ComicDramaState, final_response: str, tool_results: List[Dict]) -> Dict[str, Any]:
+        """处理分析结果"""
+        if not final_response:
+            return {
+                "success": False,
+                "error": "LLM 响应为空",
+                "characters": [],
+                "scenes": []
+            }
         
-        Args:
-            state: 包含 script_text 的状态
-            
-        Returns:
-            {success, characters, scenes, summary} 或 {success: False, error}
-        """
+        # 解析 JSON
+        result = self._parse_json_response(final_response)
+        
+        if result is None:
+            return {
+                "success": False,
+                "error": "JSON 解析失败",
+                "raw_response": final_response,
+                "characters": [],
+                "scenes": []
+            }
+        
+        characters = result.get("characters", [])
+        scenes = result.get("scenes", [])
+        summary = result.get("summary", "")
+        
+        logger.info(f"[ScriptAnalystNode] 分析完成: 角色={len(characters)}, 场景={len(scenes)}")
+        
+        return {
+            "success": True,
+            "characters": characters,
+            "scenes": scenes,
+            "summary": summary
+        }
+    
+    async def run_legacy(self, state: ComicDramaState) -> Dict[str, Any]:
+        """Legacy 模式（Stream 输出）"""
         script_text = state.get("script_text", "")
         
         if not script_text:
@@ -107,45 +146,17 @@ class ScriptAnalystNode:
             
             logger.info("[ScriptAnalystNode] 开始 LLM 分析剧本 (stream 模式)...")
             
-            # 使用 stream 模式，实时打印输出
+            # Stream 模式
             content_chunks = []
             async for chunk in self.llm.astream(messages):
                 chunk_text = chunk.content
                 if chunk_text:
                     content_chunks.append(chunk_text)
-                    # 实时打印到日志
-                    logger.debug(f"[LLM Stream] {chunk_text}")
             
             content = "".join(content_chunks)
             logger.info(f"[ScriptAnalystNode] LLM 响应完成，长度: {len(content)} 字符")
             
-            # 解析 JSON 响应
-            result = self._parse_json_response(content)
-            
-            if result is None:
-                return {
-                    "success": False,
-                    "error": "JSON 解析失败",
-                    "raw_response": content,
-                    "characters": [],
-                    "scenes": []
-                }
-            
-            characters = result.get("characters", [])
-            scenes = result.get("scenes", [])
-            summary = result.get("summary", "")
-            
-            logger.info(
-                f"[ScriptAnalystNode] 分析完成: "
-                f"角色={len(characters)}, 场景={len(scenes)}"
-            )
-            
-            return {
-                "success": True,
-                "characters": characters,
-                "scenes": scenes,
-                "summary": summary
-            }
+            return await self.process_result(state, content, [])
             
         except Exception as e:
             logger.error(f"[ScriptAnalystNode] 分析失败: {e}")

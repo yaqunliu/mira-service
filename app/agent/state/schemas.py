@@ -208,6 +208,11 @@ class ComicDramaState(TypedDict, total=False):
     # 子图阶段（更细粒度）
     production_stage: ProductionStage  # 细粒度制作阶段
     production_progress: ProductionProgress  # 各阶段详细进度
+    
+    # Supervisor 调度相关
+    production_cache: Dict[str, Any]  # 生产状态缓存（避免重复 DB 查询）
+    next_worker: Optional[str]  # Supervisor 调度的下一个 Worker
+    needs_input: bool  # 是否需要用户输入
 
     # ==================== 剧本分析结果 ====================
     script_summary: Optional[str]  # 剧本摘要

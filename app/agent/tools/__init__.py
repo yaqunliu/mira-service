@@ -43,6 +43,27 @@ from app.agent.tools.editing_tools import (
 # 异步数据库工具
 from app.agent.tools.async_db import AsyncDBTool
 
+# Supervisor 工具（原子化操作、版本管理、上下文）
+from app.agent.tools.regenerate_tools import (
+    clear_asset,
+    submit_generation,
+    regenerate,
+    clear_all,
+    REGENERATE_TOOLS,
+)
+from app.agent.tools.version_tools import (
+    get_version_history,
+    restore_version,
+    VERSION_TOOLS,
+)
+from app.agent.tools.context_tools import (
+    get_script_context,
+    get_adjacent_shots,
+    get_character_scene_for_shot,
+    check_constraints,
+    CONTEXT_TOOLS,
+)
+
 __all__ = [
     # 基础
     "BaseTool",
@@ -75,4 +96,24 @@ __all__ = [
 
     # 数据库
     "AsyncDBTool",
+    
+    # Supervisor 原子化工具
+    "clear_asset",
+    "submit_generation",
+    "regenerate",
+    "clear_all",
+    "REGENERATE_TOOLS",
+    
+    # 版本管理
+    "get_version_history",
+    "restore_version",
+    "VERSION_TOOLS",
+    
+    # 上下文工具
+    "get_script_context",
+    "get_adjacent_shots",
+    "get_character_scene_for_shot",
+    "check_constraints",
+    "CONTEXT_TOOLS",
 ]
+

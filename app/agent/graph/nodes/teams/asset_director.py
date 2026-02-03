@@ -3,6 +3,9 @@
 
 负责角色和场景图片的生成管理。
 通过 LLM 生成图片提示词，创建 Celery 任务异步生成图片。
+
+ReAct 兼容：当前使用 Legacy 模式（包含复杂轮询逻辑）
+后续可改造为 ReAct 模式，利用 regenerate_tools 进行原子化操作
 """
 
 from pathlib import Path
@@ -24,7 +27,14 @@ class AssetDirectorNode:
     1. 查询待生成图片的角色和场景
     2. 通过 LLM 生成图片提示词
     3. 创建 Celery 任务异步生成图片
+    
+    ReAct 兼容：
+    - USE_REACT = False（当前使用 Legacy 模式）
+    - 后续可启用 ReAct 模式使用 regenerate_tools
     """
+    
+    # 当前使用 Legacy 模式（包含复杂轮询逻辑）
+    USE_REACT = False
     
     # 角色图提示词模板 - 用于四视图角色参考图
     CHARACTER_PROMPT_TEMPLATE = """你是专业的AI绘画提示词专家。请根据以下角色特征，生成一个用于角色参考图（四视图）的高质量英文提示词。

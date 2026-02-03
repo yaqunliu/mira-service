@@ -327,7 +327,6 @@ async def get_creation_detail(
             .order_by(Shot.created_at.asc())
         )
         creation_shots = {s.shot_id: s for s in shots_result.scalars().all()}
-        print("分镜数量", len(creation_shots))
         for scene in scenes:
             # 只返回属于当前 creation 的分镜，按 shot_number 排序
             scene_shots = []
