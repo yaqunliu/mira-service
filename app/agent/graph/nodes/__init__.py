@@ -11,7 +11,7 @@ from .status_query import status_query_node
 from .clarify import clarify_node
 from .response_formatter import response_formatter_node
 from .human_review import human_review_node
-from .supervisor import supervisor_node, route_from_supervisor
+from .teams.supervisor import supervisor_node, route_from_supervisor
 
 __all__ = [
     # 对话调度层

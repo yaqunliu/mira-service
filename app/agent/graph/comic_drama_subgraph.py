@@ -2,11 +2,12 @@
 Comic Drama Subgraph - 漫剧业务执行子图
 
 作为 DialogueGraph 的嵌套子图，负责实际的业务执行逻辑。
-根据当前制作阶段和用户意图动态路由到对应的执行节点。
 
-支持两种模式：
-1. Legacy 模式 - 基于 stage_router 的固定流水线
-2. Supervisor 模式 - 基于 ReAct Agent 的智能调度（新）
+架构：Supervisor Agent 模式
+- stage_router: 入口节点，加载创作数据
+- supervisor: 决策中心，单次 LLM 决策
+- workers: 执行具体任务，完成后回到 supervisor
+- 递归由 LangGraph 统一管理（recursion_limit）
 """
 
 from typing import Dict, Any, List
@@ -15,12 +16,6 @@ from langgraph.graph import StateGraph, END
 from app.agent.state.schemas import ComicDramaState, ProductionStage
 from app.core.logger import logger
 from app.core.config import settings
-
-
-# ==================== Feature Flag ====================
-
-# 是否启用 Supervisor 模式（可通过环境变量控制）
-USE_SUPERVISOR_MODE = getattr(settings, 'USE_SUPERVISOR_MODE', True)
 
 
 # ==================== 阶段顺序定义 ====================
@@ -518,6 +513,14 @@ async def script_analysis_node(state: ComicDramaState) -> Dict[str, Any]:
                 {"type": "switch_view", "target": "characters"},
                 {"type": "refresh"},
             ],
+            # Worker 结果反馈给 Supervisor
+            "worker_result": {
+                "worker": "script_analyst",
+                "summary": f"识别到 {total_chars} 个角色和 {total_scenes} 个场景",
+                "success": True,
+                "completed": True,
+                "response_text": response,  # Supervisor 可以直接使用
+            },
         }
         
     except Exception as e:
@@ -561,6 +564,19 @@ async def asset_generation_node(state: ComicDramaState) -> Dict[str, Any]:
     if "messages" not in result:
         result["messages"] = messages
     
+    # 添加 worker_result 供 Supervisor 使用
+    char_count = result.get("generated_characters", 0)
+    scene_count = result.get("generated_scenes", 0)
+    response_text = result.get("response_text", f"资产生成完成：{char_count} 个角色，{scene_count} 个场景")
+    
+    result["worker_result"] = {
+        "worker": "asset_designer",
+        "summary": f"生成了 {char_count} 个角色图片和 {scene_count} 个场景图片",
+        "success": True,
+        "completed": True,
+        "response_text": response_text,
+    }
+    
     return result
 
 
@@ -574,7 +590,21 @@ async def storyboard_creation_node(state: ComicDramaState) -> Dict[str, Any]:
     
     from app.agent.graph.nodes.teams.storyboard_director import StoryboardDirectorNode
     director = StoryboardDirectorNode()
-    return await director.run(state)
+    result = await director.run(state)
+    
+    # 添加 worker_result 供 Supervisor 使用
+    shot_count = result.get("generated_shots", 0)
+    response_text = result.get("response_text", f"分镜创建完成：{shot_count} 个分镜")
+    
+    result["worker_result"] = {
+        "worker": "storyboard_director",
+        "summary": f"创建了 {shot_count} 个分镜",
+        "success": True,
+        "completed": True,
+        "response_text": response_text,
+    }
+    
+    return result
 
 
 async def audio_processing_node(state: ComicDramaState) -> Dict[str, Any]:
@@ -587,7 +617,21 @@ async def audio_processing_node(state: ComicDramaState) -> Dict[str, Any]:
     
     from app.agent.graph.nodes.teams.audio_engineer import AudioEngineerNode
     engineer = AudioEngineerNode()
-    return await engineer.run(state)
+    result = await engineer.run(state)
+    
+    # 添加 worker_result 供 Supervisor 使用
+    audio_count = result.get("generated_audios", 0)
+    response_text = result.get("response_text", f"音频处理完成：{audio_count} 个音频")
+    
+    result["worker_result"] = {
+        "worker": "audio_engineer",
+        "summary": f"处理了 {audio_count} 个音频",
+        "success": True,
+        "completed": True,
+        "response_text": response_text,
+    }
+    
+    return result
 
 
 async def video_generation_node(state: ComicDramaState) -> Dict[str, Any]:
@@ -600,7 +644,21 @@ async def video_generation_node(state: ComicDramaState) -> Dict[str, Any]:
     
     from app.agent.graph.nodes.teams.video_editor import VideoEditorNode
     editor = VideoEditorNode()
-    return await editor.run(state)
+    result = await editor.run(state)
+    
+    # 添加 worker_result 供 Supervisor 使用
+    video_count = result.get("generated_videos", 0)
+    response_text = result.get("response_text", f"视频生成完成：{video_count} 个视频")
+    
+    result["worker_result"] = {
+        "worker": "video_editor",
+        "summary": f"生成了 {video_count} 个视频",
+        "success": True,
+        "completed": True,
+        "response_text": response_text,
+    }
+    
+    return result
 
 
 async def editing_node(state: ComicDramaState) -> Dict[str, Any]:
@@ -613,111 +671,95 @@ async def editing_node(state: ComicDramaState) -> Dict[str, Any]:
     
     from app.agent.graph.nodes.teams.video_editor import FinalEditorNode
     editor = FinalEditorNode()
-    return await editor.run(state)
+    result = await editor.run(state)
+    
+    # 添加 worker_result 供 Supervisor 使用
+    response_text = result.get("response_text", "剪辑合成完成")
+    
+    result["worker_result"] = {
+        "worker": "final_editor",
+        "summary": "最终剪辑合成完成",
+        "success": True,
+        "completed": True,
+        "response_text": response_text,
+    }
+    
+    return result
 
 
 # ==================== 构建子图 ====================
 
 def build_comic_drama_subgraph() -> StateGraph:
     """
-    构建漫剧业务执行子图
+    构建漫剧业务执行子图 - Supervisor Agent 模式
     
-    支持两种模式：
-    - Legacy: 基于 stage_router 的固定流水线
-    - Supervisor: 基于 ReAct Agent 的智能调度
+    架构：
+    - supervisor: 入口，单次 LLM 决策，决定调度哪个 Worker
+    - workers: 执行具体任务，完成后回到 supervisor
+    - 递归由 LangGraph 统一管理（recursion_limit）
+    
+    流程：
+    stage_router → supervisor ⇄ workers → END
     
     Returns:
         编译后的 StateGraph，可作为节点嵌入主图
     """
-    logger.info(f"[ComicDramaSubgraph] 构建子图... USE_SUPERVISOR_MODE={USE_SUPERVISOR_MODE}")
+    from app.agent.graph.nodes.teams import supervisor_node, route_from_supervisor
+    
+    logger.info("[ComicDramaSubgraph] 构建子图（Supervisor Agent 模式）")
     
     workflow = StateGraph(ComicDramaState)
     
-    # 添加节点
-    workflow.add_node("stage_router", stage_router_node)
+    # ===== 添加节点 =====
+    workflow.add_node("stage_router", stage_router_node)  # 入口：加载数据
+    workflow.add_node("supervisor", supervisor_node)       # 决策中心
+    
+    # Workers
     workflow.add_node("script_analysis", script_analysis_node)
     workflow.add_node("asset_generation", asset_generation_node)
     workflow.add_node("storyboard_creation", storyboard_creation_node)
     workflow.add_node("audio_processing", audio_processing_node)
     workflow.add_node("video_generation", video_generation_node)
     workflow.add_node("editing", editing_node)
-    workflow.add_node("stage_complete", stage_complete_node)
+    
+    # 辅助节点
     workflow.add_node("error_handler", error_handler_node)
     
-    # Supervisor 模式：添加 supervisor 节点
-    if USE_SUPERVISOR_MODE:
-        from app.agent.graph.nodes.supervisor import supervisor_node, route_from_supervisor
-        workflow.add_node("supervisor", supervisor_node)
+    # ===== 设置边 =====
+    # 入口：stage_router → supervisor
+    workflow.set_entry_point("stage_router")
+    workflow.add_edge("stage_router", "supervisor")
     
-    # 设置入口
-    if USE_SUPERVISOR_MODE:
-        # Supervisor 模式：先进 stage_router 加载数据，再进 supervisor
-        workflow.set_entry_point("stage_router")
-        workflow.add_edge("stage_router", "supervisor")
-        
-        # Supervisor 路由到各 Worker 或返回
-        workflow.add_conditional_edges(
-            "supervisor",
-            route_from_supervisor,
-            {
-                "script_analysis": "script_analysis",
-                "asset_generation": "asset_generation",
-                "storyboard_creation": "storyboard_creation",
-                "audio_processing": "audio_processing",
-                "video_generation": "video_generation",
-                "stage_complete": "stage_complete",
-                "return_to_main": END,
-            }
-        )
-    else:
-        # Legacy 模式：原有的 stage_router 路由
-        workflow.set_entry_point("stage_router")
-        workflow.add_conditional_edges(
-            "stage_router",
-            route_by_production_stage,
-            {
-                "script_analysis": "script_analysis",
-                "asset_generation": "asset_generation",
-                "storyboard_creation": "storyboard_creation",
-                "audio_processing": "audio_processing",
-                "video_generation": "video_generation",
-                "editing": "editing",
-                "stage_complete": "stage_complete",
-                "error_handler": "error_handler",
-            }
-        )
+    # Supervisor 决策路由
+    workflow.add_conditional_edges(
+        "supervisor",
+        route_from_supervisor,
+        {
+            "script_analysis": "script_analysis",
+            "asset_generation": "asset_generation",
+            "storyboard_creation": "storyboard_creation",
+            "audio_processing": "audio_processing",
+            "video_generation": "video_generation",
+            "editing": "editing",
+            "done": END,  # 任务完成
+        }
+    )
     
-    # 每个阶段 → stage_complete
-    for stage in STAGE_ORDER:
-        workflow.add_edge(stage, "stage_complete")
+    # Workers 完成后直接回到 Supervisor（由 LangGraph 管理递归）
+    for worker in [
+        "script_analysis",
+        "asset_generation", 
+        "storyboard_creation",
+        "audio_processing",
+        "video_generation",
+        "editing",
+    ]:
+        workflow.add_edge(worker, "supervisor")
     
-    # error_handler → END
+    # 错误处理 → 结束
     workflow.add_edge("error_handler", END)
-    
-    # stage_complete → 继续 or 结束
-    if USE_SUPERVISOR_MODE:
-        # Supervisor 模式：stage_complete 后回到 supervisor 决策
-        workflow.add_conditional_edges(
-            "stage_complete",
-            check_continue_or_return,
-            {
-                "continue": "supervisor",  # 回到 Supervisor 决策下一步
-                "return": END               # 返回主图
-            }
-        )
-    else:
-        # Legacy 模式：stage_complete 后回到 stage_router
-        workflow.add_conditional_edges(
-            "stage_complete",
-            check_continue_or_return,
-            {
-                "continue": "stage_router",  # 继续下一阶段
-                "return": END                 # 返回主图
-            }
-        )
     
     logger.info("[ComicDramaSubgraph] 子图构建完成")
     
-    # 返回编译后的图
     return workflow.compile()
 

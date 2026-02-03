@@ -27,44 +27,38 @@ WorkerType = Literal["script_analyst", "asset_designer", "storyboard_director", 
 
 SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作流程。
 
-## 你的职责
+## 核心任务
 
-1. **理解用户意图** - 判断用户想做什么
-2. **检查约束规则** - 确保操作不会破坏一致性
-3. **调度工作流程** - 决定下一步该做什么
-4. **反馈执行结果** - 告诉用户当前进度
+根据用户请求和当前阶段，**立即使用 route_to_worker 调度到对应 Worker**。
+
+## Workers 列表
+
+- script_analyst: 剧本分析 → 提取角色、场景
+- asset_designer: 资产生成 → 生成角色/场景图片
+- storyboard_director: 分镜创作 → 生成分镜图片
+- video_editor: 视频生成 → 生成分镜视频
 
 ## 默认工作流
 
-用户说"开始创作"或"继续"时，按顺序执行：
-1. 剧本分析 → 提取角色、场景、分镜
-2. 资产生成 → 生成角色图片、场景图片
-3. 分镜创作 → 生成分镜首帧、尾帧图片
-4. 视频生成 → 为每个分镜生成视频
+用户说"开始创作"或"继续"时，按当前阶段执行：
+- INIT → 调度 script_analyst
+- SCRIPT_ANALYZED → 调度 asset_designer
+- ASSETS_GENERATED → 调度 storyboard_director
+- STORYBOARD_CREATED → 调度 video_editor
 
-## 约束规则
-
-- 分镜图片生成后，修改角色/场景需要先清空分镜
-- 视频生成后，修改分镜需要先清空视频
-
-## 当前创作状态
+## 当前状态
 
 创作 UUID: {creation_uuid}
 当前阶段: {production_stage}
-进度缓存: {production_cache}
+缓存: {production_cache}
 
 ## 用户消息
 
 {user_message}
 
-## 工具使用
+## 重要
 
-- 查询状态 → query_production_status
-- 检查约束 → check_constraints  
-- 调度 Worker → route_to_worker
-- 请求确认 → request_user_confirmation
-
-根据用户意图和当前状态，决定下一步行动。
+**直接调用 route_to_worker 调度任务，不要先查询状态。**
 """
 
 
@@ -459,9 +453,15 @@ async def _handle_regenerate_intent(
 
 async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
     """
-    Supervisor Node - ReAct 调度中心
+    Supervisor Node - 单次决策模式
     
-    理解用户意图，检查约束，调度 Worker 执行任务。
+    每次调用只做一次 LLM 决策，决定：
+    1. 调度到某个 Worker（返回 next_worker）
+    2. 需要用户确认（返回 needs_input=True）
+    3. 直接回复用户（返回 response_text）
+    
+    递归循环由 LangGraph 图级别管理:
+    supervisor → worker → supervisor → worker → ... → done
     
     Args:
         state: 当前 Graph 状态
@@ -469,7 +469,7 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
     Returns:
         更新后的状态
     """
-    logger.info("[Node] supervisor: 开始处理（ReAct Agent 模式）")
+    logger.info("[Node] supervisor: 开始处理（单次决策模式）")
     
     creation_uuid = state.get("creation_uuid")
     user_message = state.get("user_message", "")
@@ -478,12 +478,34 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
     detected_intent = state.get("detected_intent", "")
     intent_details = state.get("intent_details", {})
     
+    # Worker 返回的结果（用于决定下一步）
+    worker_result = state.get("worker_result")
+    if worker_result:
+        logger.info(f"[Node] supervisor: 收到 Worker 返回: {worker_result.get('worker')}")
+    
     try:
+        # ===== 特殊处理：Worker 已完成任务 =====
+        # 如果 Worker 返回 completed=True，直接使用 Worker 的 response_text，不再调用 LLM
+        if worker_result and worker_result.get("completed"):
+            worker_name = worker_result.get("worker", "unknown")
+            worker_response = worker_result.get("response_text", "")
+            
+            logger.info(f"[Node] supervisor: Worker {worker_name} 已完成，直接使用其响应")
+            
+            # 直接结束，不再调度
+            return {
+                "response_text": worker_response,
+                "production_cache": production_cache,
+                "next_worker": None,
+                "needs_input": True,  # 标记需要用户输入来继续
+                "worker_result": None,  # 清空
+                "updated_at": datetime.now().isoformat(),
+            }
+        
         # ===== 特殊处理：regenerate 意图直接执行 =====
         if detected_intent == "regenerate" and creation_uuid:
             logger.info("[Node] supervisor: 检测到 regenerate 意图，直接执行")
             
-            # 检查是否有足够的资源定位信息
             has_target_info = (
                 intent_details.get("target_numbers") or 
                 intent_details.get("target_names") or 
@@ -492,63 +514,11 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
             
             if has_target_info:
                 result = await _handle_regenerate_intent(state, creation_uuid, intent_details)
-                
-                # 检查是否需要用户确认（多个匹配结果）
-                if result.get("needs_confirmation"):
-                    assistant_message = {
-                        "role": "assistant",
-                        "content": result.get("message"),
-                        "timestamp": datetime.now().isoformat(),
-                        "node": "supervisor",
-                        "metadata": {
-                            "mode": "needs_confirmation",
-                            "ambiguous_matches": result.get("ambiguous_matches"),
-                        },
-                    }
-                    
-                    state_messages = list(state.get("messages", []))
-                    state_messages.append(assistant_message)
-                    
-                    return {
-                        "messages": state_messages,
-                        "response_text": result.get("message"),
-                        "production_cache": production_cache,
-                        "next_worker": None,
-                        "needs_input": True,  # 需要用户输入来确认
-                        "pending_confirmation": True,
-                        "ambiguous_matches": result.get("ambiguous_matches"),
-                        "updated_at": datetime.now().isoformat(),
-                    }
-                
-                assistant_message = {
-                    "role": "assistant",
-                    "content": result.get("message", "重新生成任务已提交"),
-                    "timestamp": datetime.now().isoformat(),
-                    "node": "supervisor",
-                    "metadata": {
-                        "mode": "direct_regenerate",
-                        "regenerated_count": result.get("regenerated_count", 0),
-                        "target": result.get("target"),
-                    },
-                }
-                
-                state_messages = list(state.get("messages", []))
-                state_messages.append(assistant_message)
-                
-                return {
-                    "messages": state_messages,
-                    "response_text": result.get("message"),
-                    "production_cache": production_cache,
-                    "next_worker": None,  # 不需要调度 Worker，直接完成
-                    "needs_input": False,
-                    "updated_at": datetime.now().isoformat(),
-                }
+                return _build_regenerate_response(state, result, production_cache)
         
-        # ===== 标准 ReAct 流程 =====
-        # 1. 准备工具
+        # ===== 单次 LLM 决策 =====
         tools = _get_supervisor_tools()
         
-        # 2. 创建带工具的 LLM
         llm = ChatOpenAI(
             model=settings.LLM_MODEL_DEFAULT,
             api_key=settings.OPENAI_API_KEY,
@@ -557,101 +527,70 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
         )
         llm_with_tools = llm.bind_tools(tools)
         
-        # 3. 构建消息
+        # 构建上下文消息
+        context_message = user_message
+        if worker_result:
+            worker_name = worker_result.get("worker", "unknown")
+            worker_summary = worker_result.get("summary", "完成")
+            context_message = f"[{worker_name} 完成] {worker_summary}\n\n用户请求: {user_message}"
+        
         system_prompt = SUPERVISOR_SYSTEM_PROMPT.format(
             creation_uuid=creation_uuid or "未指定",
             production_stage=production_stage.name if hasattr(production_stage, 'name') else str(production_stage),
             production_cache=production_cache,
-            user_message=user_message,
+            user_message=context_message,
         )
+        
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=user_message),
+            HumanMessage(content=context_message),
         ]
         
-        # 4. ReAct 循环（最多 5 轮）
-        max_iterations = 5
-        iteration = 0
-        final_response = ""
+        # ===== 决策模式：直接请求 LLM 决定下一步 =====
         next_worker = None
         needs_input = False
+        final_response = ""
         updated_cache = production_cache.copy()
         
-        while iteration < max_iterations:
-            iteration += 1
-            logger.info(f"[Node] supervisor: ReAct 循环 {iteration}/{max_iterations}")
-            
-            # 调用 LLM
-            response = await llm_with_tools.ainvoke(messages)
-            messages.append(response)
-            
-            # 检查是否有工具调用
-            if not response.tool_calls:
-                final_response = response.content
-                logger.info("[Node] supervisor: LLM 直接回答，无工具调用")
-                break
-            
-            # 执行工具调用
-            should_break = False
+        response = await llm_with_tools.ainvoke(messages)
+        
+        # 检查工具调用（LLM 应该调用 route_to_worker 或 request_user_confirmation）
+        if response.tool_calls:
             for tool_call in response.tool_calls:
                 tool_name = tool_call["name"]
                 tool_args = tool_call["args"]
-                tool_id = tool_call["id"]
                 
-                logger.info(f"[Node] supervisor: 调用工具 {tool_name}, args={tool_args}")
+                logger.info(f"[Node] supervisor: 决策 -> {tool_name}, args={tool_args}")
                 
-                # 执行工具
-                tool_result = await _execute_supervisor_tool(tools, tool_name, tool_args)
-                
-                # 处理特殊结果
-                if isinstance(tool_result, dict):
-                    action = tool_result.get("action")
+                if tool_name == "route_to_worker":
+                    # 直接从 LLM 的决策中提取 worker
+                    next_worker = tool_args.get("worker")
+                    logger.info(f"[Node] supervisor: 调度到 Worker {next_worker}")
+                    break
                     
-                    if action == "route_to_worker":
-                        next_worker = tool_result.get("worker")
-                        logger.info(f"[Node] supervisor: 调度到 Worker {next_worker}，退出循环")
-                        should_break = True  # 决定调度后立即退出
-                        
-                    elif action == "request_confirmation":
-                        needs_input = True
-                        final_response = tool_result.get("message", "")
-                        should_break = True  # 需要用户确认后立即退出
-                        
-                    # 更新缓存
-                    if tool_name == "query_production_status":
+                elif tool_name == "request_user_confirmation":
+                    needs_input = True
+                    final_response = tool_args.get("message", "请确认")
+                    break
+                    
+                elif tool_name == "query_production_status":
+                    # 查询状态工具 - 执行后继续决策
+                    tool_result = await _execute_supervisor_tool(tools, tool_name, tool_args)
+                    if isinstance(tool_result, dict):
                         updated_cache = tool_result
-                
-                # 添加工具结果到消息
-                messages.append(ToolMessage(
-                    content=str(tool_result),
-                    tool_call_id=tool_id,
-                ))
-            
-            # 如果需要退出循环（调度到 Worker 或需要用户确认）
-            if should_break:
-                break
+        else:
+            # 无工具调用，LLM 直接回复
+            final_response = response.content
+            logger.info("[Node] supervisor: LLM 直接回答")
         
-        # 如果循环结束还没有最终回复，再调用一次生成总结
-        if not final_response:
-            logger.info("[Node] supervisor: 生成最终总结")
-            final_llm = ChatOpenAI(
-                model=settings.LLM_MODEL_DEFAULT,
-                api_key=settings.OPENAI_API_KEY,
-                base_url=settings.OPENAI_BASE_URL,
-                temperature=0.7,
-            )
-            summary_response = await final_llm.ainvoke(messages)
-            final_response = summary_response.content
-        
-        # 5. 构建返回结果
+        # 构建返回结果
         assistant_message = {
             "role": "assistant",
             "content": final_response,
             "timestamp": datetime.now().isoformat(),
             "node": "supervisor",
             "metadata": {
-                "mode": "react_supervisor",
-                "iterations": iteration,
+                "mode": "single_decision",
                 "next_worker": next_worker,
             },
         }
@@ -659,7 +598,7 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
         state_messages = list(state.get("messages", []))
         state_messages.append(assistant_message)
         
-        logger.info(f"[Node] supervisor: 完成，迭代={iteration}, next_worker={next_worker}")
+        logger.info(f"[Node] supervisor: 完成，next_worker={next_worker}")
         
         return {
             "messages": state_messages,
@@ -667,6 +606,7 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
             "production_cache": updated_cache,
             "next_worker": next_worker,
             "needs_input": needs_input,
+            "worker_result": None,  # 清空 worker 结果
             "updated_at": datetime.now().isoformat(),
         }
         
@@ -691,6 +631,55 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
         }
 
 
+def _build_regenerate_response(state: ComicDramaState, result: Dict[str, Any], production_cache: Dict) -> Dict[str, Any]:
+    """构建 regenerate 处理结果的响应"""
+    if result.get("needs_confirmation"):
+        assistant_message = {
+            "role": "assistant",
+            "content": result.get("message"),
+            "timestamp": datetime.now().isoformat(),
+            "node": "supervisor",
+            "metadata": {"mode": "needs_confirmation"},
+        }
+        
+        state_messages = list(state.get("messages", []))
+        state_messages.append(assistant_message)
+        
+        return {
+            "messages": state_messages,
+            "response_text": result.get("message"),
+            "production_cache": production_cache,
+            "next_worker": None,
+            "needs_input": True,
+            "pending_confirmation": True,
+            "ambiguous_matches": result.get("ambiguous_matches"),
+            "updated_at": datetime.now().isoformat(),
+        }
+    
+    assistant_message = {
+        "role": "assistant",
+        "content": result.get("message", "重新生成任务已提交"),
+        "timestamp": datetime.now().isoformat(),
+        "node": "supervisor",
+        "metadata": {
+            "mode": "direct_regenerate",
+            "regenerated_count": result.get("regenerated_count", 0),
+        },
+    }
+    
+    state_messages = list(state.get("messages", []))
+    state_messages.append(assistant_message)
+    
+    return {
+        "messages": state_messages,
+        "response_text": result.get("message"),
+        "production_cache": production_cache,
+        "next_worker": None,
+        "needs_input": False,
+        "updated_at": datetime.now().isoformat(),
+    }
+
+
 async def _execute_supervisor_tool(tools: List, tool_name: str, tool_args: Dict[str, Any]) -> Any:
     """执行 Supervisor 工具"""
     for tool in tools:
@@ -709,25 +698,33 @@ async def _execute_supervisor_tool(tools: List, tool_name: str, tool_args: Dict[
 
 def route_from_supervisor(state: ComicDramaState) -> str:
     """
-    Supervisor 后的路由决策
+    Supervisor 决策后的路由
     
-    根据 next_worker 或 needs_input 决定下一步
+    根据 next_worker 或 needs_input 决定下一步:
+    - next_worker 有值 → 调度到对应 Worker
+    - needs_input=True → 结束（返回主图）
+    - 其他情况 → 结束
     """
     next_worker = state.get("next_worker")
     needs_input = state.get("needs_input", False)
     
     logger.info(f"[Router] route_from_supervisor: next_worker={next_worker}, needs_input={needs_input}")
     
+    # 需要用户输入 → 结束本轮
     if needs_input:
-        return "return_to_main"
+        return "done"
     
+    # 有下一个 Worker → 调度
     if next_worker:
         worker_node_map = {
             "script_analyst": "script_analysis",
             "asset_designer": "asset_generation",
             "storyboard_director": "storyboard_creation",
             "video_editor": "video_generation",
+            "audio_engineer": "audio_processing",
+            "final_editor": "editing",
         }
-        return worker_node_map.get(next_worker, "stage_complete")
+        return worker_node_map.get(next_worker, "done")
     
-    return "stage_complete"
+    # 默认：结束
+    return "done"
