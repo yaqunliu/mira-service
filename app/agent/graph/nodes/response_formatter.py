@@ -20,6 +20,7 @@ NODE_VISIBILITY = {
     "clarify": "user",
     "response_formatter": "user",
     "human_review": "user",          # 人机交互结果需要流式展示给用户
+    "supervisor": "user",            # Supervisor 节点的重新生成等操作需要展示给用户
     
     # 业务执行层 - 分析过程不展示，仅内部记录
     "script_analysis": "internal",   # 剧本分析/提示词生成不流式展示

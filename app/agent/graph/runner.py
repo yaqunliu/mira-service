@@ -173,13 +173,14 @@ class GraphRunner:
             sent_complete_nodes = set()  # 已发送完成消息的节点
             sent_response_nodes = set()  # 已发送 response_text 的节点
             
-            # 只有这些节点的 LLM 输出需要流式发送给用户（token by token）
+            # 用户可见节点（会流式输出 LLM tokens）
             # - clarify: 澄清对话
             # - task_execution: 任务执行（保持 SSE 连接活跃）
             # - human_review: 人机交互确认请求
+            # - supervisor: 重新生成等操作需要展示给用户
             # 注意：status_query 改为 ReAct Agent 后，不应流式输出中间思考过程
             # 注意：asset_generation 不在此列表，因为它的 LLM 输出是内部提示词，不应显示给用户
-            USER_VISIBLE_NODES = {"clarify", "task_execution", "human_review"}
+            USER_VISIBLE_NODES = {"clarify", "task_execution", "human_review", "supervisor"}
             
             # 不应发送 response_text 的节点（分析/内部过程）
             INTERNAL_NODES = {"storyboard_generation", "audio_processing", "video_generation", "editing", "entry", "intent_detection", "router", "response_formatter", "stage_complete"}
@@ -205,7 +206,8 @@ class GraphRunner:
             # 需要发送 response_text 的节点
             # 只有外层包装节点发送，内部子图节点（如 script_analysis）不在此列表
             # storyboard_creation 需要发送完成消息到 SSE
-            RESPONSE_TEXT_NODES = {"human_review", "clarify", "status_query", "task_execution", "storyboard_creation", "asset_generation"}
+            # supervisor: 重新生成等操作需要展示结果给用户
+            RESPONSE_TEXT_NODES = {"human_review", "clarify", "status_query", "task_execution", "storyboard_creation", "asset_generation", "supervisor"}
             
             # 配置递归深度限制
             from app.core.config import settings

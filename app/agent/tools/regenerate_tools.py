@@ -154,6 +154,7 @@ async def submit_generation(
         任务提交结果
     """
     logger.info(f"[Regenerate Tool] 提交生成任务: type={target_type}, id={target_id}, mode={mode}")
+    logger.info(f"[Regenerate Tool] DEBUG: target_type={target_type}, 将决定 frame_type")
     
     from app.agent.tools.async_db import get_async_session
     from app.models.character import Character
@@ -201,13 +202,21 @@ async def submit_generation(
                 if not resource:
                     return {"success": False, "error": f"场景不存在: {target_id}"}
                 
-                prompt = resource.image_prompt or ""
+                # 场景的 image_prompt 存储在 extra_data 中
+                extra_data = resource.extra_data or {}
+                prompt = extra_data.get("image_prompt", "")
                 
-                from app.agent.tasks.image_tasks import generate_scene_image_task
-                task = generate_scene_image_task.delay(
-                    creation_uuid=creation_uuid,
+                # 获取 creation_id
+                from app.models.creation import Creation
+                creation_stmt = select(Creation).where(Creation.uuid == creation_uuid)
+                creation_result = await db.execute(creation_stmt)
+                creation_obj = creation_result.scalar_one_or_none()
+                creation_id = creation_obj.creation_id if creation_obj else None
+                
+                from app.tasks.step4_scene_image_gen_task import generate_single_scene_image_task
+                task = generate_single_scene_image_task.delay(
                     scene_id=target_id,
-                    prompt=prompt,
+                    creation_id=creation_id,
                 )
                 
             elif target_type == "shot_start":
@@ -217,24 +226,41 @@ async def submit_generation(
                 if not resource:
                     return {"success": False, "error": f"分镜不存在: {target_id}"}
                 
-                from app.agent.tasks.image_tasks import generate_shot_image_task
-                task = generate_shot_image_task.delay(
-                    creation_uuid=creation_uuid,
+                # 获取 creation_id
+                from app.models.creation import Creation
+                creation_stmt = select(Creation).where(Creation.uuid == creation_uuid)
+                creation_result = await db.execute(creation_stmt)
+                creation_obj = creation_result.scalar_one_or_none()
+                creation_id = creation_obj.creation_id if creation_obj else resource.creation_id
+                
+                logger.info(f"[Regenerate Tool] 调用 generate_single_shot_image_task: shot_id={target_id}, frame_type=start")
+                from app.tasks.shot_task import generate_single_shot_image_task
+                task = generate_single_shot_image_task.delay(
                     shot_id=target_id,
+                    creation_id=creation_id,
                     frame_type="start",
                 )
                 
             elif target_type == "shot_end":
+                logger.info(f"[Regenerate Tool] 进入 shot_end 分支: target_id={target_id}")
                 stmt = select(Shot).where(Shot.shot_id == target_id)
                 result = await db.execute(stmt)
                 resource = result.scalar_one_or_none()
                 if not resource:
                     return {"success": False, "error": f"分镜不存在: {target_id}"}
                 
-                from app.agent.tasks.image_tasks import generate_shot_image_task
-                task = generate_shot_image_task.delay(
-                    creation_uuid=creation_uuid,
+                # 获取 creation_id
+                from app.models.creation import Creation
+                creation_stmt = select(Creation).where(Creation.uuid == creation_uuid)
+                creation_result = await db.execute(creation_stmt)
+                creation_obj = creation_result.scalar_one_or_none()
+                creation_id = creation_obj.creation_id if creation_obj else resource.creation_id
+                
+                logger.info(f"[Regenerate Tool] 调用 generate_single_shot_image_task: shot_id={target_id}, frame_type=end")
+                from app.tasks.shot_task import generate_single_shot_image_task
+                task = generate_single_shot_image_task.delay(
                     shot_id=target_id,
+                    creation_id=creation_id,
                     frame_type="end",
                 )
                 
@@ -246,21 +272,21 @@ async def submit_generation(
                 if not resource:
                     return {"success": False, "error": f"分镜不存在: {target_id}"}
                 
-                from app.agent.tasks.image_tasks import generate_shot_image_task
-                # 先生成首帧
-                task_start = generate_shot_image_task.delay(
-                    creation_uuid=creation_uuid,
+                # 获取 creation_id
+                from app.models.creation import Creation
+                creation_stmt = select(Creation).where(Creation.uuid == creation_uuid)
+                creation_result = await db.execute(creation_stmt)
+                creation_obj = creation_result.scalar_one_or_none()
+                creation_id = creation_obj.creation_id if creation_obj else resource.creation_id
+                
+                logger.info(f"[Regenerate Tool] 调用 generate_single_shot_image_task: shot_id={target_id}, frame_type=both")
+                from app.tasks.shot_task import generate_single_shot_image_task
+                # 使用 frame_type="both" 同时生成首帧和尾帧
+                task = generate_single_shot_image_task.delay(
                     shot_id=target_id,
-                    frame_type="start",
+                    creation_id=creation_id,
+                    frame_type="both",
                 )
-                # 再生成尾帧
-                task_end = generate_shot_image_task.delay(
-                    creation_uuid=creation_uuid,
-                    shot_id=target_id,
-                    frame_type="end",
-                )
-                # 返回首帧的任务ID（主要任务）
-                task = task_start
                 
             elif target_type == "shot_video":
                 stmt = select(Shot).where(Shot.shot_id == target_id)
@@ -278,6 +304,8 @@ async def submit_generation(
                 extra_data["generation_mode"] = generation_mode
                 resource.extra_data = extra_data
                 await db.commit()
+                
+                logger.info(f"[Regenerate Tool] 调用 agent_generate_single_shot_video_task: shot_id={target_id}, generation_mode={generation_mode}, mode={mode}")
                 
                 from app.agent.tasks.video_tasks import agent_generate_single_shot_video_task
                 task = agent_generate_single_shot_video_task.delay(
@@ -367,17 +395,29 @@ async def update_resource_status(
                 if target_type == "shot_start":
                     if save_version and resource.image_url:
                         await _save_version(resource, "image_url", resource.image_url)
+                    # 更新分镜图片状态
+                    resource.status = status
                 elif target_type == "shot_end":
                     extra_data = resource.extra_data or {}
                     end_frame_url = extra_data.get("end_frame_image_url")
                     if save_version and end_frame_url:
                         await _save_version(resource, "end_frame_image_url", end_frame_url)
+                    # 更新分镜图片状态
+                    resource.status = status
                 elif target_type == "shot_video":
                     if save_version and resource.video_url:
                         await _save_version(resource, "video_url", resource.video_url)
-                
-                # 更新分镜状态字段（如果有的话）
-                if hasattr(resource, 'status'):
+                    # 视频生成更新 video_status
+                    resource.video_status = status
+                elif target_type == "shot_image":
+                    # 同时生成首帧和尾帧
+                    if save_version and resource.image_url:
+                        await _save_version(resource, "image_url", resource.image_url)
+                    extra_data = resource.extra_data or {}
+                    end_frame_url = extra_data.get("end_frame_image_url")
+                    if save_version and end_frame_url:
+                        await _save_version(resource, "end_frame_image_url", end_frame_url)
+                    # 更新分镜图片状态
                     resource.status = status
             else:
                 return {"success": False, "error": f"不支持的资源类型: {target_type}"}
@@ -458,6 +498,146 @@ async def regenerate(
         "version_saved": save_version,
         "mode": mode,
     }
+
+
+async def _poll_task_status(task_id: str, max_wait: int = 300, poll_interval: int = 3) -> Dict[str, Any]:
+    """
+    轮询 Celery 任务状态
+    
+    Args:
+        task_id: Celery 任务 ID
+        max_wait: 最大等待时间（秒）
+        poll_interval: 轮询间隔（秒）
+        
+    Returns:
+        任务最终状态
+    """
+    from celery.result import AsyncResult
+    from app.core.celery_app import celery_app
+    import asyncio
+    
+    elapsed = 0
+    logger.info(f"[_poll_task_status] 开始轮询任务: {task_id}, max_wait={max_wait}s")
+    
+    while elapsed < max_wait:
+        try:
+            task = AsyncResult(task_id, app=celery_app)
+            state = task.state
+            
+            logger.debug(f"[_poll_task_status] 任务 {task_id} 状态: {state}, 已等待 {elapsed}s")
+            
+            if state == 'SUCCESS':
+                result = task.result or {}
+                logger.info(f"[_poll_task_status] 任务完成: {task_id}")
+                return {
+                    "status": "completed",
+                    "task_id": task_id,
+                    "result": result,
+                    "elapsed": elapsed,
+                }
+            elif state == 'FAILURE':
+                error_msg = str(task.info) if task.info else "未知错误"
+                logger.error(f"[_poll_task_status] 任务失败: {task_id}, error={error_msg}")
+                return {
+                    "status": "failed",
+                    "task_id": task_id,
+                    "error": error_msg,
+                    "elapsed": elapsed,
+                }
+            elif state == 'PENDING':
+                # 任务还在等待中
+                pass
+            else:
+                # PROGRESS 或其他状态
+                info = task.info or {}
+                if isinstance(info, dict):
+                    logger.debug(f"[_poll_task_status] 任务进度: {info.get('percent', 0)}%")
+            
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+            
+        except asyncio.CancelledError:
+            logger.warning(f"[_poll_task_status] 轮询被取消: {task_id}")
+            raise
+        except Exception as e:
+            logger.error(f"[_poll_task_status] 轮询异常: {task_id}, error={e}")
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+    
+    # 超时
+    logger.warning(f"[_poll_task_status] 任务超时: {task_id}, 已等待 {elapsed}s")
+    return {
+        "status": "timeout",
+        "task_id": task_id,
+        "elapsed": elapsed,
+    }
+
+
+@tool
+async def regenerate_with_poll(
+    target_type: str,
+    target_id: int,
+    creation_uuid: str,
+    save_version: bool = True,
+    mode: str = "auto",
+    max_wait: int = 300,
+) -> Dict[str, Any]:
+    """
+    重新生成资源并轮询等待完成（带状态轮询的完整版本）
+    
+    与 regenerate 的区别：此函数会等待任务完成并返回最终结果
+    
+    Args:
+        target_type: 资源类型
+        target_id: 资源 ID
+        creation_uuid: 创作项目 UUID
+        save_version: 是否保存历史版本
+        mode: 生成模式
+        max_wait: 最大等待时间（秒）
+        
+    Returns:
+        包含任务执行结果的字典
+    """
+    logger.info(f"[Regenerate Tool] 重新生成并轮询: type={target_type}, id={target_id}")
+    
+    # Step 1: 执行重新生成（更新状态 + 提交任务）
+    result = await regenerate.ainvoke({
+        "target_type": target_type,
+        "target_id": target_id,
+        "creation_uuid": creation_uuid,
+        "save_version": save_version,
+        "mode": mode,
+    })
+    
+    if not result.get("success"):
+        return result
+    
+    task_id = result.get("task_id")
+    if not task_id:
+        return {"success": False, "error": "未获取到任务ID"}
+    
+    # Step 2: 轮询等待任务完成
+    poll_result = await _poll_task_status(task_id, max_wait=max_wait)
+    
+    # 合并结果
+    final_result = {
+        "success": poll_result.get("status") == "completed",
+        "target_type": target_type,
+        "target_id": target_id,
+        "task_id": task_id,
+        "status": poll_result.get("status"),
+        "elapsed": poll_result.get("elapsed", 0),
+    }
+    
+    if poll_result.get("status") == "completed":
+        final_result["message"] = f"重新生成完成，耗时 {poll_result.get('elapsed', 0)} 秒"
+    elif poll_result.get("status") == "failed":
+        final_result["error"] = poll_result.get("error", "任务失败")
+        final_result["message"] = f"重新生成失败: {poll_result.get('error', '未知错误')}"
+    elif poll_result.get("status") == "timeout":
+        final_result["message"] = f"任务超时，已等待 {poll_result.get('elapsed', 0)} 秒，请稍后查询状态"
+    
+    return final_result
 
 
 @tool
@@ -610,5 +790,6 @@ REGENERATE_TOOLS = [
     update_resource_status,
     submit_generation,
     regenerate,
+    regenerate_with_poll,
     clear_all,
 ]

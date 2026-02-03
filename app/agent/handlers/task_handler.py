@@ -76,6 +76,8 @@ INTENT_REFINE_PROMPT = """你是一个意图细化分析Agent。用户已经表�
     "target_numbers": [目标编号列表，如果有的话],
     "scope": "all" 或 "specific" 或 "first" 或 "last",
     "force_regenerate": true 或 false,
+    "resource_type": "image" 或 "video" 或 "both",
+    "frame_type": "start" 或 "end" 或 "both",
     "description": "对用户意图的简短描述"
 }}
 
@@ -84,26 +86,56 @@ INTENT_REFINE_PROMPT = """你是一个意图细化分析Agent。用户已经表�
   - action: "generate_shot_image"
   - scope: "all"（全部）, "specific"（指定编号）, "first"（第一个）, "last"（最后一个）
   - target_numbers: 用户提到的分镜编号列表，如 [1, 2, 3]
+  - resource_type: "image"
+  - frame_type: "start"（首帧）, "end"（尾帧）, "both"（首尾帧）
 
 - 对于 generate_scene_images（场景图片生成）:
   - action: "generate_scene_image"
   - scope: "all", "specific", "first", "last"
   - target_numbers: 用户提到的场景编号列表
+  - resource_type: "image"
 
 - 对于 generate_character_images（角色图片生成）:
   - action: "generate_character_image"
   - scope: "all", "specific"
   - target: 角色名称（如果用户指定了的话）
+  - resource_type: "image"
 
 - 对于 generate_videos（视频生成）:
   - action: "generate_video"
   - scope: "all", "specific"
   - target_numbers: 用户提到的分镜编号列表
+  - resource_type: "video"
+  - frame_type: "start"（只用首帧生成视频）, "both"（用首尾帧生成视频）
+  - 注意：视频生成时，frame_type 决定使用哪些帧作为输入
+
+- 对于 regenerate（重新生成）:
+  - target: "shot" 或 "character" 或 "scene"
+  - resource_type: "image" 或 "video"
+  - frame_type: "start"（仅首帧）, "end"（仅尾帧）, "both"（首尾帧）
+
+frame_type 识别规则（重要！必须严格遵守）：
+- 用户说"首帧"、"开始帧"、"第一帧"、"首帧图片" -> "start"
+- 用户说"尾帧"、"结束帧"、"最后一帧"、"尾帧图片" -> "end"
+- 用户说"分镜图"、"图片"、"重新生成图片"（未明确指定首尾）-> "both"
+
+关键判断逻辑：
+1. 只要用户明确提到"尾帧"或"结束帧"，frame_type 必须是 "end"
+2. 只要用户明确提到"首帧"或"开始帧"，frame_type 必须是 "start"
+3. 用户说"重新生成...尾帧" -> frame_type="end"
+4. 用户说"重新生成...首帧" -> frame_type="start"
+5. 用户只说"重新生成图片"没指定首尾 -> frame_type="both"
 
 示例：
-用户说"给第一个分镜生成图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [1], "scope": "first", "force_regenerate": false, "description": "为第1个分镜生成图片"}}
-用户说"重新生成所有分镜图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [], "scope": "all", "force_regenerate": true, "description": "重新生成所有分镜图片"}}
-用户说"生成第2和第3个分镜的图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [2, 3], "scope": "specific", "force_regenerate": false, "description": "为第2、3个分镜生成图片"}}
+用户说"给第一个分镜生成图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [1], "scope": "first", "force_regenerate": false, "resource_type": "image", "frame_type": "both", "description": "为第1个分镜生成图片"}}
+用户说"重新生成所有分镜图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [], "scope": "all", "force_regenerate": true, "resource_type": "image", "frame_type": "both", "description": "重新生成所有分镜图片"}}
+用户说"生成第2和第3个分镜的图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [2, 3], "scope": "specific", "force_regenerate": false, "resource_type": "image", "frame_type": "both", "description": "为第2、3个分镜生成图片"}}
+用户说"给分镜5生成尾帧" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [5], "scope": "specific", "force_regenerate": false, "resource_type": "image", "frame_type": "end", "description": "为分镜5生成尾帧"}}
+用户说"重新生成分镜3和5的尾帧图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [3, 5], "scope": "specific", "force_regenerate": true, "resource_type": "image", "frame_type": "end", "description": "重新生成分镜3和5的尾帧"}}
+用户说"给我的分镜1和分镜3重新生成一下尾帧图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [1, 3], "scope": "specific", "force_regenerate": true, "resource_type": "image", "frame_type": "end", "description": "重新生成分镜1和3的尾帧"}}
+用户说"重新生成首帧" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [], "scope": "all", "force_regenerate": true, "resource_type": "image", "frame_type": "start", "description": "重新生成所有分镜的首帧"}}
+用户说"给分镜1生成视频" -> {{"action": "generate_video", "target": "shot", "target_ids": [], "target_numbers": [1], "scope": "specific", "force_regenerate": false, "resource_type": "video", "frame_type": "both", "description": "为分镜1生成视频（使用首尾帧）"}}
+用户说"用首帧给分镜2生成视频" -> {{"action": "generate_video", "target": "shot", "target_ids": [], "target_numbers": [2], "scope": "specific", "force_regenerate": false, "resource_type": "video", "frame_type": "start", "description": "为分镜2生成视频（只用首帧）"}}
 
 只返回JSON，不要其他内容。"""
 
@@ -323,6 +355,9 @@ class AgentTaskHandler:
             if json_match:
                 refined_intent = json.loads(json_match.group())
                 logger.info(f"意图细化结果: {refined_intent}")
+                logger.info(f"[TaskHandler] 提取 frame_type: {refined_intent.get('frame_type', 'both')}, "
+                           f"resource_type: {refined_intent.get('resource_type', 'image')}, "
+                           f"target_numbers: {refined_intent.get('target_numbers', [])}")
                 return refined_intent
             else:
                 logger.warning(f"无法解析意图细化结果: {result_text}")
