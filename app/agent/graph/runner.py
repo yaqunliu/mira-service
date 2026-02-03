@@ -207,7 +207,13 @@ class GraphRunner:
             # storyboard_creation 需要发送完成消息到 SSE
             RESPONSE_TEXT_NODES = {"human_review", "clarify", "status_query", "task_execution", "storyboard_creation", "asset_generation"}
             
-            config = {"configurable": {"thread_id": self.thread_id}}
+            # 配置递归深度限制
+            from app.core.config import settings
+            recursion_limit = getattr(settings, 'LANGGRAPH_RECURSION_LIMIT', 15)
+            config = {
+                "configurable": {"thread_id": self.thread_id},
+                "recursion_limit": recursion_limit,
+            }
             
             # 使用 asyncio.Queue 来合并事件和心跳
             import time

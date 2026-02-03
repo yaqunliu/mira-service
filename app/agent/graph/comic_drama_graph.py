@@ -184,10 +184,14 @@ class ComicDramaGraph:
         # 完成节点
         workflow.add_edge("completed", END)
         
-        # 编译图
+        # 编译图 - 设置递归深度限制
+        from app.core.config import settings
+        recursion_limit = getattr(settings, 'LANGGRAPH_RECURSION_LIMIT', 15)
         self.graph = workflow.compile(checkpointer=self.checkpointer)
+        # 将 recursion_limit 存储在 graph 上供后续使用
+        self.graph.recursion_limit = recursion_limit
         self.graph.astream()
-        logger.info("ComicDramaGraph 构建完成")
+        logger.info(f"ComicDramaGraph 构建完成，递归限制: {recursion_limit}")
         return workflow
     
     async def _production_manager_node(self, state: ComicDramaState) -> ComicDramaState:

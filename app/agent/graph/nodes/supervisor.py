@@ -113,7 +113,9 @@ async def query_production_status(creation_uuid: str) -> Dict[str, Any]:
 async def route_to_worker(
     worker: str,
     task: str,
-    params: Optional[str] = None,
+    creation_uuid: str = "",
+    shot_number: int = 0,
+    shot_id: int = 0,
 ) -> Dict[str, Any]:
     """
     调度任务到指定的 Worker Node
@@ -121,13 +123,13 @@ async def route_to_worker(
     Args:
         worker: Worker 类型 (script_analyst | asset_designer | storyboard_director | video_editor)
         task: 任务描述
-        params: 任务参数（JSON 字符串，可选）
+        creation_uuid: 创作项目 UUID
+        shot_number: 分镜编号（用于视频生成等任务）
+        shot_id: 分镜 ID（可选，优先使用 shot_number）
         
     Returns:
         调度结果
     """
-    import json as json_lib
-    
     logger.info(f"[Supervisor] 调度到 Worker: {worker}, task={task}")
     
     valid_workers = ["script_analyst", "asset_designer", "storyboard_director", "video_editor"]
@@ -135,16 +137,14 @@ async def route_to_worker(
     if worker not in valid_workers:
         return {"success": False, "error": f"无效的 Worker: {worker}"}
     
-    # 解析 params（支持字符串或字典）
-    parsed_params = {}
-    if params:
-        if isinstance(params, str):
-            try:
-                parsed_params = json_lib.loads(params)
-            except json_lib.JSONDecodeError:
-                parsed_params = {"raw": params}
-        elif isinstance(params, dict):
-            parsed_params = params
+    # 构建参数
+    params = {}
+    if creation_uuid:
+        params["creation_uuid"] = creation_uuid
+    if shot_number:
+        params["shot_number"] = shot_number
+    if shot_id:
+        params["shot_id"] = shot_id
     
     # 返回调度指令（由子图路由处理）
     return {
@@ -152,7 +152,7 @@ async def route_to_worker(
         "action": "route_to_worker",
         "worker": worker,
         "task": task,
-        "params": parsed_params,
+        "params": params,
     }
 
 
@@ -194,6 +194,267 @@ def _get_supervisor_tools() -> List:
     ]
 
 
+# ==================== 资源重新生成处理 ====================
+
+async def _handle_regenerate_intent(
+    state: ComicDramaState,
+    creation_uuid: str,
+    intent_details: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    处理 regenerate 意图 - 直接执行资源重新生成
+    
+    支持：
+    - 指定编号：target_numbers=[11] -> 重新生成分镜11
+    - 指定名称：target_names=["幽影"] -> 重新生成角色幽影
+    - 失败重试：scope="failed" -> 重新生成所有失败的资源
+    
+    当名称匹配到多个资源时，会返回列表让用户选择
+    
+    Args:
+        state: 当前状态
+        creation_uuid: 创作UUID
+        intent_details: 意图详情
+        
+    Returns:
+        处理结果，可能包含需要用户确认的多选列表
+    """
+    from app.agent.tools.db_tools import (
+        find_resources_by_identifier,
+        query_failed_resources,
+    )
+    from app.agent.tools.regenerate_tools import regenerate
+    
+    target = intent_details.get("target", "shot")
+    target_numbers = intent_details.get("target_numbers", [])
+    target_names = intent_details.get("target_names", [])
+    scope = intent_details.get("scope", "specific")
+    resource_type = intent_details.get("resource_type", "video")
+    
+    logger.info(f"[Supervisor] 处理 regenerate: target={target}, scope={scope}, "
+                f"numbers={target_numbers}, names={target_names}, resource_type={resource_type}")
+    
+    resources_to_regenerate = []
+    ambiguous_matches = []  # 存储有歧义的匹配结果
+    
+    # 情况1: 失败重试
+    if scope == "failed":
+        failed_result = await query_failed_resources.ainvoke({
+            "creation_uuid": creation_uuid,
+            "resource_type": target,
+            "resource_subtype": resource_type if target == "shot" else "image"
+        })
+        
+        if failed_result.get("success"):
+            resources_to_regenerate = failed_result.get("resources", [])
+        
+        if not resources_to_regenerate:
+            return {
+                "success": True,
+                "message": f"没有生成失败的{target}资源需要重试。",
+                "regenerated_count": 0,
+            }
+    
+    # 情况2: 指定编号 - 使用资源解析工具
+    elif target_numbers and target == "shot":
+        from app.agent.tools.resource_resolver import resolve_resource_reference
+        
+        for number in target_numbers:
+            user_ref = f"分镜{number}"
+            match_result = await resolve_resource_reference.ainvoke({
+                "creation_uuid": creation_uuid,
+                "target": "shot",
+                "user_reference": user_ref,
+            })
+            
+            if match_result.get("success"):
+                matched = match_result.get("matched_resources", [])
+                if matched:
+                    if match_result.get("ambiguous") or len(matched) > 1:
+                        ambiguous_matches.append({
+                            "identifier": number,
+                            "matched_count": len(matched),
+                            "resources": matched[:5]
+                        })
+                    else:
+                        resources_to_regenerate.extend(matched)
+    
+    # 情况3: 指定名称（角色/场景/分镜描述）- 使用资源解析工具
+    elif target_names:
+        from app.agent.tools.resource_resolver import resolve_resource_reference
+        
+        for name in target_names:
+            match_result = await resolve_resource_reference.ainvoke({
+                "creation_uuid": creation_uuid,
+                "target": target,
+                "user_reference": name,
+            })
+            
+            if match_result.get("success"):
+                matched = match_result.get("matched_resources", [])
+                if matched:
+                    if match_result.get("ambiguous") or len(matched) > 1:
+                        ambiguous_matches.append({
+                            "identifier": name,
+                            "matched_count": len(matched),
+                            "resources": matched[:5]
+                        })
+                    else:
+                        resources_to_regenerate.extend(matched)
+    
+    # 情况4: 全部重新生成
+    elif scope == "all":
+        # 查询所有资源
+        if target == "shot":
+            from app.agent.tools.db_tools import query_shots
+            result = await query_shots.ainvoke({
+                "creation_uuid": creation_uuid,
+                "include_details": False
+            })
+            if result.get("shots"):
+                resources_to_regenerate = result.get("shots", [])
+        elif target == "character":
+            from app.agent.tools.db_tools import query_characters
+            result = await query_characters.ainvoke({
+                "creation_uuid": creation_uuid,
+                "include_images": False
+            })
+            if result.get("characters"):
+                resources_to_regenerate = result.get("characters", [])
+    
+    # 处理有歧义的匹配 - 需要用户确认
+    if ambiguous_matches:
+        # 构建确认消息
+        confirm_message = f"找到多个匹配的{target}资源，请确认要重新生成哪些：\n\n"
+        
+        for i, match in enumerate(ambiguous_matches, 1):
+            identifier = match["identifier"]
+            count = match["matched_count"]
+            confirm_message += f"**搜索 '{identifier}' 找到 {count} 个结果：**\n"
+            
+            for j, resource in enumerate(match["resources"], 1):
+                if target == "shot":
+                    desc = resource.get("description", "")[:50] if resource.get("description") else ""
+                    confirm_message += f"  {j}. 分镜{resource.get('shot_number')} - {desc}...\n"
+                elif target == "character":
+                    confirm_message += f"  {j}. {resource.get('name')}\n"
+                elif target == "scene":
+                    confirm_message += f"  {j}. {resource.get('title')}\n"
+            
+            confirm_message += "\n"
+        
+        confirm_message += "请回复具体的编号（如'分镜11'）或更精确的名称来指定。"
+        
+        return {
+            "success": False,  # 标记为未完成，需要用户确认
+            "needs_confirmation": True,
+            "message": confirm_message,
+            "ambiguous_matches": ambiguous_matches,
+            "regenerated_count": 0,
+        }
+    
+    if not resources_to_regenerate:
+        return {
+            "success": False,
+            "message": f"未找到要重新生成的{target}资源，请检查编号或名称是否正确。",
+            "regenerated_count": 0,
+        }
+    
+    # 执行重新生成
+    regenerated_count = 0
+    failed_count = 0
+    results = []
+    
+    # 获取帧类型（用于分镜图片）
+    frame_type = intent_details.get("frame_type", "both")
+    # 获取视频生成模式（用于分镜视频）
+    video_mode = intent_details.get("video_mode", "first_last_frame")  # 默认首尾帧
+    
+    for resource in resources_to_regenerate:
+        try:
+            # 确定 target_type 和 mode
+            mode = "auto"
+            if target == "shot":
+                if resource_type == "video":
+                    target_type = "shot_video"
+                    # 视频生成模式：
+                    # - "first_last_frame": 使用首尾帧（需要先有尾帧）
+                    # - "first_frame_only": 只使用首帧
+                    # 默认使用首尾帧，除非用户明确要求只用首帧
+                    if frame_type == "start":
+                        mode = "first_frame_only"
+                    else:
+                        mode = "first_last_frame"
+                elif resource_type == "image":
+                    # 根据 frame_type 确定是首帧、尾帧还是两者
+                    if frame_type == "start":
+                        target_type = "shot_start"
+                    elif frame_type == "end":
+                        target_type = "shot_end"
+                    else:  # both 或其他
+                        target_type = "shot_image"  # 同时生成首帧和尾帧
+                else:
+                    target_type = "shot_video"  # 默认视频
+                    mode = "first_last_frame"
+            elif target == "character":
+                target_type = "character"
+            elif target == "scene":
+                target_type = "scene"
+            else:
+                continue
+            
+            # 调用 regenerate 工具
+            result = await regenerate.ainvoke({
+                "target_type": target_type,
+                "target_id": resource.get("id") or resource.get("shot_id") or resource.get("character_id"),
+                "creation_uuid": creation_uuid,
+                "save_version": True,
+                "mode": mode
+            })
+            
+            if result.get("success"):
+                regenerated_count += 1
+                results.append({
+                    "id": resource.get("id") or resource.get("shot_id"),
+                    "name": resource.get("name") or resource.get("shot_number"),
+                    "success": True,
+                })
+            else:
+                failed_count += 1
+                results.append({
+                    "id": resource.get("id") or resource.get("shot_id"),
+                    "name": resource.get("name") or resource.get("shot_number"),
+                    "success": False,
+                    "error": result.get("error", "未知错误")
+                })
+                
+        except Exception as e:
+            logger.error(f"[Supervisor] 重新生成失败: {e}")
+            failed_count += 1
+    
+    # 构建响应消息
+    if scope == "failed":
+        message = f"已为 {regenerated_count} 个失败的{target}资源重新提交生成任务。"
+    elif len(target_numbers) == 1 or len(target_names) == 1:
+        resource_name = target_numbers[0] if target_numbers else target_names[0]
+        message = f"已为{target} {resource_name} 重新提交生成任务。"
+    else:
+        message = f"已为 {regenerated_count} 个{target}资源重新提交生成任务。"
+    
+    if failed_count > 0:
+        message += f"（{failed_count} 个失败）"
+    
+    return {
+        "success": True,
+        "message": message,
+        "regenerated_count": regenerated_count,
+        "failed_count": failed_count,
+        "results": results,
+        "target": target,
+        "resource_type": resource_type,
+    }
+
+
 # ==================== Supervisor Node ====================
 
 async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
@@ -215,8 +476,75 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
     production_stage = state.get("production_stage", ProductionStage.INIT)
     production_cache = state.get("production_cache", {})
     detected_intent = state.get("detected_intent", "")
+    intent_details = state.get("intent_details", {})
     
     try:
+        # ===== 特殊处理：regenerate 意图直接执行 =====
+        if detected_intent == "regenerate" and creation_uuid:
+            logger.info("[Node] supervisor: 检测到 regenerate 意图，直接执行")
+            
+            # 检查是否有足够的资源定位信息
+            has_target_info = (
+                intent_details.get("target_numbers") or 
+                intent_details.get("target_names") or 
+                intent_details.get("scope") in ["failed", "all"]
+            )
+            
+            if has_target_info:
+                result = await _handle_regenerate_intent(state, creation_uuid, intent_details)
+                
+                # 检查是否需要用户确认（多个匹配结果）
+                if result.get("needs_confirmation"):
+                    assistant_message = {
+                        "role": "assistant",
+                        "content": result.get("message"),
+                        "timestamp": datetime.now().isoformat(),
+                        "node": "supervisor",
+                        "metadata": {
+                            "mode": "needs_confirmation",
+                            "ambiguous_matches": result.get("ambiguous_matches"),
+                        },
+                    }
+                    
+                    state_messages = list(state.get("messages", []))
+                    state_messages.append(assistant_message)
+                    
+                    return {
+                        "messages": state_messages,
+                        "response_text": result.get("message"),
+                        "production_cache": production_cache,
+                        "next_worker": None,
+                        "needs_input": True,  # 需要用户输入来确认
+                        "pending_confirmation": True,
+                        "ambiguous_matches": result.get("ambiguous_matches"),
+                        "updated_at": datetime.now().isoformat(),
+                    }
+                
+                assistant_message = {
+                    "role": "assistant",
+                    "content": result.get("message", "重新生成任务已提交"),
+                    "timestamp": datetime.now().isoformat(),
+                    "node": "supervisor",
+                    "metadata": {
+                        "mode": "direct_regenerate",
+                        "regenerated_count": result.get("regenerated_count", 0),
+                        "target": result.get("target"),
+                    },
+                }
+                
+                state_messages = list(state.get("messages", []))
+                state_messages.append(assistant_message)
+                
+                return {
+                    "messages": state_messages,
+                    "response_text": result.get("message"),
+                    "production_cache": production_cache,
+                    "next_worker": None,  # 不需要调度 Worker，直接完成
+                    "needs_input": False,
+                    "updated_at": datetime.now().isoformat(),
+                }
+        
+        # ===== 标准 ReAct 流程 =====
         # 1. 准备工具
         tools = _get_supervisor_tools()
         

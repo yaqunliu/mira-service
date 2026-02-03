@@ -107,12 +107,41 @@ def agent_generate_video_task(
         }
         
     except Exception as e:
-        logger.error(f"[Agent Task] 视频生成失败: {e}")
+        error_message = str(e)
+        logger.error(f"[Agent Task] 视频生成失败: shot_id={shot_id}, error={error_message}")
+        
+        # AI 分析错误原因
+        error_analysis = _analyze_video_error(error_message)
+        
+        # 更新数据库记录错误
+        try:
+            from app.db.session import get_sync_session
+            from app.models.shot import Shot
+            from sqlalchemy.orm.attributes import flag_modified
+            from datetime import datetime
+            
+            with get_sync_session() as db:
+                shot = db.query(Shot).filter(Shot.shot_id == shot_id).first()
+                if shot:
+                    shot.video_status = "failed"
+                    if not shot.status_detail:
+                        shot.status_detail = {}
+                    shot.status_detail["video_status"] = "failed"
+                    shot.status_detail["video_error"] = error_message
+                    shot.status_detail["video_error_analysis"] = error_analysis
+                    shot.status_detail["video_failed_at"] = datetime.utcnow().isoformat()
+                    flag_modified(shot, "status_detail")
+                    db.commit()
+                    logger.info(f"[Agent Task] 已记录错误到数据库: shot_id={shot_id}")
+        except Exception as db_err:
+            logger.error(f"[Agent Task] 记录错误到数据库失败: {db_err}")
+        
         return {
             "status": "failed",
             "shot_id": shot_id,
-            "error": str(e),
-            "recoverable": True,
+            "error": error_message,
+            "error_analysis": error_analysis,
+            "recoverable": error_analysis.get("is_retryable", True),
         }
 
 
@@ -170,6 +199,108 @@ def _select_reference_image(shot: Shot, db) -> Optional[str]:
                 return char.image_url
     
     return None
+
+
+def _analyze_video_error(error_message: str) -> Dict[str, Any]:
+    """
+    AI 分析视频生成错误原因
+    
+    Args:
+        error_message: 原始错误信息
+        
+    Returns:
+        错误分析结果，包含类型、原因和建议
+    """
+    try:
+        # 常见错误模式匹配
+        error_lower = error_message.lower()
+        
+        # 敏感内容检测
+        if "sensitive" in error_lower or "sensitivecontent" in error_lower:
+            return {
+                "error_type": "sensitive_content",
+                "error_category": "内容审核",
+                "reason": "生成的视频内容可能包含敏感信息（如暴力、血腥、色情等），被 AI 模型拒绝生成",
+                "suggestion": "建议修改分镜描述，避免敏感内容描述，或使用更委婉的表达方式",
+                "is_retryable": False,
+                "raw_error": error_message,
+            }
+        
+        # 图片质量问题
+        if "image" in error_lower and ("quality" in error_lower or "blur" in error_lower or "unclear" in error_lower):
+            return {
+                "error_type": "image_quality",
+                "error_category": "图片质量",
+                "reason": "输入的图片质量不佳（模糊、不清晰或内容不完整）",
+                "suggestion": "建议重新生成分镜图片，确保图片清晰、内容完整后再生成视频",
+                "is_retryable": True,
+                "raw_error": error_message,
+            }
+        
+        # 图片内容问题
+        if "image" in error_lower and ("content" in error_lower or "invalid" in error_lower):
+            return {
+                "error_type": "image_content",
+                "error_category": "图片内容",
+                "reason": "输入的图片内容不符合要求（可能包含多个人物、文字或水印）",
+                "suggestion": "建议重新生成分镜图片，确保画面简洁、主体明确、无文字水印",
+                "is_retryable": True,
+                "raw_error": error_message,
+            }
+        
+        # 超时错误
+        if "timeout" in error_lower or "time out" in error_lower:
+            return {
+                "error_type": "timeout",
+                "error_category": "服务超时",
+                "reason": "视频生成服务响应超时",
+                "suggestion": "可以稍后重试，或检查网络连接状态",
+                "is_retryable": True,
+                "raw_error": error_message,
+            }
+        
+        # 服务不可用
+        if "unavailable" in error_lower or "service" in error_lower or "503" in error_lower:
+            return {
+                "error_type": "service_unavailable",
+                "error_category": "服务不可用",
+                "reason": "视频生成服务暂时不可用",
+                "suggestion": "可以稍后重试，或联系技术支持",
+                "is_retryable": True,
+                "raw_error": error_message,
+            }
+        
+        # 配额/额度不足
+        if "quota" in error_lower or "limit" in error_lower or "insufficient" in error_lower:
+            return {
+                "error_type": "quota_exceeded",
+                "error_category": "额度不足",
+                "reason": "API 调用额度已用完或超出限制",
+                "suggestion": "请联系管理员增加额度，或等待额度重置",
+                "is_retryable": False,
+                "raw_error": error_message,
+            }
+        
+        # 默认未知错误
+        return {
+            "error_type": "unknown",
+            "error_category": "未知错误",
+            "reason": f"视频生成过程中出现未知错误: {error_message[:100]}",
+            "suggestion": "建议稍后重试，如果问题持续存在请联系技术支持",
+            "is_retryable": True,
+            "raw_error": error_message,
+        }
+        
+    except Exception as e:
+        logger.error(f"[AgentVideoTask] 错误分析失败: {e}")
+        return {
+            "error_type": "analysis_failed",
+            "error_category": "分析失败",
+            "reason": f"无法分析错误原因，原始错误: {error_message[:100]}",
+            "suggestion": "建议稍后重试",
+            "is_retryable": True,
+            "raw_error": error_message,
+        }
 
 
 def _generate_video_by_mode(
@@ -440,13 +571,17 @@ def agent_generate_single_shot_video_task(
         }
         
     except Exception as e:
-        logger.error(f"[AgentVideoTask] 视频生成失败: shot_id={shot_id}, error={e}")
+        error_message = str(e)
+        logger.error(f"[AgentVideoTask] 视频生成失败: shot_id={shot_id}, error={error_message}")
+        
+        # AI 分析错误原因
+        error_analysis = _analyze_video_error(error_message)
         
         if freeze_record_id:
             try:
                 with get_sync_session() as db:
                     from app.services.points_service import PointsService
-                    PointsService.release_frozen_points(db, freeze_record_id, reason=str(e))
+                    PointsService.release_frozen_points(db, freeze_record_id, reason=error_message)
             except Exception:
                 pass
         
@@ -458,7 +593,9 @@ def agent_generate_single_shot_video_task(
                     if not shot.status_detail:
                         shot.status_detail = {}
                     shot.status_detail["video_status"] = "failed"
-                    shot.status_detail["video_error"] = str(e)
+                    shot.status_detail["video_error"] = error_message
+                    shot.status_detail["video_error_analysis"] = error_analysis
+                    shot.status_detail["video_failed_at"] = datetime.utcnow().isoformat()
                     flag_modified(shot, "status_detail")
                     db.commit()
         except Exception:
@@ -467,7 +604,8 @@ def agent_generate_single_shot_video_task(
         return {
             "shot_id": shot_id,
             "success": False,
-            "error": str(e),
+            "error": error_message,
+            "error_analysis": error_analysis,
             "recoverable": True,
         }
 

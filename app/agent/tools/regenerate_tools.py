@@ -34,7 +34,7 @@ async def clear_asset(
     Args:
         target_type: 资源类型 (character | scene | shot_start | shot_end | shot_video)
         target_id: 资源 ID
-        save_version: 是否保存历史版本到 status_details
+        save_version: 是否保存历史版本到 status_detail
         
     Returns:
         操作结果
@@ -76,7 +76,7 @@ async def clear_asset(
                 
                 resource.image_url = None
                 
-            elif target_type in ["shot_start", "shot_end", "shot_video"]:
+            elif target_type in ["shot_start", "shot_end", "shot_video", "shot_image"]:
                 stmt = select(Shot).where(Shot.shot_id == target_id)
                 result = await db.execute(stmt)
                 resource = result.scalar_one_or_none()
@@ -84,22 +84,37 @@ async def clear_asset(
                     return {"success": False, "error": f"分镜不存在: {target_id}"}
                 
                 if target_type == "shot_start":
+                    # 首帧 - image_url
                     if save_version and resource.image_url:
                         await _save_version(resource, "image_url", resource.image_url)
                     resource.image_url = None
                     
                 elif target_type == "shot_end":
+                    # 尾帧 - extra_data.end_frame_image_url
                     extra_data = resource.extra_data or {}
-                    end_frame_url = extra_data.get("end_frame_url")
+                    end_frame_url = extra_data.get("end_frame_image_url")
                     if save_version and end_frame_url:
-                        await _save_version(resource, "end_frame_url", end_frame_url)
-                    extra_data["end_frame_url"] = None
+                        await _save_version(resource, "end_frame_image_url", end_frame_url)
+                    extra_data["end_frame_image_url"] = None
                     resource.extra_data = extra_data
                     
                 elif target_type == "shot_video":
                     if save_version and resource.video_url:
                         await _save_version(resource, "video_url", resource.video_url)
                     resource.video_url = None
+                    
+                elif target_type == "shot_image":
+                    # 同时清空首帧和尾帧
+                    if save_version and resource.image_url:
+                        await _save_version(resource, "image_url", resource.image_url)
+                    resource.image_url = None
+                    
+                    extra_data = resource.extra_data or {}
+                    end_frame_url = extra_data.get("end_frame_image_url")
+                    if save_version and end_frame_url:
+                        await _save_version(resource, "end_frame_image_url", end_frame_url)
+                    extra_data["end_frame_image_url"] = None
+                    resource.extra_data = extra_data
             else:
                 return {"success": False, "error": f"不支持的资源类型: {target_type}"}
             
@@ -159,11 +174,24 @@ async def submit_generation(
                 prompt = resource.image_prompt or ""
                 
                 # 调用 Celery 任务
-                from app.agent.tasks.image_tasks import generate_character_image_task
+                from app.tasks.character_task import generate_character_image_task
+                
+                # 获取 creation 的 visual_style（从 extra_data 中获取）
+                from app.models.creation import Creation
+                from sqlalchemy import select
+                creation_stmt = select(Creation).where(Creation.uuid == creation_uuid)
+                creation_result = await db.execute(creation_stmt)
+                creation_obj = creation_result.scalar_one_or_none()
+                
+                # visual_style 存储在 extra_data 中，不是直接字段
+                extra_data = creation_obj.extra_data or {} if creation_obj else {}
+                visual_style = extra_data.get("visual_style", extra_data.get("style", "anime"))
+                
                 task = generate_character_image_task.delay(
+                    character_ids=[target_id],
+                    visual_style=visual_style,
                     creation_uuid=creation_uuid,
-                    character_id=target_id,
-                    prompt=prompt,
+                    force_regenerate=True,
                 )
                 
             elif target_type == "scene":
@@ -210,6 +238,30 @@ async def submit_generation(
                     frame_type="end",
                 )
                 
+            elif target_type == "shot_image":
+                # 同时生成首帧和尾帧
+                stmt = select(Shot).where(Shot.shot_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"分镜不存在: {target_id}"}
+                
+                from app.agent.tasks.image_tasks import generate_shot_image_task
+                # 先生成首帧
+                task_start = generate_shot_image_task.delay(
+                    creation_uuid=creation_uuid,
+                    shot_id=target_id,
+                    frame_type="start",
+                )
+                # 再生成尾帧
+                task_end = generate_shot_image_task.delay(
+                    creation_uuid=creation_uuid,
+                    shot_id=target_id,
+                    frame_type="end",
+                )
+                # 返回首帧的任务ID（主要任务）
+                task = task_start
+                
             elif target_type == "shot_video":
                 stmt = select(Shot).where(Shot.shot_id == target_id)
                 result = await db.execute(stmt)
@@ -217,8 +269,18 @@ async def submit_generation(
                 if not resource:
                     return {"success": False, "error": f"分镜不存在: {target_id}"}
                 
-                from app.agent.tasks.video_tasks import generate_shot_video_task
-                task = generate_shot_video_task.delay(
+                # 获取 extra_data 并更新 generation_mode
+                extra_data = resource.extra_data or {}
+                # mode 参数决定使用哪种生成模式
+                # "first_frame_only" - 只用首帧
+                # "first_last_frame" - 用首帧和尾帧（需要先生成尾帧）
+                generation_mode = mode if mode in ["first_frame_only", "first_last_frame"] else "first_frame_only"
+                extra_data["generation_mode"] = generation_mode
+                resource.extra_data = extra_data
+                await db.commit()
+                
+                from app.agent.tasks.video_tasks import agent_generate_single_shot_video_task
+                task = agent_generate_single_shot_video_task.delay(
                     creation_uuid=creation_uuid,
                     shot_id=target_id,
                 )
@@ -239,6 +301,103 @@ async def submit_generation(
 
 
 @tool
+async def update_resource_status(
+    target_type: str,
+    target_id: int,
+    status: str,
+    save_version: bool = True,
+) -> Dict[str, Any]:
+    """
+    更新资源状态（重新生成时不清空历史，只修改状态）
+    
+    Args:
+        target_type: 资源类型 (character | scene | shot_start | shot_end | shot_video)
+        target_id: 资源 ID
+        status: 新状态 (pending/generating/completed/failed)
+        save_version: 是否保存当前版本到历史
+        
+    Returns:
+        操作结果
+    """
+    logger.info(f"[Regenerate Tool] 更新状态: type={target_type}, id={target_id}, status={status}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.character import Character
+    from app.models.scene import Scene
+    from app.models.shot import Shot
+    from sqlalchemy import select
+    
+    async with get_async_session() as db:
+        try:
+            # 根据类型获取资源
+            if target_type == "character":
+                stmt = select(Character).where(Character.character_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"角色不存在: {target_id}"}
+                
+                # 保存当前版本
+                if save_version and resource.image_url:
+                    await _save_version(resource, "image_url", resource.image_url)
+                
+                # 只修改状态，不清空图片
+                resource.status = status
+                
+            elif target_type == "scene":
+                stmt = select(Scene).where(Scene.scene_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"场景不存在: {target_id}"}
+                
+                if save_version and resource.image_url:
+                    await _save_version(resource, "image_url", resource.image_url)
+                
+                resource.status = status
+                
+            elif target_type in ["shot_start", "shot_end", "shot_video", "shot_image"]:
+                stmt = select(Shot).where(Shot.shot_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"分镜不存在: {target_id}"}
+                
+                # 分镜状态更新逻辑
+                if target_type == "shot_start":
+                    if save_version and resource.image_url:
+                        await _save_version(resource, "image_url", resource.image_url)
+                elif target_type == "shot_end":
+                    extra_data = resource.extra_data or {}
+                    end_frame_url = extra_data.get("end_frame_image_url")
+                    if save_version and end_frame_url:
+                        await _save_version(resource, "end_frame_image_url", end_frame_url)
+                elif target_type == "shot_video":
+                    if save_version and resource.video_url:
+                        await _save_version(resource, "video_url", resource.video_url)
+                
+                # 更新分镜状态字段（如果有的话）
+                if hasattr(resource, 'status'):
+                    resource.status = status
+            else:
+                return {"success": False, "error": f"不支持的资源类型: {target_type}"}
+            
+            await db.commit()
+            
+            return {
+                "success": True,
+                "target_type": target_type,
+                "target_id": target_id,
+                "status": status,
+                "version_saved": save_version,
+            }
+            
+        except Exception as e:
+            logger.error(f"[Regenerate Tool] 更新状态失败: {e}")
+            return {"success": False, "error": str(e)}
+
+
+@tool
 async def regenerate(
     target_type: str,
     target_id: int,
@@ -247,10 +406,18 @@ async def regenerate(
     mode: str = "auto",
 ) -> Dict[str, Any]:
     """
-    重新生成资源（组合操作：清空 + 提交生成）
+    重新生成资源（组合操作：更新状态为 generating + 提交生成任务）
+    
+    注意：重新生成不会清空历史图片，只修改状态并提交新的生成任务
     
     Args:
-        target_type: 资源类型 (character | scene | shot_start | shot_end | shot_video)
+        target_type: 资源类型 (character | scene | shot_start | shot_end | shot_video | shot_image)
+                    - character: 角色图片
+                    - scene: 场景图片
+                    - shot_start: 分镜首帧
+                    - shot_end: 分镜尾帧
+                    - shot_video: 分镜视频
+                    - shot_image: 分镜首帧和尾帧（同时生成）
         target_id: 资源 ID
         creation_uuid: 创作项目 UUID
         save_version: 是否保存历史版本
@@ -261,15 +428,16 @@ async def regenerate(
     """
     logger.info(f"[Regenerate Tool] 重新生成: type={target_type}, id={target_id}")
     
-    # Step 1: 清空资源（保存版本）
-    clear_result = await clear_asset.ainvoke({
+    # Step 1: 更新状态为 generating（保存版本，但不清空图片）
+    status_result = await update_resource_status.ainvoke({
         "target_type": target_type,
         "target_id": target_id,
+        "status": "generating",
         "save_version": save_version,
     })
     
-    if not clear_result.get("success"):
-        return clear_result
+    if not status_result.get("success"):
+        return status_result
     
     # Step 2: 提交生成任务
     submit_result = await submit_generation.ainvoke({
@@ -408,15 +576,16 @@ async def clear_all(
 
 async def _save_version(resource: Any, field_name: str, value: Any) -> None:
     """
-    保存资源版本到 status_details
+    保存资源版本到 status_detail
     
     Args:
         resource: 资源对象（Character/Scene/Shot）
         field_name: 字段名
         value: 当前值
     """
-    status_details = resource.status_details or {}
-    versions = status_details.get("versions", [])
+    # 注意：模型中的字段名是 status_detail（单数），不是 status_details
+    status_detail = resource.status_detail or {}
+    versions = status_detail.get("versions", [])
     
     # 创建版本记录
     version_record = {
@@ -428,8 +597,8 @@ async def _save_version(resource: Any, field_name: str, value: Any) -> None:
     }
     
     versions.append(version_record)
-    status_details["versions"] = versions
-    resource.status_details = status_details
+    status_detail["versions"] = versions
+    resource.status_detail = status_detail
     
     logger.info(f"[Version] 保存版本: {field_name}={value[:50] if isinstance(value, str) else value}...")
 
@@ -438,6 +607,7 @@ async def _save_version(resource: Any, field_name: str, value: Any) -> None:
 
 REGENERATE_TOOLS = [
     clear_asset,
+    update_resource_status,
     submit_generation,
     regenerate,
     clear_all,

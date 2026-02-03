@@ -75,6 +75,8 @@ async def query_characters(
     """
     查询创作项目的角色列表
     
+    通过 Creation.character_ids 字段获取角色ID列表，然后查询角色详情
+    
     Args:
         creation_uuid: 创作项目 UUID
         include_images: 是否包含图片信息
@@ -99,10 +101,19 @@ async def query_characters(
         if not creation:
             return {"total": 0, "characters": [], "error": "创作项目不存在"}
         
+        # 从 creation.character_ids 获取角色ID列表
+        character_ids = creation.character_ids or []
+        logger.info(f"[DB Tool] creation.character_ids: {character_ids}")
+        
+        if not character_ids:
+            return {"total": 0, "characters": [], "message": "创作项目没有关联角色"}
+        
         # 查询角色
-        stmt = select(Character).where(Character.creation_id == creation.creation_id)
+        stmt = select(Character).where(Character.character_id.in_(character_ids))
         result = await db.execute(stmt)
         characters = result.scalars().all()
+        
+        logger.info(f"[DB Tool] 查询到 {len(characters)} 个角色")
         
         return {
             "total": len(characters),
@@ -128,6 +139,8 @@ async def query_scenes(
     """
     查询创作项目的场景列表
     
+    通过 Creation.scene_ids 字段获取场景ID列表，然后查询场景详情
+    
     Args:
         creation_uuid: 创作项目 UUID
         include_images: 是否包含图片信息
@@ -150,9 +163,18 @@ async def query_scenes(
         if not creation:
             return {"total": 0, "scenes": [], "error": "创作项目不存在"}
         
-        stmt = select(Scene).where(Scene.creation_id == creation.creation_id)
+        # 从 creation.scene_ids 获取场景ID列表
+        scene_ids = creation.scene_ids or []
+        logger.info(f"[DB Tool] creation.scene_ids: {scene_ids}")
+        
+        if not scene_ids:
+            return {"total": 0, "scenes": [], "message": "创作项目没有关联场景"}
+        
+        stmt = select(Scene).where(Scene.scene_id.in_(scene_ids))
         result = await db.execute(stmt)
         scenes = result.scalars().all()
+        
+        logger.info(f"[DB Tool] 查询到 {len(scenes)} 个场景")
         
         return {
             "total": len(scenes),
@@ -1531,4 +1553,310 @@ async def save_video_prompts(
     except Exception as e:
         logger.error(f"[save_video_prompts] 保存失败: {e}")
         return {"success": False, "error": str(e)}
+
+
+# ==================== 资源定位工具 ====================
+
+@tool
+async def find_resources_by_identifier(
+    creation_uuid: str,
+    resource_type: str,
+    identifier: str,
+) -> Dict[str, Any]:
+    """
+    根据用户提到的编号或名称查找资源
+    
+    支持模糊匹配，如：
+    - "11" -> 匹配 shot_number=11 或 id=11
+    - "幽影" -> 匹配角色名称包含"幽影"
+    - "客栈" -> 匹配场景标题包含"客栈"
+    
+    Args:
+        creation_uuid: 创作项目 UUID
+        resource_type: 资源类型 (character/scene/shot)
+        identifier: 标识符（编号或名称关键词）
+        
+    Returns:
+        匹配的资源列表
+    """
+    logger.info(f"[DB Tool] 查找资源: creation_uuid={creation_uuid}, type={resource_type}, identifier={identifier}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.creation import Creation
+    from sqlalchemy import select
+    
+    async with get_async_session() as db:
+        # 获取 creation
+        creation_stmt = select(Creation).where(Creation.uuid == creation_uuid)
+        creation_result = await db.execute(creation_stmt)
+        creation = creation_result.scalar_one_or_none()
+        
+        if not creation:
+            return {"success": False, "error": "创作项目不存在"}
+        
+        creation_id = creation.creation_id
+        
+        try:
+            if resource_type == "character":
+                from app.models.character import Character
+                # 尝试作为ID匹配，也尝试作为名称模糊匹配
+                stmt = select(Character).where(
+                    Character.creation_id == creation_id,
+                    Character.deleted_at.is_(None)
+                )
+                result = await db.execute(stmt)
+                characters = result.scalars().all()
+                
+                matched = []
+                for char in characters:
+                    # 精确ID匹配或名称包含
+                    if str(char.character_id) == identifier or identifier in char.name:
+                        matched.append({
+                            "id": char.character_id,
+                            "name": char.name,
+                            "image_url": char.image_url,
+                            "has_image": bool(char.image_url),
+                        })
+                
+                return {
+                    "success": True,
+                    "resource_type": "character",
+                    "identifier": identifier,
+                    "matched_count": len(matched),
+                    "resources": matched,
+                }
+                
+            elif resource_type == "scene":
+                from app.models.scene import Scene
+                stmt = select(Scene).where(
+                    Scene.creation_id == creation_id,
+                    Scene.deleted_at.is_(None)
+                )
+                result = await db.execute(stmt)
+                scenes = result.scalars().all()
+                
+                matched = []
+                for i, scene in enumerate(scenes, 1):
+                    # 序号匹配（第N个场景）或ID匹配或标题包含
+                    scene_number = i
+                    if str(scene.scene_id) == identifier or str(scene_number) == identifier or identifier in scene.title:
+                        matched.append({
+                            "id": scene.scene_id,
+                            "number": scene_number,
+                            "title": scene.title,
+                            "image_url": scene.image_url,
+                            "has_image": bool(scene.image_url),
+                        })
+                
+                return {
+                    "success": True,
+                    "resource_type": "scene",
+                    "identifier": identifier,
+                    "matched_count": len(matched),
+                    "resources": matched,
+                }
+                
+            elif resource_type == "shot":
+                from app.models.scene import Scene
+                from app.models.shot import Shot
+                
+                # 获取所有场景ID
+                scene_stmt = select(Scene.scene_id).where(Scene.creation_id == creation_id)
+                scene_result = await db.execute(scene_stmt)
+                scene_ids = [s[0] for s in scene_result.fetchall()]
+                
+                if not scene_ids:
+                    return {"success": True, "resource_type": "shot", "matched_count": 0, "resources": []}
+                
+                # 查询分镜
+                shot_stmt = select(Shot).where(
+                    Shot.scene_id.in_(scene_ids)
+                ).order_by(Shot.shot_number)
+                result = await db.execute(shot_stmt)
+                shots = result.scalars().all()
+                
+                matched = []
+                for shot in shots:
+                    # 1. shot_number 精确匹配（如 "11"）
+                    # 2. shot_id 精确匹配
+                    # 3. description 模糊匹配（如 "幽影" 匹配 "近景居中：幽影额头渗出冷汗..."）
+                    # 4. title 模糊匹配（如果有 title）
+                    is_match = (
+                        str(shot.shot_number) == identifier or 
+                        str(shot.shot_id) == identifier or
+                        (shot.description and identifier in shot.description) or
+                        (shot.title and identifier in shot.title)
+                    )
+                    
+                    if is_match:
+                        extra_data = shot.extra_data or {}
+                        matched.append({
+                            "id": shot.shot_id,
+                            "shot_number": shot.shot_number,
+                            "title": shot.title,
+                            "description": shot.description,
+                            "image_url": shot.image_url,
+                            "video_url": shot.video_url,
+                            "end_frame_url": extra_data.get("end_frame_url"),
+                            "has_image": bool(shot.image_url),
+                            "has_video": bool(shot.video_url),
+                        })
+                
+                return {
+                    "success": True,
+                    "resource_type": "shot",
+                    "identifier": identifier,
+                    "matched_count": len(matched),
+                    "resources": matched,
+                }
+            else:
+                return {"success": False, "error": f"不支持的资源类型: {resource_type}"}
+                
+        except Exception as e:
+            logger.error(f"[find_resources_by_identifier] 查询失败: {e}")
+            return {"success": False, "error": str(e)}
+
+
+@tool
+async def query_failed_resources(
+    creation_uuid: str,
+    resource_type: str,
+    resource_subtype: str = "video",
+) -> Dict[str, Any]:
+    """
+    查询所有生成失败的资源
+    
+    Args:
+        creation_uuid: 创作项目 UUID
+        resource_type: 资源类型 (character/scene/shot)
+        resource_subtype: 子类型 (image/video)，对 shot 有效
+        
+    Returns:
+        失败的资源列表
+    """
+    logger.info(f"[DB Tool] 查询失败资源: creation_uuid={creation_uuid}, type={resource_type}, subtype={resource_subtype}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.creation import Creation
+    from sqlalchemy import select
+    
+    async with get_async_session() as db:
+        creation_stmt = select(Creation).where(Creation.uuid == creation_uuid)
+        creation_result = await db.execute(creation_stmt)
+        creation = creation_result.scalar_one_or_none()
+        
+        if not creation:
+            return {"success": False, "error": "创作项目不存在"}
+        
+        creation_id = creation.creation_id
+        
+        try:
+            if resource_type == "character":
+                from app.models.character import Character
+                # 查询有 image_prompt 但没有 image_url 的角色（生成失败或未生成）
+                stmt = select(Character).where(
+                    Character.creation_id == creation_id,
+                    Character.deleted_at.is_(None),
+                    Character.image_prompt.isnot(None),
+                    Character.image_url.is_(None)
+                )
+                result = await db.execute(stmt)
+                characters = result.scalars().all()
+                
+                failed = [
+                    {
+                        "id": c.character_id,
+                        "name": c.name,
+                        "image_prompt": c.image_prompt,
+                    }
+                    for c in characters
+                ]
+                
+                return {
+                    "success": True,
+                    "resource_type": "character",
+                    "failed_count": len(failed),
+                    "resources": failed,
+                }
+                
+            elif resource_type == "scene":
+                from app.models.scene import Scene
+                stmt = select(Scene).where(
+                    Scene.creation_id == creation_id,
+                    Scene.deleted_at.is_(None),
+                    Scene.image_prompt.isnot(None),
+                    Scene.image_url.is_(None)
+                )
+                result = await db.execute(stmt)
+                scenes = result.scalars().all()
+                
+                failed = [
+                    {
+                        "id": s.scene_id,
+                        "title": s.title,
+                        "image_prompt": s.image_prompt,
+                    }
+                    for s in scenes
+                ]
+                
+                return {
+                    "success": True,
+                    "resource_type": "scene",
+                    "failed_count": len(failed),
+                    "resources": failed,
+                }
+                
+            elif resource_type == "shot":
+                from app.models.scene import Scene
+                from app.models.shot import Shot
+                
+                # 获取场景ID
+                scene_stmt = select(Scene.scene_id).where(Scene.creation_id == creation_id)
+                scene_result = await db.execute(scene_stmt)
+                scene_ids = [s[0] for s in scene_result.fetchall()]
+                
+                if not scene_ids:
+                    return {"success": True, "resource_type": "shot", "failed_count": 0, "resources": []}
+                
+                if resource_subtype == "video":
+                    # 查询有图片但没有视频的分镜
+                    stmt = select(Shot).where(
+                        Shot.scene_id.in_(scene_ids),
+                        Shot.image_url.isnot(None),
+                        Shot.video_url.is_(None)
+                    ).order_by(Shot.shot_number)
+                else:  # image
+                    # 查询没有图片的分镜
+                    stmt = select(Shot).where(
+                        Shot.scene_id.in_(scene_ids),
+                        Shot.image_url.is_(None)
+                    ).order_by(Shot.shot_number)
+                
+                result = await db.execute(stmt)
+                shots = result.scalars().all()
+                
+                failed = [
+                    {
+                        "id": s.shot_id,
+                        "shot_number": s.shot_number,
+                        "description": s.description,
+                        "image_url": s.image_url,
+                        "video_url": s.video_url,
+                    }
+                    for s in shots
+                ]
+                
+                return {
+                    "success": True,
+                    "resource_type": "shot",
+                    "resource_subtype": resource_subtype,
+                    "failed_count": len(failed),
+                    "resources": failed,
+                }
+            else:
+                return {"success": False, "error": f"不支持的资源类型: {resource_type}"}
+                
+        except Exception as e:
+            logger.error(f"[query_failed_resources] 查询失败: {e}")
+            return {"success": False, "error": str(e)}
 

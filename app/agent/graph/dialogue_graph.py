@@ -147,10 +147,14 @@ class DialogueGraphRunner:
         self._compile()
     
     def _compile(self):
-        """编译 Graph"""
+        """编译 Graph - 设置递归深度限制"""
+        from app.core.config import settings
         workflow = build_dialogue_graph()
         self.graph = workflow.compile(checkpointer=self.checkpointer)
-        logger.info("[DialogueGraph] Graph 已编译")
+        # 设置递归深度限制
+        recursion_limit = getattr(settings, 'LANGGRAPH_RECURSION_LIMIT', 15)
+        self.graph.recursion_limit = recursion_limit
+        logger.info(f"[DialogueGraph] Graph 已编译，递归限制: {recursion_limit}")
     
     async def invoke(
         self,

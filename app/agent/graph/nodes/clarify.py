@@ -16,6 +16,8 @@ async def clarify_node(state: Dict[str, Any]) -> Dict[str, Any]:
     当意图识别置信度较低或意图不明确时，
     生成引导性问题帮助用户明确需求
     
+    优化：当意图明确但缺少资源定位信息时，给出针对性的引导
+    
     Args:
         state: 当前 Graph 状态
         
@@ -30,9 +32,86 @@ async def clarify_node(state: Dict[str, Any]) -> Dict[str, Any]:
     user_message = state.get("user_message", "")
     detected_intent = state.get("detected_intent", "unknown")
     intent_confidence = state.get("intent_confidence", 0.0)
+    intent_details = state.get("intent_details", {})
     current_stage = state.get("current_stage", "init")
     messages = state.get("messages", [])
     
+    # ===== 智能澄清：根据意图类型给出针对性引导 =====
+    
+    # 情况1: regenerate 意图但缺少资源定位信息
+    if detected_intent == "regenerate":
+        target = intent_details.get("target", "shot")
+        has_numbers = bool(intent_details.get("target_numbers"))
+        has_names = bool(intent_details.get("target_names"))
+        scope = intent_details.get("scope")
+        
+        # 如果有明确的资源定位信息，不应该走到 clarify
+        if has_numbers or has_names or scope in ["failed", "all"]:
+            logger.info("[Node] clarify: regenerate 意图已有足够信息，不应走到 clarify")
+            # 返回一个提示，让 router 重新路由到 task_execution
+            return {
+                "messages": messages,
+                "response_text": "",
+                "awaiting_clarification": False,
+                "clarify_skipped": True,
+                "reason": "regenerate 意图已有足够信息",
+                "updated_at": datetime.now().isoformat(),
+            }
+        
+        # 缺少资源定位信息，给出针对性引导
+        if target == "shot":
+            response_text = """我可以帮您重新生成分镜。请告诉我：
+
+1. **指定分镜编号** - 例如："分镜11"、"第3个分镜"
+2. **重新生成所有失败的分镜** - 说"重新生成失败的分镜"
+3. **重新生成所有分镜** - 说"重新生成所有分镜"
+
+您想怎么做？"""
+        elif target == "character":
+            response_text = """我可以帮您重新生成角色图片。请告诉我：
+
+1. **指定角色名称** - 例如："给幽影重新生成"
+2. **重新生成所有角色** - 说"重新生成所有角色"
+
+您想怎么做？"""
+        elif target == "scene":
+            response_text = """我可以帮您重新生成场景图片。请告诉我：
+
+1. **指定场景编号或名称** - 例如："场景2"、"客栈场景"
+2. **重新生成所有场景** - 说"重新生成所有场景"
+
+您想怎么做？"""
+        else:
+            response_text = """我可以帮您重新生成资源。请告诉我：
+
+- 要重新生成什么？（分镜/角色/场景）
+- 具体是哪个？（编号或名称）
+
+例如：给分镜11重新生成视频"""
+        
+        assistant_message = {
+            "role": "assistant",
+            "content": response_text,
+            "timestamp": datetime.now().isoformat(),
+            "node": "clarify",
+            "metadata": {
+                "original_intent": detected_intent,
+                "confidence": intent_confidence,
+                "clarify_reason": "regenerate 缺少资源定位信息",
+            },
+        }
+        
+        updated_messages = list(messages)
+        updated_messages.append(assistant_message)
+        
+        return {
+            "messages": updated_messages,
+            "response_text": response_text,
+            "awaiting_clarification": True,
+            "updated_at": datetime.now().isoformat(),
+        }
+    
+    # 情况2: 标准澄清流程
     try:
         # 构建上下文
         context = {

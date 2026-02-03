@@ -358,6 +358,11 @@ async def reset_session(
 ):
     """
     重置会话
+    
+    清除内容：
+    1. AgentMessage 表中的消息
+    2. Creation.extra_data 中的 agent_threads（消息历史）
+    3. Creation.extra_data 中的 agent_checkpoints（检查点）
     """
     try:
         stmt = select(AgentSession).where(
@@ -377,10 +382,34 @@ async def reset_session(
                     detail="创作项目不存在"
                 )
         
+        # 1. 清除 AgentMessage 表中的消息
         if not request.keep_assets:
             await db.execute(
                 delete(AgentMessage).where(AgentMessage.session_id == session.session_id)
             )
+        
+        # 2. 清除 Creation.extra_data 中的 agent_threads 和 agent_checkpoints
+        stmt_creation = select(Creation).where(Creation.uuid == creation_uuid)
+        result_creation = await db.execute(stmt_creation)
+        creation = result_creation.scalar_one_or_none()
+        
+        if creation:
+            extra_data = creation.extra_data or {}
+            # 清除消息历史
+            if "agent_threads" in extra_data:
+                del extra_data["agent_threads"]
+                logger.info(f"[Reset] 清除 agent_threads: {creation_uuid}")
+            # 清除检查点
+            if "agent_checkpoints" in extra_data:
+                del extra_data["agent_checkpoints"]
+                logger.info(f"[Reset] 清除 agent_checkpoints: {creation_uuid}")
+            # 清除最后检查点ID
+            if "last_checkpoint_id" in extra_data:
+                del extra_data["last_checkpoint_id"]
+            
+            creation.extra_data = extra_data
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(creation, "extra_data")
         
         session.current_stage = "init"
         session.status = "reset"
