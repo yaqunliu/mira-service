@@ -158,20 +158,30 @@ async def create_shot(
     )
 
 
-@router.put("/{shot_uuid}")
+@router.put("/{shot_identifier}")
 async def update_shot(
-    shot_uuid: str,
+    shot_identifier: str,
     shot_data: ShotUpdate,
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """更新分镜"""
-    result = await db.execute(
-        select(Shot).options(
-            selectinload(Shot.scene).selectinload(Scene.creation),
-            selectinload(Shot.characters)
-        ).where(Shot.uuid == shot_uuid)
-    )
+    # 支持 uuid 或 shot_id（数字）
+    if shot_identifier.isdigit():
+        result = await db.execute(
+            select(Shot).options(
+                selectinload(Shot.scene).selectinload(Scene.creation),
+                selectinload(Shot.characters)
+            ).where(Shot.shot_id == int(shot_identifier))
+        )
+    else:
+        result = await db.execute(
+            select(Shot).options(
+                selectinload(Shot.scene).selectinload(Scene.creation),
+                selectinload(Shot.characters)
+            ).where(Shot.uuid == shot_identifier)
+        )
+    
     shot = result.scalar_one_or_none()
     
     if not shot:
@@ -199,9 +209,46 @@ async def update_shot(
         shot.characters = characters
     if shot_data.video_duration is not None:
         shot.video_duration = shot_data.video_duration
-    
+
+    # 如果更新了图片提示词，需要清空相关的视频提示词，以便重新生成
+    if shot_data.image_prompt is not None:
+        shot.image_prompt = shot_data.image_prompt
+        # 清空视频提示词，因为图片提示词已变更
+        if shot.extra_data and "video_prompt" in shot.extra_data:
+            shot.extra_data["video_prompt"] = ""
+            shot.extra_data["cut_method"] = ""
+            shot.extra_data["cut_reason"] = ""
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(shot, "extra_data")
+            logger.info(f"分镜 {shot_uuid} 图片提示词已更新，清空关联的视频提示词")
+
+    # 直接更新图片URL
+    if shot_data.image_url is not None:
+        shot.image_url = shot_data.image_url
+
+    # 直接更新视频URL
+    if shot_data.video_url is not None:
+        logger.info(f"Updating video_url for shot {shot_identifier}: {shot_data.video_url}")
+        shot.video_url = shot_data.video_url
+
+    # 直接更新音频URL
+    if shot_data.audio_url is not None:
+        logger.info(f"Updating audio_url for shot {shot_identifier}: {shot_data.audio_url}")
+        shot.audio_url = shot_data.audio_url
+
+    # 如果直接更新了 extra_data 中的视频提示词相关字段
+    if shot_data.extra_data is not None:
+        if shot.extra_data is None:
+            shot.extra_data = {}
+        for key, value in shot_data.extra_data.items():
+            shot.extra_data[key] = value
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(shot, "extra_data")
+
     await db.commit()
     await db.refresh(shot)
+    
+    logger.info(f"Shot {shot_identifier} updated successfully. video_url: {shot.video_url}, audio_url: {shot.audio_url}")
     
     return success_response(
         data=ShotResponse.model_validate(shot),
@@ -427,11 +474,13 @@ async def regenerate_shot_image(
     if force_regen_prompt and not shot.description:
         raise HTTPException(status_code=400, detail="分镜没有描述且没有现有提示词，无法生成提示词")
 
-    if not force_regen_prompt:
-        if frame_type in ("start", "both") and not shot.image_prompt:
-            raise HTTPException(status_code=400, detail="分镜没有首帧提示词，无法生成首帧图片")
-        if frame_type in ("end", "both") and not (shot.extra_data or {}).get("end_frame_image_prompt"):
-            raise HTTPException(status_code=400, detail="分镜没有尾帧提示词，无法生成尾帧图片")
+    # 如果没有提示词，自动设置 force_regen_prompt 为 True 来生成提示词
+    if frame_type in ("start", "both") and not shot.image_prompt:
+        force_regen_prompt = True
+        logger.info(f"分镜 {shot_uuid} 首帧提示词为空，将自动生成提示词")
+    if frame_type in ("end", "both") and not (shot.extra_data or {}).get("end_frame_image_prompt"):
+        force_regen_prompt = True
+        logger.info(f"分镜 {shot_uuid} 尾帧提示词为空，将自动生成提示词")
 
     if frame_type in ("start", "both"):
         shot.image_url = None

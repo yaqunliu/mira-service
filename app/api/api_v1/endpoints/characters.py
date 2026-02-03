@@ -86,9 +86,9 @@ async def get_character(
     )
 
 
-@router.put("/{character_uuid}")
+@router.put("/{character_identifier}")
 async def update_character(
-    character_uuid: str,
+    character_identifier: str,
     character_update: CharacterUpdate,
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
@@ -97,9 +97,16 @@ async def update_character(
     from app.models.character import Character
     from app.models.creation import Creation
     
-    result = await db.execute(
-        select(Character).where(Character.uuid == character_uuid)
-    )
+    # 支持 uuid 或 character_id（数字）
+    if character_identifier.isdigit():
+        result = await db.execute(
+            select(Character).where(Character.character_id == int(character_identifier))
+        )
+    else:
+        result = await db.execute(
+            select(Character).where(Character.uuid == character_identifier)
+        )
+    
     character = result.scalar_one_or_none()
     
     if not character:

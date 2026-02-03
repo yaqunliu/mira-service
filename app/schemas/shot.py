@@ -85,6 +85,7 @@ class ShotUpdate(BaseModel):
     image_prompt: Optional[str] = None
     image_url: Optional[str] = None
     audio_url: Optional[str] = None
+    video_url: Optional[str] = None  # 视频URL
     video_duration: Optional[int] = None
     associated_characters: Optional[List[int]] = Field(None, alias="associated_characters")  # 更新关联的角色
     scene_id: Optional[int] = None  # 更新关联的场景

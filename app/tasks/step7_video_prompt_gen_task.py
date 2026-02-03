@@ -170,9 +170,9 @@ def generate_video_prompt_task(
             video_only = True
             logger.info(f"由于视频模型为 {video_model}，自动切换至纯视频提示词范式")
 
-        # 生成视频提示词 - 使用独立的工具函数（V5版本返回字典）
+        # 生成视频提示词 - 使用独立的工具函数（V6版本返回字典，三维度格式：画面+背景音+台词）
         if video_only:
-            logger.info(f"使用【纯视频】提示词范式生成提示词 (V5)")
+            logger.info(f"使用【纯视频】提示词范式生成提示词 (V6)")
             prompt_result = generate_video_only_prompt_util(
                 llm_model=llm_model,
                 shot=shot,
@@ -182,7 +182,7 @@ def generate_video_prompt_task(
                 end_frame_prompt=end_frame_prompt
             )
         else:
-            logger.info(f"使用【标准】提示词范式生成提示词 (V5)")
+            logger.info(f"使用【标准】提示词范式生成提示词 (V6)")
             prompt_result = generate_video_prompt_util(
                 llm_model=llm_model,
                 shot=shot,

@@ -2,7 +2,7 @@
 视频提示词生成工具
 从 VideoGenerationPipeline 中提取出来的独立函数
 
-V5 版本：支持首尾帧驱动的视频提示词生成
+V6 版本：三维度专业版（画面+背景音+台词）
 """
 import json
 from typing import List, Dict, Optional
@@ -21,7 +21,7 @@ def generate_video_prompt(
     end_frame_prompt: str = None
 ) -> Dict[str, str]:
     """
-    使用 LLM 生成详细的视频提示词（V5：返回包含 video_prompt 和 cut_method 的字典）
+    使用 LLM 生成详细的视频提示词（V6：三维度专业版 - 画面+背景音+台词）
     
     Args:
         llm_model: LLM 模型名称
@@ -91,7 +91,7 @@ def _generate_video_prompt_internal(
     paradigm: str = "standard"
 ) -> Dict[str, str]:
     """
-    内部统一生成函数（V5版本）
+    内部统一生成函数（V6版本 - 三维度专业版）
     
     Returns:
         Dict: {"video_prompt": str, "cut_method": str, "cut_reason": str}
@@ -99,19 +99,19 @@ def _generate_video_prompt_internal(
     # 初始化 AIClient
     ai_client = AIClient(llm_model_name=llm_model)
 
-    # 加载提示词模板（V5）
+    # 加载提示词模板（V6 - 三维度专业版）
     try:
-        template_version = "video_generation_v5"
+        template_version = "video_generation_v6"
         full_template = ai_client._load_prompt_template(template_version)
         logger.info(f"成功加载视频提示词模板 {template_version}")
-        
-        # V5 模板结构：整个模板作为系统提示词，输入数据通过变量替换
+
+        # V6 模板结构：整个模板作为系统提示词，输入数据通过变量替换
         system_prompt = full_template
 
         # 如果是 video_only 模式，在系统提示词后面添加额外指令
         if paradigm == "video_only":
-            system_prompt += "\n\n**重要：当前为纯视频模式，请忽略所有台词和声音描述，不要在输出中包含任何音频相关的特征或内容。在生成的 video_prompt 中不要包含任何语音或对话相关的描述。**"
-            
+            system_prompt += "\n\n**重要：当前为纯视频模式，请忽略所有台词和声音描述，背景音维度仅保留环境音层，人物对白维度全部标注（无）。在生成的 video_prompt 中不要包含任何语音或对话相关的描述。**"
+
     except Exception as e:
         logger.error(f"加载视频提示词模板 {template_version} 失败: {e}")
         raise Exception(f"视频提示词模板加载失败，请检查 {template_version}.md 是否存在: {str(e)}")
@@ -167,7 +167,7 @@ def _generate_video_prompt_internal(
             {"role": "user", "content": prompt}
         ]
         
-        logger.info(f"[{paradigm}] AI INPUT PROMPT for V5...")
+        logger.info(f"[{paradigm}] AI INPUT PROMPT for V6...")
         response = ai_client.chat_completion(messages=messages, model=llm_model)
         response_content = response.get("content", "").strip()
 

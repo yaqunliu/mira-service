@@ -284,6 +284,22 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
                     })
                     flag_modified(shot, 'extra_data')
 
+                    # 保存视频版本历史到 status_detail
+                    from datetime import datetime
+                    if not shot.status_detail:
+                        shot.status_detail = {}
+                    if 'video_historys' not in shot.status_detail:
+                        shot.status_detail['video_historys'] = []
+                    
+                    shot.status_detail['video_historys'].append({
+                        'image_url': silent_video_url,
+                        'audio_url': audio_url,
+                        'video_prompt': video_prompt,
+                        'video_model': video_model,
+                        'created_at': datetime.utcnow().isoformat()
+                    })
+                    flag_modified(shot, 'status_detail')
+
                     # 更新 status_detail：视频生成成功
                     from datetime import datetime
                     if not shot.status_detail:
@@ -325,6 +341,7 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
                     logger.error(f"视频生成积分扣除失败: {str(points_error)}")
                     # 积分扣除失败不影响视频生成，记录错误后继续
                 db.flush()
+                db.commit()  # 提交当前分镜的更改，确保 version_history 被保存
                 generated_count += 1
                 
                 # 更新任务进度
@@ -776,6 +793,21 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
                 'created_at': datetime.utcnow().isoformat()
             })
             flag_modified(shot, 'extra_data')
+
+            # 保存视频版本历史到 status_detail
+            if not shot.status_detail:
+                shot.status_detail = {}
+            if 'video_historys' not in shot.status_detail:
+                shot.status_detail['video_historys'] = []
+            
+            shot.status_detail['video_historys'].append({
+                'image_url': silent_video_url,
+                'audio_url': audio_url,
+                'video_prompt': video_prompt,
+                'video_model': video_model,
+                'created_at': datetime.utcnow().isoformat()
+            })
+            flag_modified(shot, 'status_detail')
 
             # 更新 status_detail：视频生成成功
             shot.status_detail['video_status'] = 'completed'

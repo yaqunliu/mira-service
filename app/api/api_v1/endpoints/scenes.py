@@ -239,20 +239,30 @@ async def get_scene_with_shots(
     )
 
 
-@router.put("/{scene_uuid}")
+@router.put("/{scene_identifier}")
 async def update_scene(
-    scene_uuid: str,
+    scene_identifier: str,
     scene_update: SceneUpdate,
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """更新场景信息"""
-    result = await db.execute(
-        select(Scene).options(
-            selectinload(Scene.shots),
-            selectinload(Scene.creation)
-        ).where(Scene.uuid == scene_uuid)
-    )
+    # 支持 uuid 或 scene_id（数字）
+    if scene_identifier.isdigit():
+        result = await db.execute(
+            select(Scene).options(
+                selectinload(Scene.shots),
+                selectinload(Scene.creation)
+            ).where(Scene.scene_id == int(scene_identifier))
+        )
+    else:
+        result = await db.execute(
+            select(Scene).options(
+                selectinload(Scene.shots),
+                selectinload(Scene.creation)
+            ).where(Scene.uuid == scene_identifier)
+        )
+    
     scene = result.scalar_one_or_none()
     
     if not scene:
@@ -282,6 +292,9 @@ async def update_scene(
             scene.extra_data = {}
         scene.extra_data["image_prompt"] = scene_update.image_prompt
         flag_modified(scene, "extra_data")
+    
+    if scene_update.image_url is not None:
+        scene.image_url = scene_update.image_url
     
     await db.commit()
     await db.refresh(scene)
