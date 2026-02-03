@@ -592,6 +592,7 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
                 break
             
             # 执行工具调用
+            should_break = False
             for tool_call in response.tool_calls:
                 tool_name = tool_call["name"]
                 tool_args = tool_call["args"]
@@ -608,11 +609,13 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
                     
                     if action == "route_to_worker":
                         next_worker = tool_result.get("worker")
-                        logger.info(f"[Node] supervisor: 调度到 Worker {next_worker}")
+                        logger.info(f"[Node] supervisor: 调度到 Worker {next_worker}，退出循环")
+                        should_break = True  # 决定调度后立即退出
                         
                     elif action == "request_confirmation":
                         needs_input = True
                         final_response = tool_result.get("message", "")
+                        should_break = True  # 需要用户确认后立即退出
                         
                     # 更新缓存
                     if tool_name == "query_production_status":
@@ -623,6 +626,10 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
                     content=str(tool_result),
                     tool_call_id=tool_id,
                 ))
+            
+            # 如果需要退出循环（调度到 Worker 或需要用户确认）
+            if should_break:
+                break
         
         # 如果循环结束还没有最终回复，再调用一次生成总结
         if not final_response:
