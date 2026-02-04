@@ -417,56 +417,6 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
             "errors": state.get("errors", []) + [{"node": "supervisor", "error": str(e)}],
         }
 
-
-def _build_regenerate_response(state: ComicDramaState, result: Dict[str, Any], production_cache: Dict) -> Dict[str, Any]:
-    """构建 regenerate 处理结果的响应"""
-    if result.get("needs_confirmation"):
-        assistant_message = {
-            "role": "assistant",
-            "content": result.get("message"),
-            "timestamp": datetime.now().isoformat(),
-            "node": "supervisor",
-            "metadata": {"mode": "needs_confirmation"},
-        }
-        
-        state_messages = list(state.get("messages", []))
-        state_messages.append(assistant_message)
-        
-        return {
-            "messages": state_messages,
-            "response_text": result.get("message"),
-            "production_cache": production_cache,
-            "next_worker": None,
-            "needs_input": True,
-            "pending_confirmation": True,
-            "ambiguous_matches": result.get("ambiguous_matches"),
-            "updated_at": datetime.now().isoformat(),
-        }
-    
-    assistant_message = {
-        "role": "assistant",
-        "content": result.get("message", "重新生成任务已提交"),
-        "timestamp": datetime.now().isoformat(),
-        "node": "supervisor",
-        "metadata": {
-            "mode": "direct_regenerate",
-            "regenerated_count": result.get("regenerated_count", 0),
-        },
-    }
-    
-    state_messages = list(state.get("messages", []))
-    state_messages.append(assistant_message)
-    
-    return {
-        "messages": state_messages,
-        "response_text": result.get("message"),
-        "production_cache": production_cache,
-        "next_worker": None,
-        "needs_input": False,
-        "updated_at": datetime.now().isoformat(),
-    }
-
-
 async def _execute_supervisor_tool(tools: List, tool_name: str, tool_args: Dict[str, Any]) -> Any:
     """执行 Supervisor 工具"""
     for tool in tools:

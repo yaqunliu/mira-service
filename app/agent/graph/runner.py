@@ -197,6 +197,7 @@ class GraphRunner:
             # 需要发送完成消息的节点（只有这些节点发送自动完成消息）
             # script_analysis 不在此列表，因为它的 response_text 已包含结果
             COMPLETE_MESSAGE_NODES = {
+                "script_analysis": "✅ 剧本分析完成！",
                 "asset_generation": "✅ 图片生成任务已提交！",
                 "storyboard_generation": "✅ 分镜脚本生成完成！",
                 "audio_processing": "✅ 音频处理完成！",
@@ -207,7 +208,7 @@ class GraphRunner:
             # 只有外层包装节点发送，内部子图节点（如 script_analysis）不在此列表
             # storyboard_creation 需要发送完成消息到 SSE
             # supervisor: 重新生成等操作需要展示结果给用户
-            RESPONSE_TEXT_NODES = {"human_review", "clarify", "status_query", "task_execution", "storyboard_creation", "asset_generation", "supervisor"}
+            RESPONSE_TEXT_NODES = {"human_review", "clarify", "status_query", "task_execution", "supervisor"}
             
             # 配置递归深度限制
             from app.core.config import settings
@@ -435,42 +436,7 @@ class GraphRunner:
                 {"error": str(e), "node": current_node},
                 checkpoint_type="error",
             )
-    
-    async def _generate_simple_response(
-        self,
-        user_message: str,
-        state: Dict[str, Any],
-    ) -> str:
-        """
-        生成简单响应（用于初始集成测试）
-        
-        TODO: 替换为完整的 Graph 执行流程
-        """
-        # 简单的关键词匹配响应
-        message_lower = user_message.lower()
-        
-        if any(word in message_lower for word in ["进度", "状态", "怎么样"]):
-            return "📊 正在查询创作进度...\n\n当前阶段：初始化\n整体进度：待开始\n\n如需了解详情，请告诉我您想查看哪个部分。"
-        
-        elif any(word in message_lower for word in ["生成", "创建", "开始"]):
-            return "🎨 收到！我将为您执行生成任务。\n\n请确认您要生成的内容，我会为您处理。"
-        
-        elif any(word in message_lower for word in ["修改", "改一下", "调整"]):
-            return "✏️ 好的，请告诉我您想修改的具体内容和目标。"
-        
-        elif any(word in message_lower for word in ["帮助", "怎么用", "功能"]):
-            return """🤖 我是漫剧创作助手，可以帮您：
 
-1. **查询进度** - 了解当前创作状态
-2. **生成资产** - 包括角色图、场景图、分镜
-3. **修改内容** - 调整提示词、重新生成
-4. **一键创作** - 自动完成整个流程
-
-请告诉我您需要什么帮助？"""
-        
-        else:
-            return f"收到您的消息：「{user_message[:50]}...」\n\n请问您是想查询进度、生成内容，还是有其他需求呢？"
-    
     async def get_status(self) -> Dict[str, Any]:
         """获取当前状态摘要"""
         last_state = await self.persistence.load_checkpoint()
