@@ -4,6 +4,10 @@ Agent 专用视频生成 Tasks
 ⚠️ 核心原则：这些 Tasks 独立于现有的 step8_video_gen_task 等任务
 """
 
+import os
+import tempfile
+import uuid
+from datetime import datetime
 from typing import Dict, Any, Optional
 
 from app.core.celery_app import celery_app
@@ -467,6 +471,7 @@ def agent_generate_single_shot_video_task(
             extra_data = shot.extra_data or {}
             video_prompt = extra_data.get("video_prompt")
             generation_mode = extra_data.get("generation_mode", "first_frame_only")
+            logger.info(f"[AgentVideoTask] 分镜 {shot_id} 生成参数: {extra_data}")
             
             if not video_prompt:
                 raise ValueError(f"分镜 {shot_id} 没有视频提示词")
@@ -539,36 +544,200 @@ def agent_generate_single_shot_video_task(
         )
         
         logger.info(f"[AgentVideoTask] 视频生成成功: {video_url[:80]}...")
-        
-        # 更新数据库
-        with get_sync_session() as db:
-            shot = db.query(Shot).filter(Shot.shot_id == shot_id).first()
-            if shot:
-                shot.video_url = video_url
+
+        # 分离音频视频并上传到 US3
+        self.update_state(state='PROGRESS', meta={
+            'progress': 80,
+            'status': '分离音视频并上传...',
+            'shot_id': shot_id,
+        })
+
+        try:
+            # 下载视频到临时文件
+            import requests
+            from app.utils.ffmpeg_utils import FFmpegUtils
+            from app.utils.upload_helper import upload_helper
+
+            with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_video_file:
+                temp_video_path = temp_video_file.name
+
+            # 下载视频
+            response = requests.get(video_url, timeout=300)
+            response.raise_for_status()
+            with open(temp_video_path, 'wb') as f:
+                f.write(response.content)
+
+            logger.info(f"[AgentVideoTask] 视频下载成功: {temp_video_path}")
+
+            # 分离音频和视频
+            video_silent_path = temp_video_path.replace('.mp4', '_silent.mp4')
+            audio_path = temp_video_path.replace('.mp4', '.mp3')
+
+            FFmpegUtils.separate_audio_video(
+                input_video_path=temp_video_path,
+                output_video_path=video_silent_path,
+                output_audio_path=audio_path
+            )
+
+            logger.info(f"[AgentVideoTask] 音视频分离成功: 视频={video_silent_path}, 音频={audio_path}")
+
+            # 获取 creation 和 user 信息用于上传
+            with get_sync_session() as db:
+                creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+                if not creation:
+                    raise ValueError(f"创作不存在: {creation_uuid}")
+
+                user_uuid = str(creation.owner_id)
+                shot = db.query(Shot).filter(Shot.shot_id == shot_id).first()
+                if not shot:
+                    raise ValueError(f"分镜不存在: {shot_id}")
+
+                # 上传静音视频到 US3
+                video_filename = f"{shot_id}_{uuid.uuid4().hex[:8]}_silent.mp4"
+                video_upload_result = upload_helper.upload_file(
+                    local_file=video_silent_path,
+                    user_uuid=user_uuid,
+                    file_type="videos",
+                    filename=video_filename
+                )
+
+                if not video_upload_result.get("success"):
+                    raise Exception(f"视频上传失败: {video_upload_result.get('message')}")
+
+                video_us3_url = video_upload_result["external_url"]
+                logger.info(f"[AgentVideoTask] 视频上传成功: {video_us3_url}")
+
+                # 上传音频到 US3（如果音频存在）
+                audio_us3_url = None
+                if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                    audio_filename = f"{shot_id}_{uuid.uuid4().hex[:8]}.mp3"
+                    audio_upload_result = upload_helper.upload_file(
+                        local_file=audio_path,
+                        user_uuid=user_uuid,
+                        file_type="audio",
+                        filename=audio_filename
+                    )
+
+                    if audio_upload_result.get("success"):
+                        audio_us3_url = audio_upload_result["external_url"]
+                        logger.info(f"[AgentVideoTask] 音频上传成功: {audio_us3_url}")
+
+                # 生成版本历史记录
+                version_id = str(uuid.uuid4())
+                version_record = {
+                    "version_id": version_id,
+                    "video_url": video_us3_url,
+                    "audio_url": audio_us3_url,
+                    "video_model": model,
+                    "video_duration": duration,
+                    "created_at": datetime.utcnow().isoformat(),
+                }
+
+                # 更新数据库
+                if not shot.extra_data:
+                    shot.extra_data = {}
+
+                # 添加版本历史
+                if "version_history" not in shot.extra_data:
+                    shot.extra_data["version_history"] = []
+                shot.extra_data["version_history"].append(version_record)
+
+                # 添加生成记录
+                if "generation_records" not in shot.extra_data:
+                    shot.extra_data["generation_records"] = []
+
+                generation_record = {
+                    "record_id": str(uuid.uuid4()),
+                    "type": "video",
+                    "model": model,
+                    "duration": duration,
+                    "generation_mode": generation_mode,
+                    "original_url": video_url,
+                    "video_url": video_us3_url,
+                    "audio_url": audio_us3_url,
+                    "created_at": datetime.utcnow().isoformat(),
+                    "version_id": version_id,
+                }
+                shot.extra_data["generation_records"].append(generation_record)
+
+                # 更新 shot 主字段
+                shot.video_url = video_us3_url
+                shot.audio_url = audio_us3_url
                 shot.video_status = "completed"
-                
+
                 if not shot.status_detail:
                     shot.status_detail = {}
                 shot.status_detail["video_status"] = "completed"
                 shot.status_detail["video_completed_at"] = datetime.utcnow().isoformat()
+                shot.status_detail["video_us3_url"] = video_us3_url
+                shot.status_detail["audio_us3_url"] = audio_us3_url
+
+                flag_modified(shot, "extra_data")
                 flag_modified(shot, "status_detail")
                 db.commit()
-            
-            if freeze_record_id:
-                try:
-                    PointsService.confirm_frozen_points(db, freeze_record_id)
-                except Exception as confirm_err:
-                    logger.error(f"[AgentVideoTask] 积分确认失败: {confirm_err}")
-        
-        total_time = time.time() - start_time
-        return {
-            "shot_id": shot_id,
-            "success": True,
-            "video_url": video_url,
-            "duration": duration,
-            "generation_mode": generation_mode,
-            "total_time": total_time,
-        }
+
+                logger.info(f"[AgentVideoTask] 数据库更新成功: shot_id={shot_id}, video_url={video_us3_url}, audio_url={audio_us3_url}")
+
+                # 确认积分
+                if freeze_record_id:
+                    try:
+                        PointsService.confirm_frozen_points(db, freeze_record_id)
+                    except Exception as confirm_err:
+                        logger.error(f"[AgentVideoTask] 积分确认失败: {confirm_err}")
+
+            # 清理临时文件
+            try:
+                for temp_file in [temp_video_path, video_silent_path, audio_path]:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                        logger.debug(f"[AgentVideoTask] 清理临时文件: {temp_file}")
+            except Exception as cleanup_err:
+                logger.warning(f"[AgentVideoTask] 清理临时文件失败: {cleanup_err}")
+
+            total_time = time.time() - start_time
+            return {
+                "shot_id": shot_id,
+                "success": True,
+                "video_url": video_us3_url,
+                "audio_url": audio_us3_url,
+                "duration": duration,
+                "generation_mode": generation_mode,
+                "version_id": version_id,
+                "total_time": total_time,
+            }
+
+        except Exception as process_err:
+            logger.error(f"[AgentVideoTask] 音视频处理失败: {process_err}")
+            # 如果处理失败，仍然保存原始视频 URL
+            with get_sync_session() as db:
+                shot = db.query(Shot).filter(Shot.shot_id == shot_id).first()
+                if shot:
+                    shot.video_url = video_url
+                    shot.video_status = "completed"
+                    if not shot.status_detail:
+                        shot.status_detail = {}
+                    shot.status_detail["video_status"] = "completed"
+                    shot.status_detail["video_completed_at"] = datetime.utcnow().isoformat()
+                    shot.status_detail["video_processing_error"] = str(process_err)
+                    flag_modified(shot, "status_detail")
+                    db.commit()
+
+                if freeze_record_id:
+                    try:
+                        PointsService.confirm_frozen_points(db, freeze_record_id)
+                    except Exception as confirm_err:
+                        logger.error(f"[AgentVideoTask] 积分确认失败: {confirm_err}")
+
+            total_time = time.time() - start_time
+            return {
+                "shot_id": shot_id,
+                "success": True,
+                "video_url": video_url,
+                "duration": duration,
+                "generation_mode": generation_mode,
+                "processing_error": str(process_err),
+                "total_time": total_time,
+            }
         
     except Exception as e:
         error_message = str(e)

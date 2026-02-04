@@ -44,7 +44,7 @@ class AssetRegenerator:
 
     def _get_character_prompt(self, user_message: str, available_resources: str) -> str:
         """获取角色分析提示词"""
-        return f"""你是角色重新生成分析专家。请分析用户的需求，确定要重新生成哪些角色。
+        return f"""你是角色重新生成分析专家。请分析用户的需求，确定要重新生成哪些角色以及生成什么内容。
 
 用户消息：{user_message}
 
@@ -53,7 +53,8 @@ class AssetRegenerator:
 
 请分析并返回 JSON：
 {{
-    "resource_type": "image",
+    "resource_type": "image" | "image_prompt",
+    "operation_type": "regenerate" | "modify",
     "scope": "specific" | "all" | "failed",
     "targets": [
         {{
@@ -62,24 +63,68 @@ class AssetRegenerator:
             "params": {{}}
         }}
     ],
+    "modification_type": "simplify" | "detail" | "fix" | "style" | "custom" | null,
+    "feedback": "用户的修改意见或null",
     "reason": "分析说明"
 }}
 
 判断规则：
-1. 用户提到角色名如"主角"、"小明" -> targets=[{{"type": "name", "value": "主角"}}]
-2. 用户说"全部角色"、"所有角色" -> scope="all"
-3. 用户说"生成失败的角色"、"重试失败" -> scope="failed"
+
+1. **resource_type 判断**（重要！）：
+   - 如果用户消息包含"图片提示词"或"图像提示词" -> "image_prompt"
+   - 如果用户消息包含"图片"、"图像"（但不包含"提示词"）-> "image"
+   - 默认 "image"
+
+2. **operation_type 判断**（关键！）：
+   - **重新生成(regenerate)**: 用户只是要求"重新生成提示词"，没有提出任何具体修改意见
+     - 例如："重新生成阿九的图片提示词"
+     - 这种情况下，operation_type="regenerate"
+   - **修改(modify)**: 用户提出了具体的修改意见或要求
+     - 例如："重新生成阿九的图片提示词，让他更可爱一点"
+     - 例如："修改阿九的提示词，把胸口的玉改成铃铛"
+     - 这种情况下，operation_type="modify"
+
+3. **modification_type 判断**（仅当 operation_type="modify" 时）：
+   - "simplify": 用户要求简化、精简提示词
+   - "detail": 用户要求添加更多细节
+   - "fix": 用户指出错误并要求修正
+   - "style": 用户要求改变风格
+   - "custom": 用户提出了具体的自定义修改要求
+
+4. **feedback 提取**（仅当 operation_type="modify" 时）：
+   - 提取用户的具体修改意见，作为字符串
+   - 例如："让他更可爱一点，胸口挂着铃铛"
+
+5. **targets 提取**：
+   - 用户提到角色名如"主角"、"小明"、"阿九-青年" -> targets=[{{"type": "name", "value": "角色名"}}]
+
+6. **scope 判断**：
+   - 用户说"全部角色"、"所有角色" -> scope="all"
+   - 用户说"生成失败的角色"、"重试失败" -> scope="failed"
+   - 指定具体角色名 -> scope="specific"
+
+**关键区分（重要！）**：
+- "生成图片" = 生成图片文件（resource_type="image"）
+- "生成图片提示词" = 生成图片文字提示词（resource_type="image_prompt"）
+- "重新生成"（无修改意见）= 使用模板从头生成新提示词（operation_type="regenerate"）
+- "修改"（有修改意见）= 基于原提示词进行修改（operation_type="modify"）
 
 示例：
-- "重新生成主角的图片" -> {{"scope": "specific", "targets": [{{"type": "name", "value": "主角"}}]}}
-- "重新生成所有角色" -> {{"scope": "all", "targets": []}}
-- "重试失败的角色生成" -> {{"scope": "failed", "targets": []}}
 
-只返回 JSON，不要其他内容。"""
+**重新生成示例（无修改意见）**：
+- "重新生成主角的图片提示词" -> {{"resource_type": "image_prompt", "operation_type": "regenerate", "scope": "specific", "targets": [{{"type": "name", "value": "主角"}}], "modification_type": null, "feedback": null}}
+- "给阿九-青年重新生成图片提示词" -> {{"resource_type": "image_prompt", "operation_type": "regenerate", "scope": "specific", "targets": [{{"type": "name", "value": "阿九-青年"}}], "modification_type": null, "feedback": null}}
+
+**修改示例（有修改意见）**：
+- "重新生成阿九的图片提示词，让他更可爱萌一点" -> {{"resource_type": "image_prompt", "operation_type": "modify", "scope": "specific", "targets": [{{"type": "name", "value": "阿九"}}], "modification_type": "custom", "feedback": "让他更可爱萌一点"}}
+- "修改阿九的提示词，把胸口的玉改成铃铛" -> {{"resource_type": "image_prompt", "operation_type": "modify", "scope": "specific", "targets": [{{"type": "name", "value": "阿九"}}], "modification_type": "fix", "feedback": "把胸口的玉改成铃铛"}}
+- "简化主角的提示词，太长了" -> {{"resource_type": "image_prompt", "operation_type": "modify", "scope": "specific", "targets": [{{"type": "name", "value": "主角"}}], "modification_type": "simplify", "feedback": "太长了，简化一下"}}
+
+只返回纯 JSON，不要任何其他内容，不要添加 ```json 代码块标签，不要添加任何解释说明。"""
 
     def _get_scene_prompt(self, user_message: str, available_resources: str) -> str:
         """获取场景分析提示词"""
-        return f"""你是场景重新生成分析专家。请分析用户的需求，确定要重新生成哪些场景。
+        return f"""你是场景重新生成分析专家。请分析用户的需求，确定要重新生成哪些场景以及生成什么内容。
 
 用户消息：{user_message}
 
@@ -88,7 +133,7 @@ class AssetRegenerator:
 
 请分析并返回 JSON：
 {{
-    "resource_type": "image",
+    "resource_type": "image" | "image_prompt",
     "scope": "specific" | "all" | "failed",
     "targets": [
         {{
@@ -101,16 +146,28 @@ class AssetRegenerator:
 }}
 
 判断规则：
-1. 用户提到场景名如"客厅"、"战场" -> targets=[{{"type": "name", "value": "客厅"}}]
-2. 用户说"全部场景"、"所有场景" -> scope="all"
-3. 用户说"生成失败的场景"、"重试失败" -> scope="failed"
+
+1. **resource_type 判断**（直接关键词匹配）：
+   - 如果用户消息包含"图片提示词"或"图像提示词" -> "image_prompt"
+   - 如果用户消息包含"图片"、"图像"（但不包含"提示词"）-> "image"
+   - 默认 "image"
+
+2. **targets 提取**：
+   - 用户提到场景名如"客厅"、"战场"、"场景5" -> targets=[{{"type": "name", "value": "客厅"}}]
+   - 注意："场景5"表示名称是"场景5"或编号为5的场景
+
+3. **scope 判断**：
+   - 用户说"全部场景"、"所有场景" -> scope="all"
+   - 用户说"生成失败的场景"、"重试失败" -> scope="failed"
+   - 指定具体场景名 -> scope="specific"
 
 示例：
-- "重新生成客厅的图片" -> {{"scope": "specific", "targets": [{{"type": "name", "value": "客厅"}}]}}
-- "重新生成所有场景" -> {{"scope": "all", "targets": []}}
-- "重试失败的场景生成" -> {{"scope": "failed", "targets": []}}
+- "重新生成客厅的图片" -> {{"resource_type": "image", "scope": "specific", "targets": [{{"type": "name", "value": "客厅"}}]}}
+- "重新生成客厅的图片提示词" -> {{"resource_type": "image_prompt", "scope": "specific", "targets": [{{"type": "name", "value": "客厅"}}]}}
+- "重新生成所有场景" -> {{"resource_type": "image", "scope": "all", "targets": []}}
+- "重试失败的场景生成" -> {{"resource_type": "image", "scope": "failed", "targets": []}}
 
-只返回 JSON，不要其他内容。"""
+只返回纯 JSON，不要任何其他内容，不要添加 ```json 代码块标签，不要添加任何解释说明。"""
 
     def _get_shot_prompt(self, user_message: str, available_resources: str) -> str:
         """获取分镜分析提示词"""
@@ -118,12 +175,12 @@ class AssetRegenerator:
 
 用户消息：{user_message}
 
-可用分镜：
+可用分镜列表（格式：分镜编号: 标题）：
 {available_resources}
 
 请分析并返回 JSON：
 {{
-    "resource_type": "image" | "video",
+    "resource_type": "image" | "image_prompt" | "video" | "video_prompt",
     "scope": "specific" | "all" | "failed",
     "targets": [
         {{
@@ -140,35 +197,46 @@ class AssetRegenerator:
 
 判断规则：
 
-1. **resource_type 判断**：
-   - 提到"视频" -> "video"
-   - 提到"图片"、"图像"、"帧" -> "image"
+1. **resource_type 判断**（直接关键词匹配）：
+   - 如果用户消息包含"图片提示词" -> "image_prompt"
+   - 如果用户消息包含"视频提示词"或"视频生成提示词" -> "video_prompt"
+   - 如果用户消息包含"生成视频"或"视频生成"（但不包含"提示词"）-> "video"
+   - 如果用户消息包含"图片"、"图像"、"帧"（但不包含"提示词"）-> "image"
    - 默认 "image"
 
-2. **frame_type 判断**（仅图片时）：
+2. **frame_type 判断**（仅 image 或 image_prompt 时）：
    - 提到"尾帧"、"结束帧"、"最后一帧" -> "end"
    - 提到"首帧"、"开始帧"、"第一帧" -> "start"
    - 提到"图片"但没指定首尾 -> "both"
 
-3. **generation_mode 判断**（仅视频时）：
-   - 提到"只用首帧"、"首帧生成" -> "first_frame_only"
-   - 提到"首尾帧"、"全部" -> "first_last_frame"
-   - 默认 "first_last_frame"
+3. **generation_mode 判断**（仅 video 时，重要！）：
+   - 提到"只用首帧"、"首帧生成"、"首帧模式" -> "first_frame_only"
+   - 提到"首尾帧"、"双帧"、"全部" 或 没有指定模式 -> "first_last_frame"
+   - **默认必须设置为 "first_last_frame"**
+   - **当 resource_type 为 "video" 时，必须在 params 中设置 generation_mode 字段**
 
-4. **targets 提取**：
-   - "分镜1" -> {{"type": "number", "value": 1, "params": {{}}}}
+4. **targets 提取**（重要！）：
+   - 用户说"分镜1" -> 匹配编号为 1 的分镜
+   - 用户说"分镜11" -> 匹配编号为 11 的分镜（不是 1）
    - "分镜1生成首帧" -> {{"type": "number", "value": 1, "params": {{"frame_type": "start"}}}}
-   - "分镜1和2生成视频" -> [
-       {{"type": "number", "value": 1, "params": {{"generation_mode": "first_last_frame"}}}},
-       {{"type": "number", "value": 2, "params": {{"generation_mode": "first_last_frame"}}}}
-     ]
+   - "分镜1生成视频" -> {{"type": "number", "value": 1, "params": {{"generation_mode": "first_last_frame"}}}}（video 必须带 generation_mode）
+   - "分镜1重新生成视频提示词" -> {{"type": "number", "value": 1, "params": {{}}}}（video_prompt 不需要 generation_mode）
 
 5. **scope 判断**：
    - "全部"、"所有" -> "all"
    - "失败的"、"重试" -> "failed"
    - 指定编号 -> "specific"
 
-重要：如果不同分镜有不同的参数（如分镜1要首帧，分镜2要尾帧），请在 targets 中为每个分镜指定 params。
+**关键区分（重要！）**：
+- "生成图片" = 生成图片文件（resource_type="image"）
+- "生成图片提示词" = 生成图片文字提示词（resource_type="image_prompt"）
+- "生成视频" = 生成视频文件（resource_type="video"）
+- "生成视频提示词" = 生成视频文字提示词（resource_type="video_prompt"）
+
+**重要提示**：
+- 请仔细查看"可用分镜列表"中的分镜编号
+- 用户提到的分镜编号必须与列表中的编号完全匹配
+- 当生成视频时（resource_type="video"），**必须**在 params 中设置 "generation_mode" 字段
 
 示例：
 - "给我的分镜1重新生成首帧，分镜2重新生成尾帧" -> 
@@ -178,6 +246,33 @@ class AssetRegenerator:
     "targets": [
       {{"type": "number", "value": 1, "params": {{"frame_type": "start"}}}},
       {{"type": "number", "value": 2, "params": {{"frame_type": "end"}}}}
+    ]
+  }}
+
+- "给分镜1生成首帧提示词" ->
+  {{
+    "resource_type": "image_prompt",
+    "scope": "specific",
+    "targets": [
+      {{"type": "number", "value": 1, "params": {{"frame_type": "start"}}}}
+    ]
+  }}
+
+- "给分镜1生成视频" ->
+  {{
+    "resource_type": "video",
+    "scope": "specific",
+    "targets": [
+      {{"type": "number", "value": 1, "params": {{"generation_mode": "first_last_frame"}}}}
+    ]
+  }}
+
+- "给分镜5重新生成视频提示词" ->
+  {{
+    "resource_type": "video_prompt",
+    "scope": "specific",
+    "targets": [
+      {{"type": "number", "value": 5, "params": {{}}}}
     ]
   }}
 
@@ -198,7 +293,7 @@ class AssetRegenerator:
     "targets": []
   }}
 
-只返回 JSON，不要其他内容。"""
+只返回纯 JSON，不要任何其他内容，不要添加 ```json 代码块标签，不要添加任何解释说明。"""
 
     async def run(self, state: ComicDramaState) -> Dict[str, Any]:
         """
@@ -216,8 +311,12 @@ class AssetRegenerator:
         logger.info(f"[AssetRegenerator] 开始分析: '{user_message}'")
 
         try:
-            # 1. 检测目标类型（角色/场景/分镜）
-            target_type = self._detect_target_type(user_message)
+            # 1. 先获取所有角色和场景名称，用于智能检测目标类型
+            character_names = await self._get_character_names(creation_uuid)
+            scene_names = await self._get_scene_names(creation_uuid)
+
+            # 2. 检测目标类型（角色/场景/分镜）- 使用名称匹配
+            target_type = self._detect_target_type(user_message, character_names, scene_names)
             logger.info(f"[AssetRegenerator] 检测到目标类型: {target_type}")
 
             # 2. 获取可用资源列表
@@ -236,8 +335,34 @@ class AssetRegenerator:
 
             # 4. 根据分析结果执行重新生成
             resource_type = analysis.get("resource_type", "image")
+            operation_type = analysis.get("operation_type", "regenerate")  # regenerate / modify
             scope = analysis.get("scope", "specific")
             targets = analysis.get("targets", [])
+            modification_type = analysis.get("modification_type")  # simplify / detail / fix / style / custom
+            feedback = analysis.get("feedback")  # 用户的修改意见
+
+            # 检查是否是提示词重新生成请求（image_prompt / video_prompt / prompt_regenerate）
+            if resource_type in ["image_prompt", "video_prompt", "prompt_regenerate"]:
+                # 调用 PromptRegenerator 处理提示词重新生成或修改
+                from app.agent.graph.nodes.teams.prompt_regenerator import PromptRegenerator
+                prompt_regenerator = PromptRegenerator()
+
+                # 构建新的 state 传递给 PromptRegenerator
+                # 添加所有必要信息，包括 operation_type 和修改相关参数
+                prompt_state = {
+                    "creation_uuid": creation_uuid,
+                    "user_message": user_message,
+                    "messages": state.get("messages", []),
+                    "target_type": target_type,  # character / scene / shot
+                    "resource_type": resource_type,  # image_prompt / video_prompt
+                    "operation_type": operation_type,  # regenerate / modify
+                    "targets": targets,  # 目标列表
+                    "modification_type": modification_type,  # simplify / detail / fix / style / custom
+                    "feedback": feedback,  # 用户的修改意见
+                }
+
+                result = await prompt_regenerator.run(prompt_state)
+                return result
 
             # 5. 确定要重新生成的资源
             if scope == "failed":
@@ -300,10 +425,65 @@ class AssetRegenerator:
                 "success": False,
             }
 
-    def _detect_target_type(self, user_message: str) -> str:
-        """检测目标类型（角色/场景/分镜）"""
+    async def _get_character_names(self, creation_uuid: str) -> List[str]:
+        """获取所有角色名称"""
+        from app.agent.tools.db_tools import query_characters
+        try:
+            result = await query_characters.ainvoke({
+                "creation_uuid": creation_uuid,
+                "include_images": False,
+            })
+            characters = result.get("characters", [])
+            names = []
+            for c in characters:
+                name = c.get("name", "")
+                if name:
+                    names.append(name)
+                    # 也添加名称的变体（如"阿九-青年" -> "阿九"）
+                    if "-" in name:
+                        names.append(name.split("-")[0])
+            return names
+        except Exception as e:
+            logger.warning(f"[AssetRegenerator] 获取角色名称失败: {e}")
+            return []
+
+    async def _get_scene_names(self, creation_uuid: str) -> List[str]:
+        """获取所有场景名称"""
+        from app.agent.tools.db_tools import query_scenes
+        try:
+            result = await query_scenes.ainvoke({"creation_uuid": creation_uuid})
+            scenes = result.get("scenes", [])
+            return [s.get("title", "") for s in scenes if s.get("title")]
+        except Exception as e:
+            logger.warning(f"[AssetRegenerator] 获取场景名称失败: {e}")
+            return []
+
+    def _detect_target_type(self, user_message: str, character_names: List[str] = None, scene_names: List[str] = None) -> str:
+        """检测目标类型（角色/场景/分镜）
+
+        优先级：
+        1. 检查消息中是否包含角色名称
+        2. 检查消息中是否包含场景名称
+        3. 检查关键词（角色/人物/场景/背景）
+        4. 默认分镜
+        """
         msg_lower = user_message.lower()
 
+        # 1. 检查是否包含角色名称
+        if character_names:
+            for name in character_names:
+                if name and name.lower() in msg_lower:
+                    logger.info(f"[AssetRegenerator] 检测到角色名称 '{name}' 在消息中")
+                    return "character"
+
+        # 2. 检查是否包含场景名称
+        if scene_names:
+            for name in scene_names:
+                if name and name.lower() in msg_lower:
+                    logger.info(f"[AssetRegenerator] 检测到场景名称 '{name}' 在消息中")
+                    return "scene"
+
+        # 3. 检查关键词
         if "角色" in msg_lower or "人物" in msg_lower:
             return "character"
         elif "场景" in msg_lower or "背景" in msg_lower:
@@ -321,13 +501,15 @@ class AssetRegenerator:
         if target_type == "shot":
             shots_result = await query_shots.ainvoke({
                 "creation_uuid": creation_uuid,
-                "include_details": False,
+                "include_details": True,  # 需要详细信息包括 shot_number
             })
             if shots_result.get("shots"):
                 shots = shots_result["shots"]
                 resources_desc.append(f"分镜: {len(shots)} 个")
                 for s in shots[:10]:
-                    resources_desc.append(f"  - 分镜{s.get('shot_number')}: {s.get('title', '无标题')}")
+                    shot_number = s.get('shot_number') or s.get('sequence') or s.get('id', '?')
+                    title = s.get('title') or s.get('description', '无标题')[:20] if s.get('description') else '无标题'
+                    resources_desc.append(f"  - 分镜{shot_number}: {title}")
 
         elif target_type == "character":
             chars_result = await query_characters.ainvoke({
@@ -374,6 +556,9 @@ class AssetRegenerator:
             import re
 
             content = response.content.strip()
+
+            content = self._clean_response_content(content)
+
             # 从 markdown 代码块提取
             if "```" in content:
                 match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
@@ -407,6 +592,13 @@ class AssetRegenerator:
             # 检测 resource_type
             resource_type = "video" if "视频" in user_message else "image"
 
+            # 检测 generation_mode（仅视频时）
+            generation_mode = "first_last_frame"  # 默认使用首尾帧模式
+            if "只用首帧" in user_message or "首帧生成" in user_message or "单帧" in user_message:
+                generation_mode = "first_frame_only"
+            elif "首尾帧" in user_message or "双帧" in user_message:
+                generation_mode = "first_last_frame"
+
             # 提取分镜编号和参数
             # 模式: "分镜1...首帧"
             pattern = r'分镜\s*(\d+)[^。]*?(首帧|尾帧|开始帧|结束帧)?'
@@ -417,6 +609,11 @@ class AssetRegenerator:
                 frame_type_keyword = match[1]
 
                 params = {}
+
+                # 视频模式添加 generation_mode
+                if resource_type == "video":
+                    params["generation_mode"] = generation_mode
+
                 if frame_type_keyword in ["首帧", "开始帧"]:
                     params["frame_type"] = "start"
                 elif frame_type_keyword in ["尾帧", "结束帧"]:
@@ -432,10 +629,14 @@ class AssetRegenerator:
                 # 简单提取编号
                 numbers = re.findall(r'分镜\s*(\d+)', user_message)
                 for n in numbers:
+                    params = {}
+                    # 视频模式添加 generation_mode
+                    if resource_type == "video":
+                        params["generation_mode"] = generation_mode
                     targets.append({
                         "type": "number",
                         "value": int(n),
-                        "params": {}
+                        "params": params
                     })
 
             return {
@@ -446,29 +647,106 @@ class AssetRegenerator:
             }
 
         elif target_type == "character":
-            # 提取角色名
-            names = re.findall(r'角色["\']?(\w+)["\']?', user_message)
-            for name in names:
-                targets.append({
-                    "type": "name",
-                    "value": name,
-                    "params": {}
-                })
+            # 检测 resource_type
+            resource_type = "image_prompt" if "提示词" in user_message else "image"
+
+            # 检测 operation_type：是否有修改意见
+            # 简单的启发式：如果消息长度超过基本请求，可能包含修改意见
+            operation_type = "regenerate"
+            modification_type = None
+            feedback = None
+
+            # 检测常见的修改关键词
+            modify_keywords = ["改成", "改为", "变成", "添加", "删除", "去掉", "加上", "更", "有点", "太", "不够"]
+            has_modify_intent = any(kw in user_message for kw in modify_keywords)
+
+            if has_modify_intent:
+                operation_type = "modify"
+                modification_type = "custom"
+                # 提取修改意见（简单实现：取"重新生成"之后的内容）
+                if "重新生成" in user_message:
+                    parts = user_message.split("重新生成", 1)
+                    if len(parts) > 1:
+                        feedback = parts[1].strip("，。！？")
+
+            # 兜底：如果没有提取到角色名，尝试从消息中提取
+            if not targets:
+                # 尝试匹配 "给 XXX 重新生成" 或 "重新生成 XXX 的图片"
+                patterns = [
+                    r'给\s*([^\s]+(?:-[^\s]+)?)\s*重新生成',
+                    r'重新生成\s*([^\s]+(?:-[^\s]+)?)\s*的?图片',
+                    r'([^\s]+(?:-[^\s]+)?)\s*的?图片.*重新生成',
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, user_message)
+                    if match:
+                        name = match.group(1).strip()
+                        if name and name not in ["全部", "所有", "失败"]:
+                            targets.append({
+                                "type": "name",
+                                "value": name,
+                                "params": {}
+                            })
+                            break
 
             return {
-                "resource_type": "image",
+                "resource_type": resource_type,
+                "operation_type": operation_type,
                 "scope": scope,
                 "targets": targets,
+                "modification_type": modification_type,
+                "feedback": feedback,
                 "reason": "兜底分析",
             }
 
         else:  # scene
+            # 检测 resource_type
+            resource_type = "image_prompt" if "提示词" in user_message else "image"
+
+            # 检测 operation_type
+            operation_type = "regenerate"
+            modification_type = None
+            feedback = None
+
+            modify_keywords = ["改成", "改为", "变成", "添加", "删除", "去掉", "加上", "更", "有点", "太", "不够"]
+            if any(kw in user_message for kw in modify_keywords):
+                operation_type = "modify"
+                modification_type = "custom"
+
             return {
-                "resource_type": "image",
+                "resource_type": resource_type,
+                "operation_type": operation_type,
                 "scope": scope,
                 "targets": targets,
+                "modification_type": modification_type,
+                "feedback": feedback,
                 "reason": "兜底分析",
             }
+
+    def _clean_response_content(self, content: str) -> str:
+        """清理 AI 响应内容，移除多余标签"""
+        import re
+
+        content = content.strip()
+
+        content = re.sub(r'^<[^>]*>\s*', '', content)
+        content = re.sub(r'\s*</[^>]*>$', '', content)
+
+        content = re.sub(r'^<text[^>]*>\s*', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'\s*</text>$', '', content, flags=re.IGNORECASE)
+
+        content = re.sub(r'^<think[^>]*>\s*', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'\s*<\/think>$', '', content, flags=re.IGNORECASE)
+
+        content = re.sub(r'^<reasoning[^>]*>\s*', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'\s*<\/reasoning>$', '', content, flags=re.IGNORECASE)
+
+        content = re.sub(r'^与分析.*?相关\s*', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'\s*与分析.*?相关$', '', content, flags=re.IGNORECASE)
+
+        content = content.strip()
+
+        return content
 
     async def _get_failed_resources(
         self,

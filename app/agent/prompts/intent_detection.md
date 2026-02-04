@@ -39,7 +39,7 @@ max_tokens: 800
 - `auto_create` - 一键自动创作
 
 **资产操作：**
-- `modify_prompt` - 修改提示词
+- `regenerate_prompt` - 重新生成提示词（根据反馈优化提示词）
 - `regenerate` - 重新生成（角色图/场景图/分镜图/视频）
 - `retry_failed` - 重试失败的生成任务
 - `delete` - 删除资产

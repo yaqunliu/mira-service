@@ -93,13 +93,13 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = ""
     LLM_MODEL_NAME: str = ""
-    LLM_MODEL_DEFAULT: str = "zai-org/glm-4.6"  # Agent 对话默认 LLM 模型
+    LLM_MODEL_DEFAULT: str = "Qwen/Qwen-Plus"  # Agent 对话默认 LLM 模型
 
     # 专用LLM模型配置
-    LLM_MODEL_CHARACTER_ANALYSIS: str = "zai-org/glm-4.6"  # 人物解析模型
-    LLM_MODEL_SCENE_ANALYSIS: str = "zai-org/glm-4.6"  # 场景解析模型
-    LLM_MODEL_SHOT_ANALYSIS: str = "zai-org/glm-4.6"  # 分镜解析模型
-    LLM_MODEL_SCRIPT_GENERATION: str = "zai-org/glm-4.6"  # 剧本生成模型
+    LLM_MODEL_CHARACTER_ANALYSIS: str = "Qwen/Qwen-Plus"  # 人物解析模型
+    LLM_MODEL_SCENE_ANALYSIS: str = "Qwen/Qwen-Plus"  # 场景解析模型
+    LLM_MODEL_SHOT_ANALYSIS: str = "Qwen/Qwen-Plus"  # 分镜解析模型
+    LLM_MODEL_SCRIPT_GENERATION: str = "Qwen/Qwen-Plus"  # 剧本生成模型
     LLM_MODEL_PROMPT_GENERATION: str = "Qwen/Qwen-Plus"  # 提示词生成模型
 
     # 图片生成模型配置

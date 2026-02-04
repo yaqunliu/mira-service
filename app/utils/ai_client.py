@@ -52,10 +52,10 @@ class AIClient:
             image_model_name: 图片模型名称（向后兼容，已废弃）
             text_to_image_model: 文生图模型名称（用于生成角色图片）
             image_to_image_model: 图生图模型名称（用于生成分镜图片）
-            character_analysis_model: 人物解析模型，默认使用 zai-org/glm-4.6
-            scene_analysis_model: 场景解析模型，默认使用 zai-org/glm-4.6
-            shot_analysis_model: 分镜解析模型，默认使用 zai-org/glm-4.6
-            script_generation_model: 剧本生成模型，默认使用 zai-org/glm-4.6
+            character_analysis_model: 人物解析模型，默认使用 Qwen/Qwen-Plus
+            scene_analysis_model: 场景解析模型，默认使用 Qwen/Qwen-Plus
+            shot_analysis_model: 分镜解析模型，默认使用 Qwen/Qwen-Plus
+            script_generation_model: 剧本生成模型，默认使用 Qwen/Qwen-Plus
             prompt_generation_model: 提示词生成模型，默认使用 Qwen/Qwen-Plus
             ark_api_key: 火山云AI API 密钥，默认从配置读取
             ark_base_url: 火山云AI API 基础 URL，默认从配置读取
@@ -74,15 +74,15 @@ class AIClient:
         self.image_model_name = image_model_name or self.text_to_image_model
 
         # 专用LLM模型配置
-        # self.character_analysis_model = character_analysis_model or llm_model_name or getattr(settings, 'LLM_MODEL_CHARACTER_ANALYSIS', 'zai-org/glm-4.6')
-        # self.scene_analysis_model = scene_analysis_model or llm_model_name or getattr(settings, 'LLM_MODEL_SCENE_ANALYSIS', 'zai-org/glm-4.6')
-        # self.shot_analysis_model = shot_analysis_model or llm_model_name or getattr(settings, 'LLM_MODEL_SHOT_ANALYSIS', 'zai-org/glm-4.6')
-        # self.script_generation_model = script_generation_model or llm_model_name or getattr(settings, 'LLM_MODEL_SCRIPT_GENERATION', 'zai-org/glm-4.6')
+        # self.character_analysis_model = character_analysis_model or llm_model_name or getattr(settings, 'LLM_MODEL_CHARACTER_ANALYSIS', 'Qwen/Qwen-Plus')
+        # self.scene_analysis_model = scene_analysis_model or llm_model_name or getattr(settings, 'LLM_MODEL_SCENE_ANALYSIS', 'Qwen/Qwen-Plus')
+        # self.shot_analysis_model = shot_analysis_model or llm_model_name or getattr(settings, 'LLM_MODEL_SHOT_ANALYSIS', 'Qwen/Qwen-Plus')
+        # self.script_generation_model = script_generation_model or llm_model_name or getattr(settings, 'LLM_MODEL_SCRIPT_GENERATION', 'Qwen/Qwen-Plus')
         # self.prompt_generation_model = prompt_generation_model or llm_model_name or getattr(settings, 'LLM_MODEL_PROMPT_GENERATION', 'Qwen/Qwen-Plus')
-        self.character_analysis_model = character_analysis_model or getattr(settings, 'LLM_MODEL_CHARACTER_ANALYSIS', 'zai-org/glm-4.6')
-        self.scene_analysis_model = scene_analysis_model or getattr(settings, 'LLM_MODEL_SCENE_ANALYSIS', 'zai-org/glm-4.6')
-        self.shot_analysis_model = shot_analysis_model or getattr(settings, 'LLM_MODEL_SHOT_ANALYSIS', 'zai-org/glm-4.6')
-        self.script_generation_model = script_generation_model or getattr(settings, 'LLM_MODEL_SCRIPT_GENERATION', 'zai-org/glm-4.6')
+        self.character_analysis_model = character_analysis_model or getattr(settings, 'LLM_MODEL_CHARACTER_ANALYSIS', 'Qwen/Qwen-Plus')
+        self.scene_analysis_model = scene_analysis_model or getattr(settings, 'LLM_MODEL_SCENE_ANALYSIS', 'Qwen/Qwen-Plus')
+        self.shot_analysis_model = shot_analysis_model or getattr(settings, 'LLM_MODEL_SHOT_ANALYSIS', 'Qwen/Qwen-Plus')
+        self.script_generation_model = script_generation_model or getattr(settings, 'LLM_MODEL_SCRIPT_GENERATION', 'Qwen/Qwen-Plus')
         self.prompt_generation_model = prompt_generation_model or getattr(settings, 'LLM_MODEL_PROMPT_GENERATION', 'Qwen/Qwen-Plus')
 
         # 火山云AI配置

@@ -96,7 +96,7 @@ async def _fetch_all_resources(creation_uuid: str, target: str) -> List[Dict[str
             "creation_uuid": creation_uuid,
             "include_details": False
         })
-        logger.info(f"[_fetch_all_resources] query_shots 结果: {result}")
+        # logger.info(f"[_fetch_all_resources] query_shots 结果: {result}")
         # query_shots 返回 {"total": n, "shots": [...]}
         shots = result.get("shots", []) if result else []
         logger.info(f"[_fetch_all_resources] 返回 {len(shots)} 个分镜")

@@ -102,7 +102,7 @@ def _handle_action_intent(action: str, state: ComicDramaState) -> Dict[str, Any]
     action_to_intent = {
         "approve": ("confirm", "confirm"),
         "reject": ("cancel", "confirm"),
-        "modify": ("modify_prompt", "asset_action"),
+        "modify": ("regenerate_prompt", "asset_action"),
         "retry": ("regenerate", "asset_action"),
         "skip": ("confirm", "confirm"),
         "abort": ("cancel", "confirm"),

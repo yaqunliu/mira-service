@@ -564,7 +564,7 @@ class AgentPromptGenerator:
 _prompt_generator = None
 
 
-def get_prompt_generator() -> AgentPromptGenerator:
+def get_prompt_generator() ->   PromptGenerator:
     """获取提示词生成器实例"""
     global _prompt_generator
     if _prompt_generator is None:

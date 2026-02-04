@@ -8,6 +8,8 @@
 from typing import Dict, Any, Optional, Literal
 from datetime import datetime
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
@@ -303,6 +305,9 @@ async def submit_generation(
                 generation_mode = mode if mode in ["first_frame_only", "first_last_frame"] else "first_frame_only"
                 extra_data["generation_mode"] = generation_mode
                 resource.extra_data = extra_data
+
+                # 标记修改
+                flag_modified(resource, "extra_data")
                 await db.commit()
                 
                 logger.info(f"[Regenerate Tool] 调用 agent_generate_single_shot_video_task: shot_id={target_id}, generation_mode={generation_mode}, mode={mode}")

@@ -254,7 +254,9 @@ async def query_shots(
                 {
                     "id": s.shot_id,
                     "shot_id": s.shot_id,  # 同时提供两个字段名供兼容
+                    "shot_number": s.shot_number,  # 添加 shot_number 字段
                     "sequence": s.shot_number,
+                    "title": s.title,  # 添加 title 字段
                     "scene_id": s.scene_id,
                     "description": s.description if include_details else None,
                     "narration": s.narration if include_details else None,

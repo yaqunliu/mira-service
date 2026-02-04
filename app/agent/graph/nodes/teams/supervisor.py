@@ -271,6 +271,37 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
                 "next_worker": None,  # AssetRegenerator 直接完成，不需要调度 Worker
                 "updated_at": datetime.now().isoformat(),
             }
+
+        # ===== 特殊处理：regenerate_prompt 意图交给 PromptRegenerator =====
+        if detected_intent == "regenerate_prompt" and creation_uuid:
+            logger.info("[Node] supervisor: 检测到 regenerate_prompt 意图，交给 PromptRegenerator 处理")
+
+            from app.agent.graph.nodes.teams.prompt_regenerator import regenerate_prompts
+
+            result = await regenerate_prompts(state)
+
+            assistant_message = {
+                "role": "assistant",
+                "content": result.get("response_text", "提示词重新生成完成"),
+                "timestamp": datetime.now().isoformat(),
+                "node": "supervisor",
+                "metadata": {
+                    "mode": "prompt_regenerator",
+                    "regenerated_count": result.get("regenerated_count", 0),
+                    "success": result.get("success", False),
+                },
+            }
+
+            state_messages = list(state.get("messages", []))
+            state_messages.append(assistant_message)
+
+            return {
+                "messages": state_messages,
+                "response_text": result.get("response_text"),
+                "production_cache": production_cache,
+                "next_worker": None,  # PromptRegenerator 直接完成，不需要调度 Worker
+                "updated_at": datetime.now().isoformat(),
+            }
         
         # ===== 单次 LLM 决策 =====
         tools = _get_supervisor_tools()
