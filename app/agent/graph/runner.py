@@ -180,16 +180,16 @@ class GraphRunner:
             # - supervisor: 重新生成等操作需要展示给用户
             # 注意：status_query 改为 ReAct Agent 后，不应流式输出中间思考过程
             # 注意：asset_generation 不在此列表，因为它的 LLM 输出是内部提示词，不应显示给用户
-            USER_VISIBLE_NODES = {"clarify", "task_execution", "human_review", "supervisor"}
+            USER_VISIBLE_NODES = {"query_status", "clarify", "human_review", "supervisor"}
             
             # 不应发送 response_text 的节点（分析/内部过程）
-            INTERNAL_NODES = {"storyboard_generation", "audio_processing", "video_generation", "editing", "entry", "intent_detection", "router", "response_formatter", "stage_complete"}
+            INTERNAL_NODES = {"storyboard_creation", "audio_processing", "video_generation", "editing", "entry", "intent_detection", "router", "response_formatter", "stage_complete"}
             
             # 需要发送开始消息的节点（用户可见的阶段）
             START_MESSAGE_NODES = {
                 "script_analysis": "📖 好的，正在分析剧本内容，识别角色和场景信息，请稍候...",
                 "asset_generation": "🎨 好的，开始为您生成角色和场景图片，请稍候...",
-                "storyboard_generation": "🎬 好的，正在生成分镜脚本，请稍候...",
+                "storyboard_creation": "🎬 好的，正在生成分镜脚本，请稍候...",
                 "audio_processing": "🎤 好的，正在处理音频内容，请稍候...",
                 "video_generation": "🎥 好的，正在生成视频内容，请稍候...",
             }
@@ -199,7 +199,7 @@ class GraphRunner:
             COMPLETE_MESSAGE_NODES = {
                 "script_analysis": "✅ 剧本分析完成！",
                 "asset_generation": "✅ 图片生成任务已提交！",
-                "storyboard_generation": "✅ 分镜脚本生成完成！",
+                "storyboard_creation": "✅ 分镜脚本生成完成！",
                 "audio_processing": "✅ 音频处理完成！",
                 "video_generation": "✅ 视频生成完成！",
             }

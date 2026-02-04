@@ -27,9 +27,11 @@ WorkerType = Literal["script_analyst", "asset_designer", "storyboard_director", 
 
 SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作流程。
 
-## 核心任务
+## 你的决策选项（三选一）
 
-根据用户请求和当前阶段，**立即使用 route_to_worker 调度到对应 Worker**。
+1. **调度 Worker**：用户需要执行任务时 → 调用 `route_to_worker`
+2. **请求确认**：需要用户决定下一步时 → 调用 `request_user_confirmation`
+3. **直接回复**：回答问题/任务完成/无需操作时 → 直接用自然语言回复，不调用任何工具
 
 ## Workers 列表
 
@@ -41,10 +43,18 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 ## 默认工作流
 
 用户说"开始创作"或"继续"时，按当前阶段执行：
-- INIT → 调度 script_analyst
+- INIT / SCRIPT_UPLOADED → 调度 script_analyst
 - SCRIPT_ANALYZED → 调度 asset_designer
-- ASSETS_GENERATED → 调度 storyboard_director
-- STORYBOARD_CREATED → 调度 video_editor
+- ASSETS_READY → 调度 storyboard_director
+- STORYBOARD_READY → 调度 video_editor
+- VIDEO_READY / COMPLETED → 直接回复"创作已完成！"
+
+## 何时"直接回复"（不调用工具）
+
+- 用户问问题（"进度怎样？"、"帮我看看..."）
+- 阶段任务已完成，提示用户结果
+- 无法理解用户意图时
+- 任务完成后的总结
 
 ## 当前状态
 
@@ -56,9 +66,10 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 
 {user_message}
 
-## 重要
+## 注意
 
-**直接调用 route_to_worker 调度任务，不要先查询状态。**
+- 如果 Worker 刚完成任务，直接告知用户结果，不要再调度 Worker
+- 如果当前阶段已是 COMPLETED，直接回复，不要调度任何 Worker
 """
 
 
@@ -366,9 +377,10 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
                     if isinstance(tool_result, dict):
                         updated_cache = tool_result
         else:
-            # 无工具调用，LLM 直接回复
+            # 无工具调用，LLM 直接回复 → 表示本轮结束
             final_response = response.content
-            logger.info("[Node] supervisor: LLM 直接回答")
+            needs_input = True  # 直接回复意味着需要用户继续提问
+            logger.info("[Node] supervisor: LLM 直接回答，本轮结束")
         
         # 构建返回结果
         assistant_message = {
