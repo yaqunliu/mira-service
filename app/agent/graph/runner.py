@@ -208,7 +208,7 @@ class GraphRunner:
             # 只有外层包装节点发送，内部子图节点（如 script_analysis）不在此列表
             # storyboard_creation 需要发送完成消息到 SSE
             # supervisor: 重新生成等操作需要展示结果给用户
-            RESPONSE_TEXT_NODES = {"human_review", "clarify", "status_query", "task_execution", "supervisor"}
+            RESPONSE_TEXT_NODES = {"human_review", "clarify", "status_query", "supervisor"}
             
             # 配置递归深度限制
             from app.core.config import settings

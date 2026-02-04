@@ -213,6 +213,7 @@ class ComicDramaState(TypedDict, total=False):
     production_cache: Dict[str, Any]  # 生产状态缓存（避免重复 DB 查询）
     next_worker: Optional[str]  # Supervisor 调度的下一个 Worker
     needs_input: bool  # 是否需要用户输入
+    worker_result: Optional[Dict[str, Any]]  # Worker 执行结果（用于 Supervisor 决策）
 
     # ==================== 剧本分析结果 ====================
     script_summary: Optional[str]  # 剧本摘要

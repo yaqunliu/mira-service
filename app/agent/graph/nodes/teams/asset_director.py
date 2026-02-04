@@ -189,6 +189,7 @@ Anime style, high quality animation illustration, wide shot, 16:9 widescreen com
                     "production_stage": ProductionStage.ASSETS_READY,
                     "production_progress": production_progress,
                     "pending_approval": True,
+                    "needs_input": True,
                     "checkpoint_data": {
                         "checkpoint_type": "asset_finalization",
                         "data": {"characters_generated": 0, "scenes_generated": 0},
@@ -265,6 +266,7 @@ Anime style, high quality animation illustration, wide shot, 16:9 widescreen com
                         "production_stage": ProductionStage.ASSETS_READY,
                         "production_progress": production_progress,
                         "pending_approval": True,
+                        "needs_input": True,
                         "checkpoint_data": {
                             "checkpoint_type": "asset_finalization",
                             "data": {"characters_generated": chars_with_images, "scenes_generated": scenes_with_images},

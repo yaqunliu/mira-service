@@ -5,7 +5,7 @@ Supervisor Node - 生产子图的 ReAct 调度中心
 实现默认工作流和灵活的任务调度。
 """
 
-from typing import Dict, Any, List, Optional, Literal
+from typing import Dict, Any, List, Optional, Literal, TypedDict
 from datetime import datetime
 
 from langchain_openai import ChatOpenAI
@@ -80,6 +80,34 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 - 如果 Worker 刚完成任务，直接告知用户结果，不要再调度 Worker
 - 如果当前阶段已是 COMPLETED，直接回复，不要调度任何 Worker
 """
+
+
+# ==================== 工作流配置 ====================
+
+class WorkerConfig(TypedDict):
+    completion_behavior: Literal["auto_proceed", "pause_for_review"]
+    next_worker: Optional[str]  # 自动流转时的目标 Worker
+
+# 工作流配置：定义每个 Worker 完成后的行为
+WORKFLOW_CONFIG: Dict[str, WorkerConfig] = {
+    "script_analyst": {
+        "completion_behavior": "auto_proceed",
+        "next_worker": "asset_designer",  # 剧本分析后 -> 自动进资产生成
+    },
+    "asset_designer": {
+        "completion_behavior": "pause_for_review",  # 资产生成后 -> 暂停审核
+        "next_worker": None,
+    },
+    "storyboard_director": {
+        "completion_behavior": "pause_for_review",  # 分镜生成后 -> 暂停审核
+        "next_worker": None,
+    },
+    "asset_regenerator": {
+        "completion_behavior": "pause_for_review",  # 重新生成后 -> 暂停审核
+        "next_worker": None,
+    },
+    # 默认行为：pause_for_review
+}
 
 
 # ==================== Supervisor 专用工具 ====================
@@ -244,24 +272,48 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
     
     try:
         # ===== 特殊处理：Worker 已完成任务 =====
-        # 如果 Worker 返回 completed=True，直接使用 Worker 的 response_text，不再调用 LLM
+        # 使用 WORKFLOW_CONFIG 判断 Worker 完成后的行为
         if worker_result and worker_result.get("completed"):
             worker_name = worker_result.get("worker", "unknown")
-            worker_response = worker_result.get("response_text", "")
+            config = WORKFLOW_CONFIG.get(worker_name, {})
+            completion_behavior = config.get("completion_behavior", "pause_for_review")
             
-            logger.info(f"[Node] supervisor: Worker {worker_name} 已完成，直接使用其响应")
+            logger.info(f"[Node] supervisor: Worker {worker_name} 完成，配置行为: {completion_behavior}")
             
-            # 直接结束，不再调度
-            return {
-                "response_text": worker_response,
-                "production_cache": production_cache,
-                "next_worker": None,
-                "needs_input": True,  # 标记需要用户输入来继续
-                "worker_result": None,  # 清空
-                "updated_at": datetime.now().isoformat(),
-            }
+            if completion_behavior == "auto_proceed":
+                # 自动流转
+                next_worker = config.get("next_worker")
+                if next_worker:
+                    logger.info(f"[Node] supervisor: 自动流转到下一阶段 -> {next_worker} (跳过 LLM)")
+                    return {
+                        "response_text": worker_result.get("response_text", ""), # 保留上一阶段的响应
+                        "production_cache": production_cache,
+                        "next_worker": next_worker,
+                        "needs_input": False, # 不需要用户输入
+                        "worker_result": None, # 清空
+                        "updated_at": datetime.now().isoformat(),
+                    }
+                else:
+                    # 如果没有指定 next_worker，则继续执行 LLM 决策
+                    logger.info("[Node] supervisor: 未指定下一阶段 Worker，继续 LLM 决策")
+                    pass
+            else:
+                # 暂停等待审核 (pause_for_review)
+                worker_response = worker_result.get("response_text", "")
+                
+                logger.info(f"[Node] supervisor: 暂停等待审核，直接使用 Worker 响应")
+                
+                # 直接结束，不再调度
+                return {
+                    "response_text": worker_response,
+                    "production_cache": production_cache,
+                    "next_worker": None,
+                    "needs_input": True,  # 标记需要用户输入来继续
+                    "worker_result": None,  # 清空
+                    "updated_at": datetime.now().isoformat(),
+                }
         
-        # ===== 单次 LLM 决策 =====
+        # ===== 特殊处理：regenerate 意图交给 AssetRegenerator =====
         tools = _get_supervisor_tools()
         
         llm = ChatOpenAI(

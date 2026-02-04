@@ -49,7 +49,6 @@ INTENT_TARGET_STAGE = {
 
 # 需要人工审核的阶段
 REVIEW_STAGES = {
-    ProductionStage.SCRIPT_ANALYZED,
     ProductionStage.ASSETS_READY,
     ProductionStage.STORYBOARD_READY,
     ProductionStage.AUDIO_READY,
@@ -398,139 +397,33 @@ async def script_analysis_node(state: ComicDramaState) -> Dict[str, Any]:
     """
     剧本分析节点
     
-    职责：
+    委托给 ScriptAnalystNode 执行完整流程：
     1. 检查剧本是否存在
     2. 调用 LLM 分析剧本，提取角色和场景
     3. 将结果写入数据库
     4. 返回分析结果供用户确认
     """
-    logger.info("[SubgraphNode] script_analysis: 执行剧本分析")
+    logger.info("[SubgraphNode] script_analysis: 委托给 ScriptAnalystNode")
     
-    # 检查是否有剧本
-    script_text = state.get("script_text")
-    if not script_text:
-        return {
-            "response_text": "请先在左侧上传您的剧本文件，或在剧本编辑区粘贴剧本内容。",
-            "production_stage": ProductionStage.INIT,
-            "needs_input": True,
-            "board_actions": [
-                {"type": "switch_view", "target": "script"},
-                {"type": "highlight", "target": "upload_button"},
-            ],
-        }
+    from app.agent.graph.nodes.teams.script_analyst import ScriptAnalystNode
     
-    creation_uuid = state.get("creation_uuid")
-    creation_id = state.get("creation_id")
+    analyst = ScriptAnalystNode()
+    result = await analyst.run(state)
     
-    # 添加阶段开始消息到 messages
-    from datetime import datetime
-    messages = list(state.get("messages", []))
-    messages.append({
-        "role": "assistant",
-        "content": "📖 好的，正在分析剧本内容，识别角色和场景信息，请稍候...",
-        "timestamp": datetime.now().isoformat(),
-        "node": "script_analysis",
-        "metadata": {"stage": "script_analysis", "action": "start"},
-    })
+    # 添加 worker_result 供 Supervisor 使用
+    total_chars = len(result.get("characters", []))
+    total_scenes = len(result.get("scenes", []))
+    response_text = result.get("response_text", f"识别到 {total_chars} 个角色和 {total_scenes} 个场景")
     
-    try:
-        # 1. 使用 ScriptAnalystNode 进行 LLM 分析（不依赖 Tool）
-        from app.agent.graph.nodes.teams.script_analyst import ScriptAnalystNode
-        
-        analyst = ScriptAnalystNode()
-        analysis_result = await analyst.run(state)
-        
-        if not analysis_result.get("success"):
-            return {
-                "response_text": f"剧本分析失败：{analysis_result.get('error', '未知错误')}",
-                "production_stage": ProductionStage.INIT,
-                "errors": [{"message": analysis_result.get("error")}],
-            }
-        
-        characters = analysis_result.get("characters", [])
-        scenes = analysis_result.get("scenes", [])
-        
-        # 2. 调用 Tool 将角色和场景写入数据库
-        from app.agent.tools.db_tools import save_characters, save_scenes
-        
-        char_result = await save_characters.ainvoke({
-            "creation_uuid": creation_uuid,
-            "characters": characters,
-        })
-        
-        scene_result = await save_scenes.ainvoke({
-            "creation_uuid": creation_uuid,
-            "scenes": scenes,
-        })
-        
-        saved_characters = char_result.get("saved", [])
-        skipped_characters = char_result.get("skipped", [])
-        saved_scenes = scene_result.get("saved", [])
-        skipped_scenes = scene_result.get("skipped", [])
-        
-        logger.info(f"[SubgraphNode] Tool 调用完成: 新增角色={saved_characters}, 新增场景={saved_scenes}")
-        
-        # 3. 更新进度
-        production_progress = dict(state.get("production_progress", {}))
-        production_progress["script_analysis"] = {
-            "status": "completed",
-            "characters": len(characters),
-            "scenes": len(scenes),
-        }
-        
-        # 4. 构建响应（不显示原始分析数据，只显示友好提示）
-        total_chars = len(saved_characters) + len(skipped_characters)
-        total_scenes = len(saved_scenes) + len(skipped_scenes)
-        
-        response = f"""✅ **资产分析完成！**
-
-📊 **分析结果**：
-- 👥 识别到 **{total_chars}** 个角色
-- 🎬 识别到 **{total_scenes}** 个场景
-
-角色和场景已保存到左侧看板，请确认是否准确。
-
----
-🎨 **下一步**：是否开始为角色和场景生成图片？"""
-        
-        return {
-            "response_text": response,
-            "production_stage": ProductionStage.SCRIPT_ANALYZED,
-            "production_progress": production_progress,
-            "pending_approval": True,
-            "characters": characters,
-            "scenes": scenes,
-            "checkpoint_data": {
-                "checkpoint_type": "script_analysis",
-                "data": {
-                    "characters_count": total_chars,
-                    "scenes_count": total_scenes,
-                    "summary": analysis_result.get("summary", ""),
-                },
-                "message": "请确认角色和场景识别是否准确",
-            },
-            "board_actions": [
-                {"type": "switch_view", "target": "characters"},
-                {"type": "refresh"},
-            ],
-            # Worker 结果反馈给 Supervisor
-            "worker_result": {
-                "worker": "script_analyst",
-                "summary": f"识别到 {total_chars} 个角色和 {total_scenes} 个场景",
-                "success": True,
-                "completed": True,
-                "response_text": response,  # Supervisor 可以直接使用
-            },
-        }
-        
-    except Exception as e:
-        logger.error(f"[SubgraphNode] script_analysis 失败: {e}")
-        return {
-            "response_text": f"剧本分析过程中出现错误：{str(e)}",
-            "production_stage": ProductionStage.INIT,
-            "errors": [{"message": str(e)}],
-        }
-
+    result["worker_result"] = {
+        "worker": "script_analyst",
+        "summary": f"识别到 {total_chars} 个角色和 {total_scenes} 个场景",
+        "success": True,
+        "completed": True,
+        "response_text": response_text,
+    }
+    
+    return result
 
 async def asset_generation_node(state: ComicDramaState) -> Dict[str, Any]:
     """

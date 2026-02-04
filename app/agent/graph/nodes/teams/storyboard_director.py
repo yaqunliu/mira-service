@@ -517,6 +517,7 @@ class StoryboardDirectorNode:
                         "production_stage": ProductionStage.STORYBOARD_READY,
                         "production_progress": production_progress,
                         "pending_approval": True,
+                        "needs_input": True,
                         "board_actions": [
                             {"type": "switch_view", "target": "storyboards"},
                             {"type": "refresh"},
@@ -542,6 +543,7 @@ class StoryboardDirectorNode:
                         "production_stage": ProductionStage.STORYBOARD_READY,
                         "production_progress": production_progress,
                         "pending_approval": True,
+                        "needs_input": True,
                         "board_actions": [
                             {"type": "switch_view", "target": "storyboards"},
                             {"type": "refresh"},
