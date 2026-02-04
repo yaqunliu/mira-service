@@ -20,7 +20,7 @@ from app.agent.state.schemas import ComicDramaState, ProductionStage
 
 # ==================== 类型定义 ====================
 
-WorkerType = Literal["script_analyst", "asset_designer", "storyboard_director", "video_editor"]
+WorkerType = Literal["script_analyst", "asset_designer", "storyboard_director", "video_editor", "asset_regenerator"]
 
 
 # ==================== 系统提示词 ====================
@@ -39,6 +39,15 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 - asset_designer: 资产生成 → 生成角色/场景图片
 - storyboard_director: 分镜创作 → 生成分镜图片
 - video_editor: 视频生成 → 生成分镜视频
+- asset_regenerator: 资产重新生成 → 重新生成角色/场景/分镜图片、提示词
+
+## 资产重新生成规则（重要！）
+
+当用户要求重新生成时，调用 `route_to_worker(worker="asset_regenerator")`：
+- "重新生成角色图片" / "重新生成场景图片" / "重新生成分镜图片"
+- "修改提示词" / "重新生成提示词"
+- "重新生成" / "再生成一次"
+- "改一下" / "优化一下"
 
 ## 默认工作流
 
@@ -126,7 +135,7 @@ async def route_to_worker(
     调度任务到指定的 Worker Node
     
     Args:
-        worker: Worker 类型 (script_analyst | asset_designer | storyboard_director | video_editor)
+        worker: Worker 类型 (script_analyst | asset_designer | storyboard_director | video_editor | asset_regenerator)
         task: 任务描述
         creation_uuid: 创作项目 UUID
         shot_number: 分镜编号（用于视频生成等任务）
@@ -137,7 +146,7 @@ async def route_to_worker(
     """
     logger.info(f"[Supervisor] 调度到 Worker: {worker}, task={task}")
     
-    valid_workers = ["script_analyst", "asset_designer", "storyboard_director", "video_editor"]
+    valid_workers = ["script_analyst", "asset_designer", "storyboard_director", "video_editor", "asset_regenerator"]
     
     if worker not in valid_workers:
         return {"success": False, "error": f"无效的 Worker: {worker}"}
@@ -249,68 +258,6 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
                 "next_worker": None,
                 "needs_input": True,  # 标记需要用户输入来继续
                 "worker_result": None,  # 清空
-                "updated_at": datetime.now().isoformat(),
-            }
-        
-        # ===== 特殊处理：regenerate 意图交给 AssetRegenerator =====
-        if detected_intent == "regenerate" and creation_uuid:
-            logger.info("[Node] supervisor: 检测到 regenerate 意图，交给 AssetRegenerator 处理")
-
-            from app.agent.graph.nodes.teams.asset_regenerator import regenerate_assets
-
-            result = await regenerate_assets(state)
-
-            assistant_message = {
-                "role": "assistant",
-                "content": result.get("response_text", "重新生成任务已提交"),
-                "timestamp": datetime.now().isoformat(),
-                "node": "supervisor",
-                "metadata": {
-                    "mode": "asset_regenerator",
-                    "regenerated_count": result.get("regenerated_count", 0),
-                    "success": result.get("success", False),
-                },
-            }
-
-            state_messages = list(state.get("messages", []))
-            state_messages.append(assistant_message)
-
-            return {
-                "messages": state_messages,
-                "response_text": result.get("response_text"),
-                "production_cache": production_cache,
-                "next_worker": None,  # AssetRegenerator 直接完成，不需要调度 Worker
-                "updated_at": datetime.now().isoformat(),
-            }
-
-        # ===== 特殊处理：regenerate_prompt 意图交给 PromptRegenerator =====
-        if detected_intent == "regenerate_prompt" and creation_uuid:
-            logger.info("[Node] supervisor: 检测到 regenerate_prompt 意图，交给 PromptRegenerator 处理")
-
-            from app.agent.graph.nodes.teams.prompt_regenerator import regenerate_prompts
-
-            result = await regenerate_prompts(state)
-
-            assistant_message = {
-                "role": "assistant",
-                "content": result.get("response_text", "提示词重新生成完成"),
-                "timestamp": datetime.now().isoformat(),
-                "node": "supervisor",
-                "metadata": {
-                    "mode": "prompt_regenerator",
-                    "regenerated_count": result.get("regenerated_count", 0),
-                    "success": result.get("success", False),
-                },
-            }
-
-            state_messages = list(state.get("messages", []))
-            state_messages.append(assistant_message)
-
-            return {
-                "messages": state_messages,
-                "response_text": result.get("response_text"),
-                "production_cache": production_cache,
-                "next_worker": None,  # PromptRegenerator 直接完成，不需要调度 Worker
                 "updated_at": datetime.now().isoformat(),
             }
         

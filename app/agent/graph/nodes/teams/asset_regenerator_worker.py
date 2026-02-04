@@ -46,16 +46,24 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
         根据用户消息检测目标类型，加载对应的提示词模板
         """
         user_message = state.get("user_message", "")
+        creation_uuid = state.get("creation_uuid", "")
         target_type = self._detect_target_type(user_message)
         
         from app.utils.file_utils import read_prompt_file
         
+        # 获取系统提示词模板
         if target_type == "character":
-            return read_prompt_file("agent_regenerate_character.md")
+            prompt_template = read_prompt_file("agent_regenerate_character.md")
         elif target_type == "scene":
-            return read_prompt_file("agent_regenerate_scene.md")
+            prompt_template = read_prompt_file("agent_regenerate_scene.md")
         else:  # shot
-            return read_prompt_file("agent_regenerate_shot.md")
+            prompt_template = read_prompt_file("agent_regenerate_shot.md")
+        
+        # 在提示词中注入 creation_uuid
+        if prompt_template:
+            prompt_template = prompt_template.replace("{{CREATION_UUID}}", creation_uuid)
+        
+        return prompt_template
     
     def _detect_target_type(self, user_message: str) -> str:
         """

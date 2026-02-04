@@ -516,7 +516,7 @@ async def submit_character_prompt_regeneration(
         from sqlalchemy import select
 
         async with get_async_session() as db:
-            stmt = select(Creation).where(Creation.creation_uuid == creation_uuid)
+            stmt = select(Creation).where(Creation.uuid == creation_uuid)
             result = await db.execute(stmt)
             creation = result.scalar_one_or_none()
             if creation and creation.extra_data:
@@ -664,7 +664,7 @@ async def submit_scene_prompt_regeneration(
         from sqlalchemy import select
 
         async with get_async_session() as db:
-            stmt = select(Creation).where(Creation.creation_uuid == creation_uuid)
+            stmt = select(Creation).where(Creation.uuid == creation_uuid)
             result = await db.execute(stmt)
             creation = result.scalar_one_or_none()
             if creation and creation.extra_data:
@@ -852,7 +852,7 @@ async def submit_shot_prompt_regeneration(
         from sqlalchemy import select
 
         async with get_async_session() as db:
-            stmt = select(Creation).where(Creation.creation_uuid == creation_uuid)
+            stmt = select(Creation).where(Creation.uuid == creation_uuid)
             result = await db.execute(stmt)
             creation = result.scalar_one_or_none()
             if creation and creation.extra_data:
