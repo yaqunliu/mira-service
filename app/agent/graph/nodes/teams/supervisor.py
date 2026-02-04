@@ -471,7 +471,7 @@ def route_from_supervisor(state: ComicDramaState) -> str:
             "storyboard_director": "storyboard_creation",
             "video_editor": "video_generation",
             "audio_engineer": "audio_processing",
-            "final_editor": "editing",
+            "asset_regenerator": "asset_regeneration",
         }
         return worker_node_map.get(next_worker, "done")
     

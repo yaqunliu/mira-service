@@ -95,24 +95,49 @@ class PromptRegenerator:
 - style: 改变风格或调性
 - custom: 根据用户自定义意见修改
 
-判断规则：
+判断规则（重要！必须严格遵守）：
 
-**操作类型判断（重要）：**
-1. 用户说"重新生成提示词"、"重新生成"、"再来一次" -> operation_type="regenerate"（忽略旧提示词）
-2. 用户说"修改提示词"、"改一下"、"优化"、"太啰嗦"、"有错"、"加细节" -> operation_type="modify"（基于旧提示词修改）
+**操作类型判断（关键！这是最重要的判断）：**
 
-**修改类型判断：**
+**必须严格遵守以下规则**：
+- 如果用户消息**只包含**"重新生成提示词"的请求，**没有任何**具体的修改要求 → operation_type="regenerate"
+- 如果用户消息**除了**"重新生成提示词"之外，**还包含**任何具体的修改要求（如：更可爱、改变某个元素、添加细节等） → operation_type="modify"
+
+**具体示例**：
+- "重新生成阿九的提示词" → **只有请求，无修改意见** → operation_type="regenerate"
+- "重新生成阿九的提示词，让他更可爱一点" → **有请求，也有修改意见** → operation_type="modify"
+- "重新生成阿九的提示词，胸口的玉改成铃铛" → **有请求，也有修改意见** → operation_type="modify"
+- "修改阿九的提示词，把胸口的玉改成铃铛" → **明确修改** → operation_type="modify"
+
+**判断技巧**：看用户是否说了"要..."、"希望..."、"改成..."、"变成..."、"更..."等表达修改意愿的词。如果有，就是 modify；如果没有，就是 regenerate。
+
+**修改类型判断**（仅当 operation_type="modify" 时）：
 1. 用户提到"太啰嗦"、"简化"、"简短" -> modification_type="simplify"
 2. 用户提到"加细节"、"更丰富"、"详细" -> modification_type="detail"
-3. 用户提到"有错"、"不对"、"修正" -> modification_type="fix"
+3. 用户提到"有错"、"不对"、"修正"、"改成" -> modification_type="fix"
 4. 用户提到"风格"、"调性" -> modification_type="style"
-5. 其他具体修改意见 -> modification_type="custom"
+5. 其他具体修改意见（如"让他更可爱"） -> modification_type="custom"
 
-示例：
-- "重新生成主角的提示词" -> {{"scope": "specific", "targets": [{{"type": "name", "value": "主角", "params": {{"operation_type": "regenerate"}}}}]}}
-- "修改主角的提示词，太啰嗦了" -> {{"scope": "specific", "targets": [{{"type": "name", "value": "主角", "params": {{"operation_type": "modify", "modification_type": "simplify", "feedback": "太啰嗦了"}}}}]}}
-- "给所有角色提示词加细节" -> {{"scope": "all", "targets": [], "params": {{"operation_type": "modify", "modification_type": "detail"}}}}
-- "重新生成失败的提示词" -> {{"scope": "failed", "targets": []}}
+**示例**：
+
+**重新生成示例（无修改意见）**：
+- 输入："重新生成主角的提示词"
+- 输出：{{"scope": "specific", "targets": [{{"type": "name", "value": "主角", "params": {{"operation_type": "regenerate", "modification_type": null, "feedback": null}}}}]}}
+- 原因：用户只说了"重新生成"，没有说"要改成什么样"
+
+**修改示例（有修改意见）**：
+- 输入："重新生成主角的提示词，太啰嗦了"
+- 输出：{{"scope": "specific", "targets": [{{"type": "name", "value": "主角", "params": {{"operation_type": "modify", "modification_type": "simplify", "feedback": "太啰嗦了"}}}}]}}
+- 原因：用户说了"太啰嗦了"，这是修改意见
+
+- 输入："重新生成阿九的提示词，让他更可爱萌一点，胸口挂着铃铛"
+- 输出：{{"scope": "specific", "targets": [{{"type": "name", "value": "阿九", "params": {{"operation_type": "modify", "modification_type": "custom", "feedback": "让他更可爱萌一点，胸口挂着铃铛"}}}}]}}
+- 原因：用户说了"让他更可爱萌一点"和"胸口挂着铃铛"，这些都是修改意见
+
+**特别注意**：
+- 只要用户说了"要..."、"希望..."、"改成..."、"变成..."、"更..."等词，就是 modify
+- 如果用户只说了"重新生成"，没有说任何修改要求，就是 regenerate
+- modification_type 和 feedback 在 regenerate 时必须为 null
 
 只返回纯 JSON，不要任何其他内容，不要添加 ```json 代码块标签，不要添加任何解释说明。"""
 
@@ -155,21 +180,36 @@ class PromptRegenerator:
 - style: 改变风格或调性
 - custom: 根据用户自定义意见修改
 
-判断规则：
+判断规则（重要！必须严格遵守）：
 
-**操作类型判断（重要）：**
-1. 用户说"重新生成提示词"、"重新生成"、"再来一次" -> operation_type="regenerate"（忽略旧提示词）
-2. 用户说"修改提示词"、"改一下"、"优化"、"太啰嗦"、"有错"、"加细节" -> operation_type="modify"（基于旧提示词修改）
+**操作类型判断（关键！这是最重要的判断）：**
 
-**修改类型判断：**
+**必须严格遵守以下规则**：
+- 如果用户消息**只包含**"重新生成提示词"的请求，**没有任何**具体的修改要求 → operation_type="regenerate"
+- 如果用户消息**除了**"重新生成提示词"之外，**还包含**任何具体的修改要求（如：改变风格、添加细节、修改某个元素等） → operation_type="modify"
+
+**具体示例**：
+- "重新生成客厅的提示词" → **只有请求，无修改意见** → operation_type="regenerate"
+- "重新生成客厅的提示词，设置成赛璐璐风格" → **有请求，也有修改意见** → operation_type="modify"
+- "重新生成客厅的提示词，增加阳光" → **有请求，也有修改意见** → operation_type="modify"
+- "修改客厅的提示词，让氛围更暗" → **明确修改** → operation_type="modify"
+
+**判断技巧**：看用户是否说了"要..."、"希望..."、"改成..."、"变成..."、"更..."、"设置成..."等表达修改意愿的词。如果有，就是 modify；如果没有，就是 regenerate。
+
+**修改类型判断**（仅当 operation_type="modify" 时）：
 1. 用户提到"太啰嗦"、"简化" -> modification_type="simplify"
 2. 用户提到"加细节"、"更丰富" -> modification_type="detail"
 3. 用户提到"有错"、"不对" -> modification_type="fix"
 4. 用户提到"风格" -> modification_type="style"
 5. 其他具体修改意见 -> modification_type="custom"
 
+**特别注意**：
+- 只要用户说了"要..."、"希望..."、"改成..."、"变成..."、"更..."、"设置成..."等词，就是 modify
+- 如果用户只说了"重新生成"，没有说任何修改要求，就是 regenerate
+
 示例：
 - "重新生成客厅的提示词" -> {{"scope": "specific", "targets": [{{"type": "name", "value": "客厅", "params": {{"operation_type": "regenerate"}}}}]}}
+- "重新生成客厅的提示词，设置成赛璐璐风格" -> {{"scope": "specific", "targets": [{{"type": "name", "value": "客厅", "params": {{"operation_type": "modify", "modification_type": "style", "feedback": "设置成赛璐璐风格"}}}}]}}
 - "修改客厅的提示词，太啰嗦了" -> {{"scope": "specific", "targets": [{{"type": "name", "value": "客厅", "params": {{"operation_type": "modify", "modification_type": "simplify"}}}}]}}
 - "给所有场景提示词加细节" -> {{"scope": "all", "targets": [], "params": {{"operation_type": "modify", "modification_type": "detail"}}}}
 
@@ -751,6 +791,8 @@ class PromptRegenerator:
 
         results = []
 
+        logger.info(f"[_execute_prompt_regeneration] 开始执行，target_type={target_type}, prompt_type={prompt_type}, resources数量={len(resources)}")
+
         target_params = {}
         for target in targets:
             if target.get("type") == "number":
@@ -758,11 +800,15 @@ class PromptRegenerator:
             elif target.get("type") == "name":
                 target_params[target["value"]] = target.get("params", {})
 
+        logger.info(f"[_execute_prompt_regeneration] target_params={target_params}")
+
         # 第一步：收集所有需要的数据（在数据库会话中）
         resources_data = []
+        logger.info(f"[_execute_prompt_regeneration] 开始收集资源数据，resources数量={len(resources)}")
         async with get_async_session() as db:
-            for resource in resources:
+            for idx, resource in enumerate(resources):
                 try:
+                    logger.info(f"[_execute_prompt_regeneration] 处理第{idx+1}个资源: {resource.get('name') or resource.get('character_id') or resource.get('shot_id')}")
                     resource_params = resource.get("_regenerate_params", {})
 
                     if not resource_params:
@@ -773,14 +819,19 @@ class PromptRegenerator:
                         else:
                             key = resource.get("title")
                         resource_params = target_params.get(key, {})
+                        logger.info(f"[_execute_prompt_regeneration] 从target_params获取参数: key={key}, params={resource_params}")
 
                     operation_type = resource_params.get("operation_type", "modify")
                     modification_type = resource_params.get("modification_type", "custom")
                     feedback = resource_params.get("feedback", "")
                     frame_type = resource_params.get("frame_type", "both")
 
+                    logger.info(f"[_execute_prompt_regeneration] 最终参数: operation_type={operation_type}, modification_type={modification_type}, feedback={feedback[:50] if feedback else 'None'}...")
+                    logger.info(f"[_execute_prompt_regeneration] 判断条件: target_type={target_type}, resource.keys()={list(resource.keys())}")
+
                     if target_type == "shot":
-                        shot_id = resource.get("shot_id")
+                        # resource 中的 id 字段可能是 'id' 或 'shot_id'
+                        shot_id = resource.get("shot_id") or resource.get("id")
                         # 使用 joinedload 预先加载 scene 关系，避免懒加载
                         from sqlalchemy.orm import joinedload
                         stmt = select(Shot).where(Shot.shot_id == shot_id).options(joinedload(Shot.scene))
@@ -790,18 +841,6 @@ class PromptRegenerator:
                         if not shot:
                             results.append({"id": shot_id, "success": False, "error": "分镜不存在"})
                             continue
-
-                        # 提取需要的数据，而不是传递 ORM 对象
-                        if prompt_type == "video":
-                            old_prompt = (shot.extra_data or {}).get("video_prompt", "")
-                            prompt_field = "video_prompt"
-                        else:  # image
-                            if frame_type == "end":
-                                old_prompt = (shot.extra_data or {}).get("end_frame_prompt", "")
-                                prompt_field = "end_frame_prompt"
-                            else:  # start or both
-                                old_prompt = shot.image_prompt or ""
-                                prompt_field = "image_prompt"
 
                         # 构建资源数据字典（在会话内部访问所有关系属性）
                         scene_title = None
@@ -817,39 +856,83 @@ class PromptRegenerator:
                             "scene_title": scene_title,
                         }
 
-                        resources_data.append({
-                            "target_type": "shot",
-                            "resource_id": shot_id,
-                            "name": f"分镜{shot.shot_number}",
-                            "operation_type": operation_type,
-                            "modification_type": modification_type,
-                            "feedback": feedback,
-                            "frame_type": frame_type,
-                            "prompt_type": prompt_type,
-                            "prompt_field": prompt_field,
-                            "old_prompt": old_prompt,
-                            "resource_data": resource_data_dict,
-                        })
+                        # 根据 frame_type 确定需要生成的提示词
+                        frames_to_generate = []
+                        if prompt_type == "video":
+                            old_prompt = (shot.extra_data or {}).get("video_prompt", "")
+                            frames_to_generate.append({
+                                "frame_type": "video",
+                                "prompt_field": "video_prompt",
+                                "old_prompt": old_prompt,
+                            })
+                        else:  # image
+                            if frame_type == "both":
+                                # 同时生成首帧和尾帧
+                                frames_to_generate.append({
+                                    "frame_type": "start",
+                                    "prompt_field": "image_prompt",
+                                    "old_prompt": shot.image_prompt or "",
+                                })
+                                frames_to_generate.append({
+                                    "frame_type": "end",
+                                    "prompt_field": "end_frame_prompt",
+                                    "old_prompt": (shot.extra_data or {}).get("end_frame_prompt", ""),
+                                })
+                            elif frame_type == "end":
+                                frames_to_generate.append({
+                                    "frame_type": "end",
+                                    "prompt_field": "end_frame_prompt",
+                                    "old_prompt": (shot.extra_data or {}).get("end_frame_prompt", ""),
+                                })
+                            else:  # start
+                                frames_to_generate.append({
+                                    "frame_type": "start",
+                                    "prompt_field": "image_prompt",
+                                    "old_prompt": shot.image_prompt or "",
+                                })
+
+                        # 为每个帧类型添加资源数据
+                        for frame_info in frames_to_generate:
+                            resources_data.append({
+                                "target_type": "shot",
+                                "resource_id": shot_id,
+                                "name": f"分镜{shot.shot_number}",
+                                "operation_type": operation_type,
+                                "modification_type": modification_type,
+                                "feedback": feedback,
+                                "frame_type": frame_info["frame_type"],
+                                "prompt_type": prompt_type,
+                                "prompt_field": frame_info["prompt_field"],
+                                "old_prompt": frame_info["old_prompt"],
+                                "resource_data": resource_data_dict,
+                            })
 
                     elif target_type == "character":
-                        character_id = resource.get("character_id")
+                        # resource 中的 id 字段可能是 'id' 或 'character_id'
+                        character_id = resource.get("character_id") or resource.get("id")
+                        logger.info(f"[_execute_prompt_regeneration] 查询角色: character_id={character_id}, resource_id={resource.get('id')}, resource_character_id={resource.get('character_id')}")
                         stmt = select(Character).where(Character.character_id == character_id)
                         result = await db.execute(stmt)
                         character = result.scalar_one_or_none()
 
                         if not character:
+                            logger.error(f"[_execute_prompt_regeneration] 角色不存在: character_id={character_id}")
                             results.append({"id": character_id, "success": False, "error": "角色不存在"})
                             continue
 
+                        logger.info(f"[_execute_prompt_regeneration] 找到角色: {character.name}, image_prompt={'有' if character.image_prompt else '无'}")
                         old_prompt = character.image_prompt or ""
 
                         resource_data_dict = {
                             "character_id": character.character_id,
                             "name": character.name,
-                            "role_type": character.role_type,
-                            "appearance_desc": character.appearance_desc,
-                            "personality": character.personality,
-                            "costume_desc": character.costume_desc,
+                            "basic_info": character.basic_info,
+                            "appearance": character.appearance,
+                            "body": character.body,
+                            "hair": character.hair,
+                            "clothing": character.clothing,
+                            "tags": character.tags,
+                            "visual_style": character.visual_style,
                         }
 
                         resources_data.append({
@@ -863,9 +946,11 @@ class PromptRegenerator:
                             "old_prompt": old_prompt,
                             "resource_data": resource_data_dict,
                         })
+                        logger.info(f"[_execute_prompt_regeneration] 角色数据已添加到resources_data")
 
                     elif target_type == "scene":
-                        scene_id = resource.get("scene_id")
+                        # resource 中的 id 字段可能是 'id' 或 'scene_id'
+                        scene_id = resource.get("scene_id") or resource.get("id")
                         stmt = select(Scene).where(Scene.scene_id == scene_id)
                         result = await db.execute(stmt)
                         scene = result.scalar_one_or_none()
@@ -907,44 +992,74 @@ class PromptRegenerator:
 
         # 第二步：在数据库会话外部调用 LLM 生成提示词
         generated_prompts = []
-        for data in resources_data:
+        logger.info(f"[_execute_prompt_regeneration] 开始生成提示词，resources_data数量={len(resources_data)}")
+
+        for idx, data in enumerate(resources_data):
             try:
-                resource_type_map = {
-                    ("shot", "video"): "video",
-                    ("shot", "image"): "shot_end" if data.get("frame_type") == "end" else "shot_start",
-                    ("character", None): "character",
-                    ("scene", None): "scene",
-                }
+                logger.info(f"[_execute_prompt_regeneration] 处理第{idx+1}个资源的提示词生成: {data['name']}, operation_type={data['operation_type']}")
 
+                # 根据 target_type 和 prompt_type 确定 resource_type
                 target_type_key = data["target_type"]
-                prompt_type_key = data.get("prompt_type")
-                resource_type = resource_type_map.get((target_type_key, prompt_type_key), "shot_start")
+                prompt_type_key = data.get("prompt_type", "image")  # 默认为 image
+                frame_type = data.get("frame_type", "start")
 
-                if data["operation_type"] == "regenerate":
-                    new_prompt = await self._generate_prompt_from_template(
-                        resource_type=resource_type,
-                        resource_data=data["resource_data"],
-                    )
-                else:  # modify
-                    new_prompt = await self._modify_prompt_with_llm(
-                        old_prompt=data["old_prompt"],
-                        resource_type=resource_type,
-                        resource_data=data["resource_data"],
-                        modification_type=data["modification_type"],
-                        feedback=data["feedback"],
-                    )
+                # 确定需要生成的资源类型列表
+                resource_types_to_generate = []
+                if target_type_key == "shot":
+                    if prompt_type_key == "video":
+                        resource_types_to_generate = [("video", data["prompt_field"])]
+                    else:  # image
+                        if frame_type == "both":
+                            resource_types_to_generate = [
+                                ("shot_start", "image_prompt"),
+                                ("shot_end", "end_frame_prompt")
+                            ]
+                        elif frame_type == "end":
+                            resource_types_to_generate = [("shot_end", "end_frame_prompt")]
+                        else:  # start
+                            resource_types_to_generate = [("shot_start", "image_prompt")]
+                elif target_type_key == "character":
+                    resource_types_to_generate = [("character", data["prompt_field"])]
+                elif target_type_key == "scene":
+                    resource_types_to_generate = [("scene", data["prompt_field"])]
+                else:
+                    resource_types_to_generate = [("shot_start", "image_prompt")]
 
-                generated_prompts.append({
-                    "target_type": data["target_type"],
-                    "resource_id": data["resource_id"],
-                    "name": data["name"],
-                    "operation_type": data["operation_type"],
-                    "prompt_field": data["prompt_field"],
-                    "new_prompt": new_prompt,
-                })
+                # 为每个资源类型生成提示词
+                for resource_type, prompt_field in resource_types_to_generate:
+                    logger.info(f"[_execute_prompt_regeneration] 生成 {resource_type} 提示词, prompt_field={prompt_field}")
+
+                    if data["operation_type"] == "regenerate":
+                        logger.info(f"[_execute_prompt_regeneration] 调用 _generate_prompt_from_template")
+                        new_prompt = await self._generate_prompt_from_template(
+                            resource_type=resource_type,
+                            resource_data=data["resource_data"],
+                        )
+                    else:  # modify
+                        logger.info(f"[_execute_prompt_regeneration] 调用 _modify_prompt_with_llm, modification_type={data['modification_type']}")
+                        new_prompt = await self._modify_prompt_with_llm(
+                            old_prompt=data["old_prompt"],
+                            resource_type=resource_type,
+                            resource_data=data["resource_data"],
+                            modification_type=data["modification_type"],
+                            feedback=data["feedback"],
+                        )
+
+                    logger.info(f"[_execute_prompt_regeneration] 生成提示词成功，新提示词长度={len(new_prompt)}")
+
+                    generated_prompts.append({
+                        "target_type": data["target_type"],
+                        "resource_id": data["resource_id"],
+                        "name": data["name"],
+                        "operation_type": data["operation_type"],
+                        "prompt_field": prompt_field,
+                        "new_prompt": new_prompt,
+                    })
 
             except Exception as e:
                 logger.error(f"[PromptRegenerator] 生成提示词失败: {e}")
+                import traceback
+                logger.error(f"[PromptRegenerator] 异常栈: {traceback.format_exc()}")
                 results.append({
                     "id": data["resource_id"],
                     "name": data["name"],
@@ -953,9 +1068,11 @@ class PromptRegenerator:
                 })
 
         # 第三步：保存生成的提示词到数据库（在数据库会话中）
+        logger.info(f"[_execute_prompt_regeneration] 开始保存提示词到数据库，generated_prompts数量={len(generated_prompts)}")
         async with get_async_session() as db:
-            for data in generated_prompts:
+            for idx, data in enumerate(generated_prompts):
                 try:
+                    logger.info(f"[_execute_prompt_regeneration] 保存第{idx+1}个提示词: {data['name']}, target_type={data['target_type']}, prompt_field={data['prompt_field']}")
                     if data["target_type"] == "shot":
                         stmt = select(Shot).where(Shot.shot_id == data["resource_id"])
                         result = await db.execute(stmt)
@@ -996,6 +1113,7 @@ class PromptRegenerator:
 
                     await db.commit()
 
+                    logger.info(f"[_execute_prompt_regeneration] 保存成功: {data['name']}")
                     results.append({
                         "id": data["resource_id"],
                         "name": data["name"],
@@ -1006,7 +1124,9 @@ class PromptRegenerator:
                     })
 
                 except Exception as e:
-                    logger.error(f"[PromptRegenerator] 保存提示词失败: {e}")
+                    logger.error(f"[_execute_prompt_regeneration] 保存提示词失败: {e}")
+                    import traceback
+                    logger.error(f"[_execute_prompt_regeneration] 异常栈: {traceback.format_exc()}")
                     results.append({
                         "id": data["resource_id"],
                         "name": data["name"],
@@ -1014,6 +1134,7 @@ class PromptRegenerator:
                         "error": str(e),
                     })
 
+        logger.info(f"[_execute_prompt_regeneration] 执行完成，成功={sum(1 for r in results if r.get('success'))}, 失败={sum(1 for r in results if not r.get('success'))}")
         return results
 
     async def _generate_prompt_from_template(
@@ -1028,43 +1149,81 @@ class PromptRegenerator:
         """
         from app.utils.file_utils import read_prompt_file
 
-        template_map = {
-            "character": "character.md",
-            "scene": "scene_image.md",
-            "shot_start": "shot_image_v4.md",
-            "shot_end": "shot_image_v4.md",
-            "video": "video_generation_v6.md",
-        }
+        try:
+            template_map = {
+                "character": "regenerate_character.md",  # 使用重新生成专用模板
+                "scene": "regenerate_scene.md",  # 使用重新生成专用模板
+                "shot_start": "regenerate_shot_start.md",  # 使用重新生成专用模板
+                "shot_end": "regenerate_shot_end.md",  # 使用重新生成专用模板
+                "video": "regenerate_video.md",  # 使用重新生成专用模板
+            }
 
-        template_file = template_map.get(resource_type, "shot_image_v4.md")
-        template_content = read_prompt_file(template_file) if template_file else ""
+            template_file = template_map.get(resource_type, "shot_image_v4.md")
+            template_content = read_prompt_file(template_file) if template_file else ""
 
-        resource_context = self._build_resource_context(resource_type, resource_data)
+            if not template_content:
+                logger.warning(f"[PromptRegenerator] 模板文件为空或不存在: {template_file}")
 
-        prompt = f"""你是一个专业的AI提示词工程师。请根据以下资源信息和模板，生成一个全新的提示词。
+            resource_context = self._build_resource_context(resource_type, resource_data)
+
+            # 替换模板中的变量
+            visual_style = resource_data.get('visual_style') or '日本动漫风格'
+            if resource_type == "scene":
+                template_content = template_content.replace("{{SCENE_TITLE}}", resource_data.get('title', '') or "未命名") \
+                                                   .replace("{{LOCATION}}", resource_data.get('location') or "未指定") \
+                                                   .replace("{{TIME_SETTING}}", resource_data.get('time_setting') or "未指定") \
+                                                   .replace("{{ATMOSPHERE}}", resource_data.get('atmosphere') or "未指定") \
+                                                   .replace("{{SPACE_TYPE}}", resource_data.get('space_type') or "未指定") \
+                                                   .replace("{{VISUAL_STYLE}}", visual_style)
+            elif resource_type == "character":
+                template_content = template_content.replace("{{CHARACTER_NAME}}", resource_data.get('name', '') or "未命名") \
+                                                   .replace("{{BASIC_INFO}}", resource_data.get('basic_info') or "无") \
+                                                   .replace("{{APPEARANCE}}", resource_data.get('appearance') or "无") \
+                                                   .replace("{{VISUAL_STYLE}}", visual_style)
+            elif resource_type in ["shot_start", "shot_end"]:
+                template_content = template_content.replace("{{SHOT_NUMBER}}", str(resource_data.get('shot_number', ''))) \
+                                                   .replace("{{SHOT_TITLE}}", resource_data.get('title') or f"分镜{resource_data.get('shot_number', '')}") \
+                                                   .replace("{{SHOT_DESCRIPTION}}", resource_data.get('description') or "无") \
+                                                   .replace("{{SHOT_NARRATION}}", resource_data.get('narration') or "无") \
+                                                   .replace("{{SCENE_TITLE}}", resource_data.get('scene_title') or "未指定") \
+                                                   .replace("{{SCENE_LOCATION}}", resource_data.get('scene_location') or "未指定") \
+                                                   .replace("{{SCENE_TIME}}", resource_data.get('scene_time') or "未指定") \
+                                                   .replace("{{SCENE_ATMOSPHERE}}", resource_data.get('scene_atmosphere') or "未指定") \
+                                                   .replace("{{CHARACTER_PROFILES}}", resource_data.get('character_profiles') or "无角色信息") \
+                                                   .replace("{{VISUAL_STYLE}}", visual_style)
+
+            prompt = f"""你是一个专业的AI提示词工程师。请根据以下资源信息和模板，生成一个全新的提示词。
 
 ## 资源信息
 {resource_context}
 
 ## 提示词模板
-{template_content[:1500] if template_content else ""}
+{template_content[:2000] if template_content else "请根据资源信息生成合适的提示词"}
 
 ## 要求
 1. 使用中文输出提示词
 2. 根据资源信息生成完整、详细的提示词
 3. 遵循模板中的格式和要求
-4. 提示词长度适中（100-200字）
+4. 提示词长度适中（100-300字）
 5. 只输出提示词，不要其他内容
 
 请生成新的提示词："""
 
-        response = await self.llm.ainvoke([HumanMessage(content=prompt)])
-        new_prompt = response.content.strip()
+            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+            new_prompt = response.content.strip()
 
-        if new_prompt.startswith("```") and new_prompt.endswith("```"):
-            new_prompt = new_prompt[3:-3].strip()
+            if new_prompt.startswith("```") and new_prompt.endswith("```"):
+                new_prompt = new_prompt[3:-3].strip()
 
-        return new_prompt
+            logger.info(f"[PromptRegenerator] 生成新提示词成功，长度: {len(new_prompt)}")
+            return new_prompt
+
+        except Exception as e:
+            logger.error(f"[PromptRegenerator] 生成提示词失败: {e}")
+            import traceback
+            logger.error(f"[PromptRegenerator] 异常栈: {traceback.format_exc()}")
+            # 返回一个默认提示词，而不是抛出异常
+            return f"生成提示词时出错: {str(e)}"
 
     async def _modify_prompt_with_llm(
         self,
@@ -1081,78 +1240,68 @@ class PromptRegenerator:
         """
         from app.utils.file_utils import read_prompt_file
 
-        modification_desc = self.MODIFICATION_TYPES.get(modification_type, "根据用户意见修改")
+        try:
+            modification_desc = self.MODIFICATION_TYPES.get(modification_type, "根据用户意见修改")
 
-        template_map = {
-            "character": "character.md",
-            "scene": "scene_image.md",
-            "shot_start": "shot_image_v4.md",
-            "shot_end": "shot_image_v4.md",
-            "video": "video_generation_v6.md",
-        }
+            # 修改操作使用 modify_prompt.md 模板
+            template_content = read_prompt_file("modify_prompt.md")
 
-        template_file = template_map.get(resource_type, "shot_image_v4.md")
-        template_content = read_prompt_file(template_file) if template_file else ""
+            resource_context = self._build_resource_context(resource_type, resource_data)
 
-        resource_context = self._build_resource_context(resource_type, resource_data)
+            # 替换模板中的变量
+            if template_content:
+                template_content = template_content.replace("{{OLD_PROMPT}}", old_prompt if old_prompt else "（无原提示词）") \
+                                                   .replace("{{MODIFICATION_TYPE}}", modification_type) \
+                                                   .replace("{{FEEDBACK}}", feedback if feedback else "无具体反馈") \
+                                                   .replace("{{RESOURCE_CONTEXT}}", resource_context)
 
-        prompt = f"""你是一个专业的AI提示词工程师。请基于原提示词，根据用户反馈进行修改优化。
+            prompt = f"""你是一个专业的AI提示词工程师。请基于原提示词，根据用户反馈进行修改优化。
 
 ## 原提示词（需要在此基础上修改）
+<old_prompt>
 {old_prompt if old_prompt else "（无原提示词，请根据资源信息生成）"}
+</old_prompt>
 
 ## 资源信息
 {resource_context}
 
 ## 修改要求
-修改类型: {modification_type} ({modification_desc})
-用户反馈: {feedback if feedback else "无具体反馈"}
+<modification_type>
+{modification_type}
+</modification_type>
 
-## 提示词模板参考（了解约束和规范）
-{template_content[:800] if template_content else ""}
+<feedback>
+{feedback if feedback else "无具体反馈"}
+</feedback>
 
-## 修改规则（重要）
-
-1. **simplify (简化)**: 
-   - 保留原提示词的核心要素和关键约束
-   - 去除冗余、重复的描述
-   - 使提示词更简洁明了，但不丢失重要信息
-
-2. **detail (加细节)**: 
-   - 在保留原提示词的基础上
-   - 添加更多细节描述，丰富画面内容
-   - 增强视觉表现力和层次感
-
-3. **fix (修正)**: 
-   - 识别并修正原提示词中的错误或不准确之处
-   - 保持其他正确内容不变
-   - 确保描述准确、符合资源信息
-
-4. **style (改风格)**: 
-   - 调整风格描述，改变视觉调性
-   - 保留主体内容，改变表现方式
-
-5. **custom (自定义)**: 
-   - 根据用户具体反馈进行修改
-   - 保留原提示词中不需要修改的部分
+## 修改规则参考
+{template_content[:1500] if template_content else "根据修改类型和用户反馈进行修改"}
 
 ## 要求
 1. 使用中文输出提示词
 2. **必须基于原提示词进行修改**，不要完全重写
 3. 保留原提示词中的核心约束和关键要素
 4. 根据修改类型有针对性地调整
-5. 提示词长度适中（100-200字）
+5. 提示词长度适中（100-300字）
 6. 只输出提示词，不要其他内容
 
 请基于原提示词生成修改后的提示词："""
 
-        response = await self.llm.ainvoke([HumanMessage(content=prompt)])
-        new_prompt = response.content.strip()
+            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+            new_prompt = response.content.strip()
 
-        if new_prompt.startswith("```") and new_prompt.endswith("```"):
-            new_prompt = new_prompt[3:-3].strip()
+            if new_prompt.startswith("```") and new_prompt.endswith("```"):
+                new_prompt = new_prompt[3:-3].strip()
 
-        return new_prompt
+            logger.info(f"[PromptRegenerator] 修改提示词成功，长度: {len(new_prompt)}")
+            return new_prompt
+
+        except Exception as e:
+            logger.error(f"[PromptRegenerator] 修改提示词失败: {e}")
+            import traceback
+            logger.error(f"[PromptRegenerator] 异常栈: {traceback.format_exc()}")
+            # 返回一个默认提示词，而不是抛出异常
+            return f"修改提示词时出错: {str(e)}"
 
     def _build_resource_context(self, resource_type: str, resource_data: Dict[str, Any]) -> str:
         """构建资源上下文信息（现在接收字典而不是 ORM 对象）"""
@@ -1160,10 +1309,13 @@ class PromptRegenerator:
 
         if resource_type == "character":
             context_parts.append(f"角色名称: {resource_data.get('name', '未命名')}")
-            context_parts.append(f"角色类型: {resource_data.get('role_type') or '未指定'}")
-            context_parts.append(f"外貌描述: {resource_data.get('appearance_desc') or '无'}")
-            context_parts.append(f"性格特点: {resource_data.get('personality') or '无'}")
-            context_parts.append(f"服装描述: {resource_data.get('costume_desc') or '无'}")
+            context_parts.append(f"基本信息: {resource_data.get('basic_info') or '无'}")
+            context_parts.append(f"外貌: {resource_data.get('appearance') or '无'}")
+            context_parts.append(f"身材: {resource_data.get('body') or '无'}")
+            context_parts.append(f"发型: {resource_data.get('hair') or '无'}")
+            context_parts.append(f"服装: {resource_data.get('clothing') or '无'}")
+            context_parts.append(f"标签: {', '.join(resource_data.get('tags') or [])}")
+            context_parts.append(f"视觉风格: {resource_data.get('visual_style') or '未指定'}")
 
         elif resource_type == "scene":
             context_parts.append(f"场景标题: {resource_data.get('title', '未命名')}")

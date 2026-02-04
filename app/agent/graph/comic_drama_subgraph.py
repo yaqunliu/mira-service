@@ -687,6 +687,40 @@ async def editing_node(state: ComicDramaState) -> Dict[str, Any]:
     return result
 
 
+async def asset_regeneration_node(state: ComicDramaState) -> Dict[str, Any]:
+    """
+    资产重新生成节点
+    
+    委托给 AssetRegeneratorWorkerNode 执行
+    
+    支持：
+    - 角色图片重新生成
+    - 角色提示词重新生成/修改
+    - 场景图片重新生成
+    - 场景提示词重新生成/修改
+    - 分镜首帧/尾帧图片重新生成
+    - 分镜视频重新生成
+    - 分镜提示词重新生成/修改
+    """
+    logger.info("[SubgraphNode] asset_regeneration: 委托给 AssetRegeneratorWorkerNode")
+    
+    from app.agent.graph.nodes.teams.asset_regenerator_worker import AssetRegeneratorWorkerNode
+    regenerator = AssetRegeneratorWorkerNode()
+    result = await regenerator.run(state)
+    
+    # 确保返回结果包含 worker_result
+    if "worker_result" not in result:
+        result["worker_result"] = {
+            "worker": "asset_regenerator",
+            "summary": result.get("response_text", "重新生成任务已提交"),
+            "success": result.get("success", False),
+            "completed": True,
+            "response_text": result.get("response_text", ""),
+        }
+    
+    return result
+
+
 # ==================== 构建子图 ====================
 
 def build_comic_drama_subgraph() -> StateGraph:
@@ -721,6 +755,7 @@ def build_comic_drama_subgraph() -> StateGraph:
     workflow.add_node("audio_processing", audio_processing_node)
     workflow.add_node("video_generation", video_generation_node)
     workflow.add_node("editing", editing_node)
+    workflow.add_node("asset_regeneration", asset_regeneration_node)
     
     # 辅助节点
     workflow.add_node("error_handler", error_handler_node)
@@ -741,6 +776,7 @@ def build_comic_drama_subgraph() -> StateGraph:
             "audio_processing": "audio_processing",
             "video_generation": "video_generation",
             "editing": "editing",
+            "asset_regeneration": "asset_regeneration",
             "done": END,  # 任务完成
         }
     )
@@ -748,11 +784,12 @@ def build_comic_drama_subgraph() -> StateGraph:
     # Workers 完成后直接回到 Supervisor（由 LangGraph 管理递归）
     for worker in [
         "script_analysis",
-        "asset_generation", 
+        "asset_generation",
         "storyboard_creation",
         "audio_processing",
         "video_generation",
         "editing",
+        "asset_regeneration",
     ]:
         workflow.add_edge(worker, "supervisor")
     

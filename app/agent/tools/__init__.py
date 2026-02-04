@@ -79,6 +79,21 @@ from app.agent.tools.resource_resolver import (
     resolve_resource_reference,
 )
 
+# Asset Regenerator Worker 工具
+from app.agent.tools.regenerate_worker_tools import (
+    query_single_character,
+    query_single_scene,
+    query_single_shot,
+    submit_character_image_regeneration,
+    submit_character_prompt_regeneration,
+    submit_scene_image_regeneration,
+    submit_scene_prompt_regeneration,
+    submit_shot_image_regeneration,
+    submit_shot_prompt_regeneration,
+    submit_shot_video_regeneration,
+    REGENERATE_WORKER_TOOLS,
+)
+
 __all__ = [
     # 基础
     "BaseTool",
@@ -111,7 +126,7 @@ __all__ = [
 
     # 数据库
     "AsyncDBTool",
-    
+
     # 数据库查询工具
     "query_characters",
     "query_scenes",
@@ -119,26 +134,39 @@ __all__ = [
     "query_creation_status",
     "find_resources_by_identifier",
     "query_failed_resources",
-    
+
     # Supervisor 原子化工具
     "clear_asset",
     "submit_generation",
     "regenerate",
     "clear_all",
     "REGENERATE_TOOLS",
-    
+
     # 版本管理
     "get_version_history",
     "restore_version",
     "VERSION_TOOLS",
-    
+
     # 上下文工具
     "get_script_context",
     "get_adjacent_shots",
     "get_character_scene_for_shot",
     "check_constraints",
     "CONTEXT_TOOLS",
-    
+
     # 资源解析工具
     "resolve_resource_reference",
+
+    # Asset Regenerator Worker 工具
+    "query_single_character",
+    "query_single_scene",
+    "query_single_shot",
+    "submit_character_image_regeneration",
+    "submit_character_prompt_regeneration",
+    "submit_scene_image_regeneration",
+    "submit_scene_prompt_regeneration",
+    "submit_shot_image_regeneration",
+    "submit_shot_prompt_regeneration",
+    "submit_shot_video_regeneration",
+    "REGENERATE_WORKER_TOOLS",
 ]

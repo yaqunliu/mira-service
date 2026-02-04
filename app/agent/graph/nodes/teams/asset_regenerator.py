@@ -75,25 +75,32 @@ class AssetRegenerator:
    - 如果用户消息包含"图片"、"图像"（但不包含"提示词"）-> "image"
    - 默认 "image"
 
-2. **operation_type 判断**（关键！）：
-   - **重新生成(regenerate)**: 用户只是要求"重新生成提示词"，没有提出任何具体修改意见
-     - 例如："重新生成阿九的图片提示词"
-     - 这种情况下，operation_type="regenerate"
-   - **修改(modify)**: 用户提出了具体的修改意见或要求
-     - 例如："重新生成阿九的图片提示词，让他更可爱一点"
-     - 例如："修改阿九的提示词，把胸口的玉改成铃铛"
-     - 这种情况下，operation_type="modify"
+2. **operation_type 判断**（关键！这是最重要的判断）：
+   
+   **必须严格遵守以下规则**：
+   - 如果用户消息**只包含**"重新生成提示词"的请求，**没有任何**具体的修改要求 → operation_type="regenerate"
+   - 如果用户消息**除了**"重新生成提示词"之外，**还包含**任何具体的修改要求（如：更可爱、改变某个元素、添加细节等） → operation_type="modify"
+   
+   **具体示例**：
+   - "重新生成阿九的图片提示词" → **只有请求，无修改意见** → operation_type="regenerate"
+   - "重新生成阿九的图片提示词，让他更可爱一点" → **有请求，也有修改意见** → operation_type="modify"
+   - "重新生成阿九的图片提示词，胸口的玉改成铃铛" → **有请求，也有修改意见** → operation_type="modify"
+   - "修改阿九的提示词，把胸口的玉改成铃铛" → **明确修改** → operation_type="modify"
+   
+   **判断技巧**：看用户是否说了"要..."、"希望..."、"改成..."、"变成..."、"更..."等表达修改意愿的词。如果有，就是 modify；如果没有，就是 regenerate。
 
-3. **modification_type 判断**（仅当 operation_type="modify" 时）：
-   - "simplify": 用户要求简化、精简提示词
-   - "detail": 用户要求添加更多细节
-   - "fix": 用户指出错误并要求修正
-   - "style": 用户要求改变风格
-   - "custom": 用户提出了具体的自定义修改要求
+3. **modification_type 判断**（仅当 operation_type="modify" 时，否则必须为 null）：
+   - "simplify": 用户要求简化、精简提示词（如："太长了，简化一下"）
+   - "detail": 用户要求添加更多细节（如："加一些细节"）
+   - "fix": 用户指出错误并要求修正（如："把蓝色的衣服改成红色"）
+   - "style": 用户要求改变风格（如："改成赛博朋克风格"）
+   - "custom": 用户提出了其他自定义修改要求（如："让他更可爱一点"）
+   - **注意**：如果 operation_type="regenerate"，modification_type 必须为 null
 
-4. **feedback 提取**（仅当 operation_type="modify" 时）：
+4. **feedback 提取**（仅当 operation_type="modify" 时，否则必须为 null）：
    - 提取用户的具体修改意见，作为字符串
    - 例如："让他更可爱一点，胸口挂着铃铛"
+   - **注意**：如果 operation_type="regenerate"，feedback 必须为 null
 
 5. **targets 提取**：
    - 用户提到角色名如"主角"、"小明"、"阿九-青年" -> targets=[{{"type": "name", "value": "角色名"}}]
@@ -112,13 +119,34 @@ class AssetRegenerator:
 示例：
 
 **重新生成示例（无修改意见）**：
-- "重新生成主角的图片提示词" -> {{"resource_type": "image_prompt", "operation_type": "regenerate", "scope": "specific", "targets": [{{"type": "name", "value": "主角"}}], "modification_type": null, "feedback": null}}
-- "给阿九-青年重新生成图片提示词" -> {{"resource_type": "image_prompt", "operation_type": "regenerate", "scope": "specific", "targets": [{{"type": "name", "value": "阿九-青年"}}], "modification_type": null, "feedback": null}}
+- 输入："重新生成主角的图片提示词"
+- 输出：{{"resource_type": "image_prompt", "operation_type": "regenerate", "scope": "specific", "targets": [{{"type": "name", "value": "主角"}}], "modification_type": null, "feedback": null}}
+- 原因：用户只说了"重新生成"，没有说"要改成什么样"
+
+- 输入："给阿九-青年重新生成图片提示词"
+- 输出：{{"resource_type": "image_prompt", "operation_type": "regenerate", "scope": "specific", "targets": [{{"type": "name", "value": "阿九-青年"}}], "modification_type": null, "feedback": null}}
+- 原因：用户只说了"重新生成"，没有说"要改成什么样"
 
 **修改示例（有修改意见）**：
-- "重新生成阿九的图片提示词，让他更可爱萌一点" -> {{"resource_type": "image_prompt", "operation_type": "modify", "scope": "specific", "targets": [{{"type": "name", "value": "阿九"}}], "modification_type": "custom", "feedback": "让他更可爱萌一点"}}
-- "修改阿九的提示词，把胸口的玉改成铃铛" -> {{"resource_type": "image_prompt", "operation_type": "modify", "scope": "specific", "targets": [{{"type": "name", "value": "阿九"}}], "modification_type": "fix", "feedback": "把胸口的玉改成铃铛"}}
-- "简化主角的提示词，太长了" -> {{"resource_type": "image_prompt", "operation_type": "modify", "scope": "specific", "targets": [{{"type": "name", "value": "主角"}}], "modification_type": "simplify", "feedback": "太长了，简化一下"}}
+- 输入："重新生成阿九的图片提示词，让他更可爱萌一点"
+- 输出：{{"resource_type": "image_prompt", "operation_type": "modify", "scope": "specific", "targets": [{{"type": "name", "value": "阿九"}}], "modification_type": "custom", "feedback": "让他更可爱萌一点"}}
+- 原因：用户说了"让他更可爱萌一点"，这是修改意见
+
+- 输入："重新生成阿九的图片提示词，胸口的玉改成铃铛"
+- 输出：{{"resource_type": "image_prompt", "operation_type": "modify", "scope": "specific", "targets": [{{"type": "name", "value": "阿九"}}], "modification_type": "fix", "feedback": "胸口的玉改成铃铛"}}
+- 原因：用户说了"胸口的玉改成铃铛"，这是修改意见
+
+- 输入："修改阿九的提示词，把胸口的玉改成铃铛"
+- 输出：{{"resource_type": "image_prompt", "operation_type": "modify", "scope": "specific", "targets": [{{"type": "name", "value": "阿九"}}], "modification_type": "fix", "feedback": "把胸口的玉改成铃铛"}}
+- 原因：用户明确说了"修改"，并提出了修改内容
+
+- 输入："简化主角的提示词，太长了"
+- 输出：{{"resource_type": "image_prompt", "operation_type": "modify", "scope": "specific", "targets": [{{"type": "name", "value": "主角"}}], "modification_type": "simplify", "feedback": "太长了，简化一下"}}
+- 原因：用户说了"太长了"，这是修改意见
+
+**特别注意**：
+- 如果用户只说了"重新生成"，没有说任何修改要求，就是 regenerate
+- modification_type 和 feedback 在 regenerate 时必须为 null
 
 只返回纯 JSON，不要任何其他内容，不要添加 ```json 代码块标签，不要添加任何解释说明。"""
 
@@ -134,6 +162,7 @@ class AssetRegenerator:
 请分析并返回 JSON：
 {{
     "resource_type": "image" | "image_prompt",
+    "operation_type": "regenerate" | "modify",
     "scope": "specific" | "all" | "failed",
     "targets": [
         {{
@@ -142,6 +171,8 @@ class AssetRegenerator:
             "params": {{}}
         }}
     ],
+    "modification_type": "simplify" | "detail" | "fix" | "style" | "custom" | null,
+    "feedback": "用户的修改意见或null",
     "reason": "分析说明"
 }}
 
@@ -152,20 +183,48 @@ class AssetRegenerator:
    - 如果用户消息包含"图片"、"图像"（但不包含"提示词"）-> "image"
    - 默认 "image"
 
-2. **targets 提取**：
+2. **operation_type 判断**（关键！这是最重要的判断）：
+   
+   **必须严格遵守以下规则**：
+   - 如果用户消息**只包含**"重新生成提示词"的请求，**没有任何**具体的修改要求 → operation_type="regenerate"
+   - 如果用户消息**除了**"重新生成提示词"之外，**还包含**任何具体的修改要求（如：改变风格、添加细节、修改某个元素等） → operation_type="modify"
+   
+   **具体示例**：
+   - "重新生成客厅的图片提示词" → **只有请求，无修改意见** → operation_type="regenerate"
+   - "重新生成客厅的图片提示词，设置成赛璐璐风格" → **有请求，也有修改意见** → operation_type="modify"
+   - "重新生成客厅的图片提示词，增加阳光" → **有请求，也有修改意见** → operation_type="modify"
+   - "修改客厅的提示词，让氛围更暗" → **明确修改** → operation_type="modify"
+   
+   **判断技巧**：看用户是否说了"要..."、"希望..."、"改成..."、"变成..."、"更..."、"设置成..."等表达修改意愿的词。如果有，就是 modify；如果没有，就是 regenerate。
+
+3. **modification_type 判断**（仅当 operation_type="modify" 时，否则必须为 null）：
+   - "simplify": 用户要求简化、精简提示词（如："太长了，简化一下"）
+   - "detail": 用户要求添加更多细节（如："加一些细节"）
+   - "fix": 用户指出错误并要求修正（如："把白天的场景改成夜晚"）
+   - "style": 用户要求改变风格（如："改成赛璐璐风格"、"设置成写实风格"）
+   - "custom": 用户提出了其他自定义修改要求
+   - **注意**：如果 operation_type="regenerate"，modification_type 必须为 null
+
+4. **feedback 提取**（仅当 operation_type="modify" 时，否则必须为 null）：
+   - 提取用户的具体修改意见
+   - 例如："设置成赛璐璐风格"、"增加阳光"、"让氛围更暗"
+   - 如果 operation_type="regenerate"，feedback 必须为 null
+
+5. **targets 提取**：
    - 用户提到场景名如"客厅"、"战场"、"场景5" -> targets=[{{"type": "name", "value": "客厅"}}]
    - 注意："场景5"表示名称是"场景5"或编号为5的场景
 
-3. **scope 判断**：
+6. **scope 判断**：
    - 用户说"全部场景"、"所有场景" -> scope="all"
    - 用户说"生成失败的场景"、"重试失败" -> scope="failed"
    - 指定具体场景名 -> scope="specific"
 
 示例：
-- "重新生成客厅的图片" -> {{"resource_type": "image", "scope": "specific", "targets": [{{"type": "name", "value": "客厅"}}]}}
-- "重新生成客厅的图片提示词" -> {{"resource_type": "image_prompt", "scope": "specific", "targets": [{{"type": "name", "value": "客厅"}}]}}
-- "重新生成所有场景" -> {{"resource_type": "image", "scope": "all", "targets": []}}
-- "重试失败的场景生成" -> {{"resource_type": "image", "scope": "failed", "targets": []}}
+- "重新生成客厅的图片" -> {{"resource_type": "image", "operation_type": "regenerate", "scope": "specific", "targets": [{{"type": "name", "value": "客厅"}}], "modification_type": null, "feedback": null}}
+- "重新生成客厅的图片提示词" -> {{"resource_type": "image_prompt", "operation_type": "regenerate", "scope": "specific", "targets": [{{"type": "name", "value": "客厅"}}], "modification_type": null, "feedback": null}}
+- "重新生成客厅的图片提示词，设置成赛璐璐风格" -> {{"resource_type": "image_prompt", "operation_type": "modify", "scope": "specific", "targets": [{{"type": "name", "value": "客厅"}}], "modification_type": "style", "feedback": "设置成赛璐璐风格"}}
+- "重新生成所有场景" -> {{"resource_type": "image", "operation_type": "regenerate", "scope": "all", "targets": [], "modification_type": null, "feedback": null}}
+- "重试失败的场景生成" -> {{"resource_type": "image", "operation_type": "regenerate", "scope": "failed", "targets": [], "modification_type": null, "feedback": null}}
 
 只返回纯 JSON，不要任何其他内容，不要添加 ```json 代码块标签，不要添加任何解释说明。"""
 
@@ -181,6 +240,7 @@ class AssetRegenerator:
 请分析并返回 JSON：
 {{
     "resource_type": "image" | "image_prompt" | "video" | "video_prompt",
+    "operation_type": "regenerate" | "modify",
     "scope": "specific" | "all" | "failed",
     "targets": [
         {{
@@ -192,6 +252,8 @@ class AssetRegenerator:
             }}
         }}
     ],
+    "modification_type": "simplify" | "detail" | "fix" | "style" | "custom" | null,
+    "feedback": "用户的修改意见或null",
     "reason": "分析说明"
 }}
 
@@ -204,25 +266,52 @@ class AssetRegenerator:
    - 如果用户消息包含"图片"、"图像"、"帧"（但不包含"提示词"）-> "image"
    - 默认 "image"
 
-2. **frame_type 判断**（仅 image 或 image_prompt 时）：
+2. **operation_type 判断**（关键！这是最重要的判断）：
+   
+   **必须严格遵守以下规则**：
+   - 如果用户消息**只包含**"重新生成提示词"的请求，**没有任何**具体的修改要求 → operation_type="regenerate"
+   - 如果用户消息**除了**"重新生成提示词"之外，**还包含**任何具体的修改要求（如：改变风格、添加细节、修改某个元素等） → operation_type="modify"
+   
+   **具体示例**：
+   - "给分镜2重新生成图片提示词" → **只有请求，无修改意见** → operation_type="regenerate"
+   - "给分镜2重新生成图片提示词，设置成赛璐璐风格" → **有请求，也有修改意见** → operation_type="modify"
+   - "给分镜2重新生成视频提示词，增加更多动作细节" → **有请求，也有修改意见** → operation_type="modify"
+   - "修改分镜2的提示词，让画面更暗" → **明确修改** → operation_type="modify"
+   
+   **判断技巧**：看用户是否说了"要..."、"希望..."、"改成..."、"变成..."、"更..."、"设置成..."等表达修改意愿的词。如果有，就是 modify；如果没有，就是 regenerate。
+
+3. **modification_type 判断**（仅当 operation_type="modify" 时，否则必须为 null）：
+   - "simplify": 用户要求简化、精简提示词（如："太长了，简化一下"）
+   - "detail": 用户要求添加更多细节（如："加一些细节"、"增加动作"）
+   - "fix": 用户指出错误并要求修正（如："把白天的场景改成夜晚"）
+   - "style": 用户要求改变风格（如："改成赛璐璐风格"、"设置成写实风格"）
+   - "custom": 用户提出了其他自定义修改要求
+   - **注意**：如果 operation_type="regenerate"，modification_type 必须为 null
+
+4. **feedback 提取**（仅当 operation_type="modify" 时，否则必须为 null）：
+   - 提取用户的具体修改意见
+   - 例如："设置成赛璐璐风格"、"增加动作细节"、"让画面更暗"
+   - 如果 operation_type="regenerate"，feedback 必须为 null
+
+5. **frame_type 判断**（仅 image 或 image_prompt 时）：
    - 提到"尾帧"、"结束帧"、"最后一帧" -> "end"
    - 提到"首帧"、"开始帧"、"第一帧" -> "start"
    - 提到"图片"但没指定首尾 -> "both"
 
-3. **generation_mode 判断**（仅 video 时，重要！）：
+6. **generation_mode 判断**（仅 video 时，重要！）：
    - 提到"只用首帧"、"首帧生成"、"首帧模式" -> "first_frame_only"
    - 提到"首尾帧"、"双帧"、"全部" 或 没有指定模式 -> "first_last_frame"
    - **默认必须设置为 "first_last_frame"**
    - **当 resource_type 为 "video" 时，必须在 params 中设置 generation_mode 字段**
 
-4. **targets 提取**（重要！）：
+7. **targets 提取**（重要！）：
    - 用户说"分镜1" -> 匹配编号为 1 的分镜
    - 用户说"分镜11" -> 匹配编号为 11 的分镜（不是 1）
    - "分镜1生成首帧" -> {{"type": "number", "value": 1, "params": {{"frame_type": "start"}}}}
    - "分镜1生成视频" -> {{"type": "number", "value": 1, "params": {{"generation_mode": "first_last_frame"}}}}（video 必须带 generation_mode）
    - "分镜1重新生成视频提示词" -> {{"type": "number", "value": 1, "params": {{}}}}（video_prompt 不需要 generation_mode）
 
-5. **scope 判断**：
+8. **scope 判断**：
    - "全部"、"所有" -> "all"
    - "失败的"、"重试" -> "failed"
    - 指定编号 -> "specific"
@@ -242,55 +331,85 @@ class AssetRegenerator:
 - "给我的分镜1重新生成首帧，分镜2重新生成尾帧" -> 
   {{
     "resource_type": "image",
+    "operation_type": "regenerate",
     "scope": "specific",
     "targets": [
       {{"type": "number", "value": 1, "params": {{"frame_type": "start"}}}},
       {{"type": "number", "value": 2, "params": {{"frame_type": "end"}}}}
-    ]
+    ],
+    "modification_type": null,
+    "feedback": null
   }}
 
 - "给分镜1生成首帧提示词" ->
   {{
     "resource_type": "image_prompt",
+    "operation_type": "regenerate",
     "scope": "specific",
     "targets": [
       {{"type": "number", "value": 1, "params": {{"frame_type": "start"}}}}
-    ]
+    ],
+    "modification_type": null,
+    "feedback": null
+  }}
+
+- "给分镜2重新生成图片提示词，设置成赛璐璐风格" ->
+  {{
+    "resource_type": "image_prompt",
+    "operation_type": "modify",
+    "scope": "specific",
+    "targets": [
+      {{"type": "number", "value": 2, "params": {{"frame_type": "both"}}}}
+    ],
+    "modification_type": "style",
+    "feedback": "设置成赛璐璐风格"
   }}
 
 - "给分镜1生成视频" ->
   {{
     "resource_type": "video",
+    "operation_type": "regenerate",
     "scope": "specific",
     "targets": [
       {{"type": "number", "value": 1, "params": {{"generation_mode": "first_last_frame"}}}}
-    ]
+    ],
+    "modification_type": null,
+    "feedback": null
   }}
 
 - "给分镜5重新生成视频提示词" ->
   {{
     "resource_type": "video_prompt",
+    "operation_type": "regenerate",
     "scope": "specific",
     "targets": [
       {{"type": "number", "value": 5, "params": {{}}}}
-    ]
+    ],
+    "modification_type": null,
+    "feedback": null
   }}
 
 - "用首帧给分镜1和2生成视频" ->
   {{
     "resource_type": "video",
+    "operation_type": "regenerate",
     "scope": "specific",
     "targets": [
       {{"type": "number", "value": 1, "params": {{"generation_mode": "first_frame_only"}}}},
       {{"type": "number", "value": 2, "params": {{"generation_mode": "first_frame_only"}}}}
-    ]
+    ],
+    "modification_type": null,
+    "feedback": null
   }}
 
 - "重新生成所有失败的分镜视频" ->
   {{
     "resource_type": "video",
+    "operation_type": "regenerate",
     "scope": "failed",
-    "targets": []
+    "targets": [],
+    "modification_type": null,
+    "feedback": null
   }}
 
 只返回纯 JSON，不要任何其他内容，不要添加 ```json 代码块标签，不要添加任何解释说明。"""
@@ -570,158 +689,7 @@ class AssetRegenerator:
 
         except Exception as e:
             logger.error(f"[AssetRegenerator] 分析请求失败: {e}")
-            # 兜底：从消息中直接检测
-            return self._fallback_analysis(target_type, user_message)
-
-    def _fallback_analysis(self, target_type: str, user_message: str) -> Dict[str, Any]:
-        """兜底分析：从用户消息中直接提取信息"""
-        import re
-
-        msg_lower = user_message.lower()
-
-        # 检测 scope
-        scope = "specific"
-        if "全部" in user_message or "所有" in user_message:
-            scope = "all"
-        elif "失败" in user_message or "重试" in user_message:
-            scope = "failed"
-
-        targets = []
-
-        if target_type == "shot":
-            # 检测 resource_type
-            resource_type = "video" if "视频" in user_message else "image"
-
-            # 检测 generation_mode（仅视频时）
-            generation_mode = "first_last_frame"  # 默认使用首尾帧模式
-            if "只用首帧" in user_message or "首帧生成" in user_message or "单帧" in user_message:
-                generation_mode = "first_frame_only"
-            elif "首尾帧" in user_message or "双帧" in user_message:
-                generation_mode = "first_last_frame"
-
-            # 提取分镜编号和参数
-            # 模式: "分镜1...首帧"
-            pattern = r'分镜\s*(\d+)[^。]*?(首帧|尾帧|开始帧|结束帧)?'
-            matches = re.findall(pattern, user_message, re.IGNORECASE)
-
-            for match in matches:
-                number = int(match[0])
-                frame_type_keyword = match[1]
-
-                params = {}
-
-                # 视频模式添加 generation_mode
-                if resource_type == "video":
-                    params["generation_mode"] = generation_mode
-
-                if frame_type_keyword in ["首帧", "开始帧"]:
-                    params["frame_type"] = "start"
-                elif frame_type_keyword in ["尾帧", "结束帧"]:
-                    params["frame_type"] = "end"
-
-                targets.append({
-                    "type": "number",
-                    "value": number,
-                    "params": params
-                })
-
-            if not targets:
-                # 简单提取编号
-                numbers = re.findall(r'分镜\s*(\d+)', user_message)
-                for n in numbers:
-                    params = {}
-                    # 视频模式添加 generation_mode
-                    if resource_type == "video":
-                        params["generation_mode"] = generation_mode
-                    targets.append({
-                        "type": "number",
-                        "value": int(n),
-                        "params": params
-                    })
-
-            return {
-                "resource_type": resource_type,
-                "scope": scope,
-                "targets": targets,
-                "reason": "兜底分析",
-            }
-
-        elif target_type == "character":
-            # 检测 resource_type
-            resource_type = "image_prompt" if "提示词" in user_message else "image"
-
-            # 检测 operation_type：是否有修改意见
-            # 简单的启发式：如果消息长度超过基本请求，可能包含修改意见
-            operation_type = "regenerate"
-            modification_type = None
-            feedback = None
-
-            # 检测常见的修改关键词
-            modify_keywords = ["改成", "改为", "变成", "添加", "删除", "去掉", "加上", "更", "有点", "太", "不够"]
-            has_modify_intent = any(kw in user_message for kw in modify_keywords)
-
-            if has_modify_intent:
-                operation_type = "modify"
-                modification_type = "custom"
-                # 提取修改意见（简单实现：取"重新生成"之后的内容）
-                if "重新生成" in user_message:
-                    parts = user_message.split("重新生成", 1)
-                    if len(parts) > 1:
-                        feedback = parts[1].strip("，。！？")
-
-            # 兜底：如果没有提取到角色名，尝试从消息中提取
-            if not targets:
-                # 尝试匹配 "给 XXX 重新生成" 或 "重新生成 XXX 的图片"
-                patterns = [
-                    r'给\s*([^\s]+(?:-[^\s]+)?)\s*重新生成',
-                    r'重新生成\s*([^\s]+(?:-[^\s]+)?)\s*的?图片',
-                    r'([^\s]+(?:-[^\s]+)?)\s*的?图片.*重新生成',
-                ]
-                for pattern in patterns:
-                    match = re.search(pattern, user_message)
-                    if match:
-                        name = match.group(1).strip()
-                        if name and name not in ["全部", "所有", "失败"]:
-                            targets.append({
-                                "type": "name",
-                                "value": name,
-                                "params": {}
-                            })
-                            break
-
-            return {
-                "resource_type": resource_type,
-                "operation_type": operation_type,
-                "scope": scope,
-                "targets": targets,
-                "modification_type": modification_type,
-                "feedback": feedback,
-                "reason": "兜底分析",
-            }
-
-        else:  # scene
-            # 检测 resource_type
-            resource_type = "image_prompt" if "提示词" in user_message else "image"
-
-            # 检测 operation_type
-            operation_type = "regenerate"
-            modification_type = None
-            feedback = None
-
-            modify_keywords = ["改成", "改为", "变成", "添加", "删除", "去掉", "加上", "更", "有点", "太", "不够"]
-            if any(kw in user_message for kw in modify_keywords):
-                operation_type = "modify"
-                modification_type = "custom"
-
-            return {
-                "resource_type": resource_type,
-                "operation_type": operation_type,
-                "scope": scope,
-                "targets": targets,
-                "modification_type": modification_type,
-                "feedback": feedback,
-                "reason": "兜底分析",
-            }
+            return None
 
     def _clean_response_content(self, content: str) -> str:
         """清理 AI 响应内容，移除多余标签"""
@@ -729,24 +697,13 @@ class AssetRegenerator:
 
         content = content.strip()
 
-        content = re.sub(r'^<[^>]*>\s*', '', content)
-        content = re.sub(r'\s*</[^>]*>$', '', content)
+        # 从 markdown 代码块提取
+        if "```" in content:
+            match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+            if match:
+                content = match.group(1)
 
-        content = re.sub(r'^<text[^>]*>\s*', '', content, flags=re.IGNORECASE)
-        content = re.sub(r'\s*</text>$', '', content, flags=re.IGNORECASE)
-
-        content = re.sub(r'^<think[^>]*>\s*', '', content, flags=re.IGNORECASE)
-        content = re.sub(r'\s*<\/think>$', '', content, flags=re.IGNORECASE)
-
-        content = re.sub(r'^<reasoning[^>]*>\s*', '', content, flags=re.IGNORECASE)
-        content = re.sub(r'\s*<\/reasoning>$', '', content, flags=re.IGNORECASE)
-
-        content = re.sub(r'^与分析.*?相关\s*', '', content, flags=re.IGNORECASE)
-        content = re.sub(r'\s*与分析.*?相关$', '', content, flags=re.IGNORECASE)
-
-        content = content.strip()
-
-        return content
+        return content.strip()
 
     async def _get_failed_resources(
         self,
@@ -1008,7 +965,6 @@ class AssetRegenerator:
         return message
 
 
-# 便捷函数
 async def regenerate_assets(state: ComicDramaState) -> Dict[str, Any]:
     """LangGraph node 函数"""
     node = AssetRegenerator()

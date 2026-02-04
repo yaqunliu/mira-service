@@ -41,6 +41,8 @@
 {{DURATION}}秒
 </duration>
 
+{{KNOWLEDGE_CONTEXT}}
+
 ## 输出要求
 
 生成具有**专业电影感**的视频提示词，采用**三维度时间轴驱动**格式。

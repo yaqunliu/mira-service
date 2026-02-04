@@ -137,7 +137,9 @@ async def _llm_match_resources(
 
 匹配规则（按优先级排序）：
 1. **数字编号优先**：如"分镜5"应匹配 编号=5（sequence=5 或 shot_number=5），而不是 description 包含"5"
-2. **名称匹配**：如"幽影"应匹配 name="幽影"的角色
+2. **名称精确匹配**：如"幽影"应匹配 name="幽影"的角色，**不要**匹配 name="幽影-青年"或"幽影-战斗"等
+   - **重要**：角色名称必须完全相等才匹配，不允许前缀匹配或部分匹配
+   - 例如：用户说"阿九-青年"，只能匹配 name="阿九-青年"，**不能**匹配 name="阿九-青年-战斗"
 3. **描述匹配**：如"幽影出场的分镜"应匹配 description 包含"幽影"的分镜
 4. **序数词匹配**：如"第一个分镜"应匹配 编号 最小的分镜
 5. **模糊匹配**：如"老王出场的场景"应匹配 description 包含"老王"的场景
@@ -270,12 +272,20 @@ def _fallback_match(
                 score = 100
                 reasons.append(f"编号={shot_num} 匹配 '{user_reference}'")
         
-        # 名称匹配
+        # 名称精确匹配（重要：必须是完全相等，不允许前缀匹配）
         if score == 0:
             name = r.get("name", "").lower() if target == "character" else r.get("title", "").lower()
-            if name and name in ref_lower:
+            # 精确匹配：用户输入必须完全等于资源名称
+            if name and name == ref_lower:
                 score = 80
-                reasons.append(f"名称 '{name}' 匹配")
+                reasons.append(f"名称 '{name}' 精确匹配")
+            # 如果用户输入包含额外信息（如"阿九-青年 的图片"），提取名称部分再匹配
+            elif name:
+                # 提取可能的名称（去掉"的图片"、"的提示词"等后缀）
+                clean_ref = ref_lower.replace("的图片", "").replace("的图像", "").replace("的提示词", "").strip()
+                if name == clean_ref:
+                    score = 80
+                    reasons.append(f"名称 '{name}' 精确匹配")
         
         # 描述匹配
         if score == 0:
