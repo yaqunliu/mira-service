@@ -20,7 +20,6 @@ ReAct 支持：
 from app.agent.graph.nodes.teams.supervisor import supervisor_node, route_from_supervisor
 from app.agent.graph.nodes.teams.react_worker_base import ReActWorkerNode
 from app.agent.graph.nodes.teams.script_analyst import ScriptAnalystNode
-from app.agent.graph.nodes.teams.asset_director import AssetDirectorNode
 from app.agent.graph.nodes.teams.storyboard_director import StoryboardDirectorNode
 from app.agent.graph.nodes.teams.audio_engineer import AudioEngineerNode
 from app.agent.graph.nodes.teams.video_editor import VideoEditorNode
@@ -40,7 +39,6 @@ __all__ = [
     # Workers
     "ReActWorkerNode",
     "ScriptAnalystNode",
-    "AssetDirectorNode",
     "StoryboardDirectorNode",
     "AudioEngineerNode",
     "VideoEditorNode",
