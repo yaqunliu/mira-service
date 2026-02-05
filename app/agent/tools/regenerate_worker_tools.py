@@ -906,7 +906,7 @@ async def submit_shot_prompt_regeneration(
     """
     提交分镜提示词重新生成/修改任务
     
-    使用模板文件生成提示词，支持知识库查询（仅视频提示词）。
+    使用模板文件生成提示词。
     
     Args:
         shot_id: 分镜ID
@@ -983,21 +983,6 @@ async def submit_shot_prompt_regeneration(
         logger.warning(f"[Submit Tool] 获取角色信息失败: {e}")
         character_profiles = "无角色信息"
 
-    # 如果是视频提示词，检索知识库
-    knowledge_context = ""
-    if prompt_type == "video" and operation_type == "regenerate":
-        knowledge_result = await _retrieve_knowledge_from_db(
-            shot_description=shot.get("description", ""),
-            top_k=3,
-        )
-
-        if knowledge_result.get("status") == "success":
-            knowledge_items = knowledge_result.get("knowledge", [])
-            if knowledge_items:
-                knowledge_context = "\n\n## 参考知识\n"
-                for i, item in enumerate(knowledge_items, 1):
-                    knowledge_context += f"{i}. [{item['type']}] {item['content']}\n"
-
     # 读取提示词模板
     if operation_type == "regenerate":
         if prompt_type == "video":
@@ -1007,7 +992,7 @@ async def submit_shot_prompt_regeneration(
     else:
         template = read_prompt_template("modify_prompt.md")
 
-    # 填充模板变量
+    # 填充模板变量（不包括 KNOWLEDGE_CONTEXT，由调用方负责注入）
     if operation_type == "regenerate":
         # 构建上一个分镜信息
         prev_shot_info = ""
@@ -1020,18 +1005,18 @@ async def submit_shot_prompt_regeneration(
 """
 
         prompt = template.replace("{{SHOT_NUMBER}}", str(shot.get("shot_number", ""))) \
-                        .replace("{{SHOT_TITLE}}", shot.get("title", "") or f"分镜{shot.get('shot_number', '')}") \
-                        .replace("{{SHOT_DESCRIPTION}}", shot.get("description", "") or "无") \
-                        .replace("{{SHOT_NARRATION}}", shot.get("narration", "") or "无") \
-                        .replace("{{SHOT_VIDEO_DURATION}}", str(shot.get("video_duration", "5"))) \
-                        .replace("{{SCENE_TITLE}}", scene.get("title", "") if scene else "未指定") \
-                        .replace("{{SCENE_LOCATION}}", scene.get("location", "") or "未指定") \
-                        .replace("{{SCENE_TIME}}", scene.get("time_setting", "") or "未指定") \
-                        .replace("{{SCENE_ATMOSPHERE}}", scene.get("atmosphere", "") or "未指定") \
-                        .replace("{{PREVIOUS_SHOT_INFO}}", prev_shot_info) \
-                        .replace("{{KNOWLEDGE_CONTEXT}}", knowledge_context) \
-                        .replace("{{CHARACTER_PROFILES}}", character_profiles) \
-                        .replace("{{VISUAL_STYLE}}", visual_style)
+                    .replace("{{SHOT_TITLE}}", shot.get("title", "") or f"分镜{shot.get('shot_number', '')}") \
+                    .replace("{{SHOT_DESCRIPTION}}", shot.get("description", "") or "无") \
+                    .replace("{{SHOT_NARRATION}}", shot.get("narration", "") or "无") \
+                    .replace("{{SHOT_VIDEO_DURATION}}", str(shot.get("video_duration", "5"))) \
+                    .replace("{{SCENE_TITLE}}", scene.get("title", "") if scene else "未指定") \
+                    .replace("{{SCENE_LOCATION}}", scene.get("location", "") or "未指定") \
+                    .replace("{{SCENE_TIME}}", scene.get("time_setting", "") or "未指定") \
+                    .replace("{{SCENE_ATMOSPHERE}}", scene.get("atmosphere", "") or "未指定") \
+                    .replace("{{PREVIOUS_SHOT_INFO}}", prev_shot_info) \
+                    .replace("{{KNOWLEDGE_CONTEXT}}", "") \
+                    .replace("{{CHARACTER_PROFILES}}", character_profiles) \
+                    .replace("{{VISUAL_STYLE}}", visual_style)
     else:  # modify
         old_prompt = _get_old_prompt(shot, prompt_type, frame_type)
         prompt = template.replace("{{OLD_PROMPT}}", old_prompt or "（无原提示词）") \
@@ -1062,7 +1047,7 @@ async def submit_shot_prompt_regeneration(
                            .replace("{{SCENE_TIME}}", scene.get("time_setting", "") or "未指定") \
                            .replace("{{SCENE_ATMOSPHERE}}", scene.get("atmosphere", "") or "未指定") \
                            .replace("{{PREVIOUS_SHOT_INFO}}", prev_shot_info if 'prev_shot_info' in locals() else "") \
-                           .replace("{{KNOWLEDGE_CONTEXT}}", knowledge_context) \
+                           .replace("{{KNOWLEDGE_CONTEXT}}", "") \
                            .replace("{{CHARACTER_PROFILES}}", character_profiles) \
                            .replace("{{VISUAL_STYLE}}", visual_style)
 
@@ -1076,7 +1061,6 @@ async def submit_shot_prompt_regeneration(
         "frame_type": frame_type,
         "operation_type": operation_type,
         "new_prompt": new_prompt[:100] + "..." if len(new_prompt) > 100 else new_prompt,
-        "knowledge_used": bool(knowledge_context),
     }
 
 
@@ -1145,11 +1129,8 @@ REGENERATE_WORKER_TOOLS = [
     query_single_shot,
     # 提交重新生成类
     submit_character_image_regeneration,
-    submit_character_prompt_regeneration,
     submit_scene_image_regeneration,
-    submit_scene_prompt_regeneration,
     submit_shot_image_regeneration,
-    submit_shot_prompt_regeneration,
     submit_shot_video_regeneration,
 ]
 
@@ -1234,8 +1215,15 @@ async def clear_asset(
             
             # 保存版本
             if save_version:
+                import json
                 status_detail = resource.status_detail or {}
-                versions = status_detail.get("versions", [])
+                # 如果 status_detail 是字符串，解析为字典
+                if isinstance(status_detail, str):
+                    try:
+                        status_detail = json.loads(status_detail) if status_detail else {}
+                    except json.JSONDecodeError:
+                        status_detail = {}
+                versions = status_detail.get("versions", []) if isinstance(status_detail, dict) else []
                 version_record = {
                     "version": len(versions) + 1,
                     "created_at": datetime.now().isoformat(),
@@ -1299,17 +1287,30 @@ async def submit_generation(
         
         async with get_async_session() as db:
             if target_type == "character":
-                # 获取 Character 的 creation_id
+                # 获取 Character 的 creation_id 和 visual_style
                 stmt = select(Character).where(Character.character_id == target_id)
                 result = await db.execute(stmt)
                 resource = result.scalar_one_or_none()
                 if not resource:
                     return {"success": False, "error": f"角色不存在: {target_id}"}
                 creation_id = resource.creation_id
-                logger.info(f"[Regenerate Tool] 调用 generate_character_image_task: character_id={target_id}, creation_id={creation_id}")
+                
+                # 获取 creation 的 visual_style（从 extra_data 中获取）
+                from app.models.creation import Creation
+                creation_stmt = select(Creation).where(Creation.creation_id == creation_id)
+                creation_result = await db.execute(creation_stmt)
+                creation_obj = creation_result.scalar_one_or_none()
+                if creation_obj and creation_obj.extra_data:
+                    visual_style = creation_obj.extra_data.get("visual_style", "anime")
+                else:
+                    visual_style = "anime"
+                
+                logger.info(f"[Regenerate Tool] 调用 generate_character_image_task: character_ids=[{target_id}], creation_uuid={creation_uuid}")
                 task = generate_character_image_task.delay(
-                    character_id=target_id,
-                    creation_id=creation_id,
+                    character_ids=[target_id],  # 注意：是列表
+                    visual_style=visual_style,
+                    creation_uuid=creation_uuid,
+                    force_regenerate=True,
                 )
                 
             elif target_type == "scene":
@@ -1500,23 +1501,6 @@ async def update_resource_status(
             else:
                 return {"success": False, "error": f"不支持的资源类型: {target_type}"}
             
-            # 保存版本
-            if save_version:
-                status_detail = resource.status_detail or {}
-                versions = status_detail.get("versions", [])
-                version_record = {
-                    "version": len(versions) + 1,
-                    "created_at": datetime.now().isoformat(),
-                    "field": "status" if target_type != "shot_video" else "video_status",
-                    "value": {
-                        "old": old_status,
-                        "new": status,
-                    },
-                    "trigger": "regenerate",
-                }
-                versions.append(version_record)
-                status_detail["versions"] = versions
-                resource.status_detail = status_detail
             
             await db.commit()
             

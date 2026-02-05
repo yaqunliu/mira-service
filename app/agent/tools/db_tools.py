@@ -116,6 +116,7 @@ async def query_characters(
         logger.info(f"[DB Tool] 查询到 {len(characters)} 个角色")
         
         return {
+            "success": True,
             "total": len(characters),
             "characters": [
                 {
@@ -247,6 +248,7 @@ async def query_shots(
         with_video = sum(1 for s in shots if s.video_url)
         
         return {
+            "success": True,
             "total": len(shots),
             "with_image": with_image,
             "with_video": with_video,
@@ -374,6 +376,248 @@ async def query_creation_status(creation_uuid: str) -> Dict[str, Any]:
                 "image_progress": f"{shot_with_image}/{shot_count}" if shot_count else "0/0",
                 "video_progress": f"{shot_with_video}/{shot_count}" if shot_count else "0/0",
             },
+        }
+
+
+# ==================== 单个资源查询 Tools ====================
+
+@tool
+async def query_single_character(character_id: int) -> Dict[str, Any]:
+    """
+    查询单个角色详情
+    
+    获取角色的完整信息，包括基本信息、外貌、状态、提示词等。
+    
+    Args:
+        character_id: 角色ID
+        
+    Returns:
+        {
+            "success": bool,
+            "character_id": int,
+            "name": str,
+            "basic_info": str,
+            "appearance": str,
+            "image_prompt": str,
+            "image_url": str,
+            ...
+        }
+    """
+    logger.info(f"[DB Tool] 查询单个角色: character_id={character_id}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.character import Character
+    from sqlalchemy import select
+    
+    async with get_async_session() as db:
+        stmt = select(Character).where(Character.character_id == character_id)
+        result = await db.execute(stmt)
+        character = result.scalar_one_or_none()
+        
+        if not character:
+            return {
+                "success": False,
+                "error": f"角色不存在: {character_id}",
+            }
+        
+        return {
+            "success": True,
+            "character_id": character.character_id,
+            "name": character.name,
+            "basic_info": character.basic_info,
+            "appearance": character.appearance,
+            "image_prompt": character.image_prompt,
+            "image_url": character.image_url,
+            "status": character.status,
+            "status_detail": character.status_detail,
+            "voice_id": character.voice_id,
+            "voice_speed": character.voice_speed,
+        }
+
+
+@tool
+async def query_single_scene(scene_id: int) -> Dict[str, Any]:
+    """
+    查询单个场景详情
+    
+    获取场景的完整信息，包括场景设置、状态、提示词等。
+    
+    Args:
+        scene_id: 场景ID
+        
+    Returns:
+        {
+            "success": bool,
+            "scene_id": int,
+            "title": str,
+            "location": str,
+            "time_setting": str,
+            "atmosphere": str,
+            ...
+        }
+    """
+    logger.info(f"[DB Tool] 查询单个场景: scene_id={scene_id}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.scene import Scene
+    from sqlalchemy import select
+    
+    async with get_async_session() as db:
+        stmt = select(Scene).where(Scene.scene_id == scene_id)
+        result = await db.execute(stmt)
+        scene = result.scalar_one_or_none()
+        
+        if not scene:
+            return {
+                "success": False,
+                "error": f"场景不存在: {scene_id}",
+            }
+        
+        return {
+            "success": True,
+            "scene_id": scene.scene_id,
+            "title": scene.title,
+            "location": scene.location,
+            "time_setting": scene.time_setting,
+            "space_type": scene.space_type,
+            "atmosphere": scene.atmosphere,
+            "image_url": scene.image_url,
+            "status": scene.status,
+            "extra_data": scene.extra_data or {},
+        }
+
+
+@tool
+async def query_single_shot(shot_id: int) -> Dict[str, Any]:
+    """
+    查询单个分镜详情
+    
+    获取分镜的完整信息，包括分镜内容、关联场景、上一个分镜信息（用于连贯性处理）等。
+    
+    Args:
+        shot_id: 分镜ID
+        
+    Returns:
+        {
+            "success": bool,
+            "shot_id": int,
+            "shot_number": int,
+            "title": str,
+            "description": str,
+            "scene_info": {...},
+            "previous_shot": {...},  # 上一个分镜信息
+            ...
+        }
+    """
+    logger.info(f"[DB Tool] 查询单个分镜: shot_id={shot_id}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.shot import Shot
+    from app.models.scene import Scene
+    from sqlalchemy import select
+    
+    async with get_async_session() as db:
+        # 查询当前分镜
+        stmt = select(Shot).where(Shot.shot_id == shot_id)
+        result = await db.execute(stmt)
+        shot = result.scalar_one_or_none()
+        
+        if not shot:
+            return {
+                "success": False,
+                "error": f"分镜不存在: {shot_id}",
+            }
+        
+        # 查询关联场景
+        scene_stmt = select(Scene).where(Scene.scene_id == shot.scene_id)
+        scene_result = await db.execute(scene_stmt)
+        scene = scene_result.scalar_one_or_none()
+        
+        scene_info = {
+            "scene_id": scene.scene_id if scene else None,
+            "title": scene.title if scene else "",
+            "location": scene.location if scene else "",
+            "time_setting": scene.time_setting if scene else "",
+            "atmosphere": scene.atmosphere if scene else "",
+        } if scene else None
+        
+        # 查询上一个分镜（用于连贯性）
+        previous_shot = None
+        if shot.shot_number > 1:
+            prev_stmt = select(Shot).where(
+                Shot.scene_id == shot.scene_id,
+                Shot.shot_number == shot.shot_number - 1
+            )
+            prev_result = await db.execute(prev_stmt)
+            prev_shot = prev_result.scalar_one_or_none()
+            
+            if prev_shot:
+                previous_shot = {
+                    "shot_id": prev_shot.shot_id,
+                    "shot_number": prev_shot.shot_number,
+                    "description": prev_shot.description,
+                    "image_url": prev_shot.image_url,
+                }
+        
+        return {
+            "success": True,
+            "shot_id": shot.shot_id,
+            "shot_number": shot.shot_number,
+            "title": shot.title,
+            "description": shot.description,
+            "narration": shot.narration,
+            "video_duration": shot.video_duration,
+            "image_url": shot.image_url,
+            "video_url": shot.video_url,
+            "extra_data": shot.extra_data or {},
+            "scene_info": scene_info,
+            "previous_shot": previous_shot,
+        }
+
+
+@tool
+async def query_creation_info(creation_uuid: str) -> Dict[str, Any]:
+    """
+    查询创作项目基本信息
+    
+    Args:
+        creation_uuid: 创作项目 UUID
+        
+    Returns:
+        {
+            "success": bool,
+            "creation_id": int,
+            "title": str,
+            "status": str,
+            "visual_style": str,
+            ...
+        }
+    """
+    logger.info(f"[DB Tool] 查询创作信息: creation_uuid={creation_uuid}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.creation import Creation
+    from sqlalchemy import select
+    
+    async with get_async_session() as db:
+        stmt = select(Creation).where(Creation.uuid == creation_uuid)
+        result = await db.execute(stmt)
+        creation = result.scalar_one_or_none()
+        
+        if not creation:
+            return {
+                "success": False,
+                "error": f"创作项目不存在: {creation_uuid}",
+            }
+        
+        return {
+            "success": True,
+            "creation_id": creation.creation_id,
+            "creation_uuid": creation_uuid,
+            "title": creation.title,
+            "status": creation.status,
+            "visual_style": creation.extra_data.get("visual_style", "日本动漫风格") if creation.extra_data else "日本动漫风格",
+            "extra_data": creation.extra_data or {},
         }
 
 
@@ -1861,4 +2105,154 @@ async def query_failed_resources(
         except Exception as e:
             logger.error(f"[query_failed_resources] 查询失败: {e}")
             return {"success": False, "error": str(e)}
+
+
+@tool
+async def save_shot_video_prompt(
+    shot_id: int,
+    video_prompt: str,
+    cut_method: str = "",
+    cut_reason: str = "",
+) -> Dict[str, Any]:
+    """
+    保存分镜视频提示词到数据库
+    
+    将生成的视频提示词保存到分镜的 extra_data 字段中。
+    
+    Args:
+        shot_id: 分镜 ID
+        video_prompt: 生成的视频提示词
+        cut_method: 镜头切换方式（如：push_in, whip_pan, smooth_transition 等）
+        cut_reason: 镜头切换原因
+        
+    Returns:
+        保存结果
+    """
+    from app.agent.tools.async_db import get_async_db_session
+    from sqlalchemy import select
+    from sqlalchemy.orm.attributes import flag_modified
+    from app.models.shot import Shot
+    
+    logger.info(f"[save_shot_video_prompt] 保存视频提示词: shot_id={shot_id}")
+    
+    try:
+        async with get_async_db_session() as db:
+            stmt = select(Shot).where(Shot.shot_id == shot_id)
+            result = await db.execute(stmt)
+            shot = result.scalar_one_or_none()
+            
+            if not shot:
+                return {
+                    "success": False,
+                    "error": f"分镜不存在: {shot_id}",
+                    "shot_id": shot_id,
+                }
+            
+            if shot.extra_data is None:
+                shot.extra_data = {}
+            
+            shot.extra_data["video_prompt"] = video_prompt
+            shot.extra_data["cut_method"] = cut_method
+            shot.extra_data["cut_reason"] = cut_reason
+            shot.extra_data["video_prompt_updated_at"] = datetime.now().isoformat()
+            
+            flag_modified(shot, "extra_data")
+            await db.commit()
+            
+            logger.info(f"[save_shot_video_prompt] 成功保存: shot_id={shot_id}")
+            
+            return {
+                "success": True,
+                "shot_id": shot_id,
+                "video_prompt": video_prompt,
+                "cut_method": cut_method,
+                "cut_reason": cut_reason,
+            }
+            
+    except Exception as e:
+        logger.error(f"[save_shot_video_prompt] 保存失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "shot_id": shot_id,
+        }
+
+
+@tool
+async def batch_save_video_prompts(
+    prompts: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    批量保存分镜视频提示词
+    
+    Args:
+        prompts: 提示词列表，每个包含：
+            - shot_id: 分镜 ID
+            - video_prompt: 视频提示词
+            - cut_method: 镜头切换方式（可选）
+            - cut_reason: 切换原因（可选）
+            
+    Returns:
+        保存结果统计
+    """
+    from app.agent.tools.async_db import get_async_db_session
+    from sqlalchemy import select
+    from sqlalchemy.orm.attributes import flag_modified
+    from app.models.shot import Shot
+    
+    logger.info(f"[batch_save_video_prompts] 批量保存: {len(prompts)} 个提示词")
+    
+    try:
+        shot_ids = [p["shot_id"] for p in prompts]
+        
+        async with get_async_db_session() as db:
+            stmt = select(Shot).where(Shot.shot_id.in_(shot_ids))
+            result = await db.execute(stmt)
+            shots = result.scalars().all()
+            
+            shot_by_id = {s.shot_id: s for s in shots}
+            
+            saved_count = 0
+            failed_count = 0
+            
+            for prompt_data in prompts:
+                shot_id = prompt_data["shot_id"]
+                shot = shot_by_id.get(shot_id)
+                
+                if not shot:
+                    logger.warning(f"[batch_save_video_prompts] 未找到分镜: {shot_id}")
+                    failed_count += 1
+                    continue
+                
+                if shot.extra_data is None:
+                    shot.extra_data = {}
+                
+                shot.extra_data["video_prompt"] = prompt_data["video_prompt"]
+                shot.extra_data["cut_method"] = prompt_data.get("cut_method", "")
+                shot.extra_data["cut_reason"] = prompt_data.get("cut_reason", "")
+                shot.extra_data["video_prompt_updated_at"] = datetime.now().isoformat()
+                
+                flag_modified(shot, "extra_data")
+                saved_count += 1
+            
+            await db.commit()
+            
+            logger.info(f"[batch_save_video_prompts] 保存完成: 成功={saved_count}, 失败={failed_count}")
+            
+            return {
+                "success": True,
+                "total": len(prompts),
+                "saved_count": saved_count,
+                "failed_count": failed_count,
+            }
+            
+    except Exception as e:
+        logger.error(f"[batch_save_video_prompts] 保存失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "total": len(prompts),
+            "saved_count": 0,
+            "failed_count": len(prompts),
+        }
 

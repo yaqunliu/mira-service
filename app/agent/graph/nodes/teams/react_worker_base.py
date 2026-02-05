@@ -19,16 +19,13 @@ from app.agent.state.schemas import ComicDramaState
 class ReActWorkerNode(ABC):
     """
     ReAct Worker Node 基类
-    
+
     提供 ReAct 循环的通用实现，子类只需定义：
     - get_system_prompt(): 系统提示词
     - get_tools(): 可用工具列表
     - process_result(): 处理最终结果
     """
-    
-    # 默认最大迭代次数
-    MAX_ITERATIONS = 5
-    
+
     # 是否使用 ReAct 模式（可被子类覆盖）
     USE_REACT = True
     
@@ -97,10 +94,11 @@ class ReActWorkerNode(ABC):
             iteration = 0
             final_response = ""
             tool_results = []
-            
-            while iteration < self.MAX_ITERATIONS:
+            max_iterations = settings.LANGGRAPH_RECURSION_LIMIT
+
+            while iteration < max_iterations:
                 iteration += 1
-                logger.info(f"[{self.node_name}] ReAct 循环 {iteration}/{self.MAX_ITERATIONS}")
+                logger.info(f"[{self.node_name}] ReAct 循环 {iteration}/{max_iterations}")
                 
                 response = await llm_with_tools.ainvoke(messages)
                 messages.append(response)

@@ -3,7 +3,13 @@ Agent 工具模块
 
 导出所有 Agent 可用的工具类
 
-注意: 生成相关功能已迁移到 agent_generation_tools.py
+新的细粒度工具架构：
+- 查询工具 (db_tools)
+- 模板工具 (template_tools)
+- 提示词生成工具 (prompt_generation_tools)
+- 保存工具 (save_tools)
+- 生成触发工具 (generation_trigger_tools)
+- 知识库工具 (video_knowledge_tools)
 """
 
 # 基础工具
@@ -51,6 +57,11 @@ from app.agent.tools.db_tools import (
     query_creation_status,
     find_resources_by_identifier,
     query_failed_resources,
+    # 新增单个资源查询
+    query_single_character,
+    query_single_scene,
+    query_single_shot,
+    query_creation_info,
 )
 
 # Supervisor 工具（原子化操作、版本管理、上下文）
@@ -81,19 +92,55 @@ from app.agent.tools.resource_resolver import (
     resolve_resource_reference,
 )
 
-# Asset Regenerator Worker 工具
-from app.agent.tools.regenerate_worker_tools import (
-    query_single_character,
-    query_single_scene,
-    query_single_shot,
-    submit_character_image_regeneration,
-    submit_character_prompt_regeneration,
-    submit_scene_image_regeneration,
-    submit_scene_prompt_regeneration,
-    submit_shot_image_regeneration,
-    submit_shot_prompt_regeneration,
-    submit_shot_video_regeneration,
-    REGENERATE_WORKER_TOOLS,
+# ==================== 新的细粒度工具架构 ====================
+
+# 模板工具
+from app.agent.tools.template_tools import (
+    get_character_prompt_template,
+    get_scene_prompt_template,
+    get_shot_image_prompt_template,
+    get_shot_video_prompt_template,
+    get_visual_style_guide,
+    TEMPLATE_TOOLS,
+)
+
+# 提示词生成工具
+from app.agent.tools.prompt_generation_tools import (
+    generate_character_prompt,
+    generate_scene_prompt,
+    generate_shot_image_prompt,
+    generate_shot_video_prompt,
+    PROMPT_GENERATION_TOOLS,
+)
+
+# 保存工具
+from app.agent.tools.save_tools import (
+    save_character_prompt,
+    save_scene_prompt,
+    save_shot_image_prompt,
+    save_shot_video_prompt,
+    SAVE_TOOLS,
+)
+
+# 生成触发工具
+from app.agent.tools.generation_trigger_tools import (
+    trigger_image_generation,
+    trigger_video_generation,
+    GENERATION_TRIGGER_TOOLS,
+)
+
+# 视频知识库工具
+from app.agent.tools.video_knowledge_tools import (
+    query_knowledge_for_video,
+    query_camera_techniques,
+    query_composition_rules,
+    VIDEO_KNOWLEDGE_TOOLS,
+)
+
+# 数据库保存工具（保持兼容）
+from app.agent.tools.db_tools import (
+    save_shot_video_prompt,
+    batch_save_video_prompts,
 )
 
 __all__ = [
@@ -136,6 +183,10 @@ __all__ = [
     "query_creation_status",
     "find_resources_by_identifier",
     "query_failed_resources",
+    "query_single_character",
+    "query_single_scene",
+    "query_single_shot",
+    "query_creation_info",
 
     # Supervisor 原子化工具
     "clear_asset",
@@ -161,16 +212,42 @@ __all__ = [
     # 资源解析工具
     "resolve_resource_reference",
 
-    # Asset Regenerator Worker 工具
-    "query_single_character",
-    "query_single_scene",
-    "query_single_shot",
-    "submit_character_image_regeneration",
-    "submit_character_prompt_regeneration",
-    "submit_scene_image_regeneration",
-    "submit_scene_prompt_regeneration",
-    "submit_shot_image_regeneration",
-    "submit_shot_prompt_regeneration",
-    "submit_shot_video_regeneration",
-    "REGENERATE_WORKER_TOOLS",
+    # ==================== 新的细粒度工具 ====================
+
+    # 模板工具
+    "get_character_prompt_template",
+    "get_scene_prompt_template",
+    "get_shot_image_prompt_template",
+    "get_shot_video_prompt_template",
+    "get_visual_style_guide",
+    "TEMPLATE_TOOLS",
+
+    # 提示词生成工具
+    "generate_character_prompt",
+    "generate_scene_prompt",
+    "generate_shot_image_prompt",
+    "generate_shot_video_prompt",
+    "PROMPT_GENERATION_TOOLS",
+
+    # 保存工具
+    "save_character_prompt",
+    "save_scene_prompt",
+    "save_shot_image_prompt",
+    "save_shot_video_prompt",
+    "SAVE_TOOLS",
+
+    # 生成触发工具
+    "trigger_image_generation",
+    "trigger_video_generation",
+    "GENERATION_TRIGGER_TOOLS",
+
+    # 视频知识库工具
+    "query_knowledge_for_video",
+    "query_camera_techniques",
+    "query_composition_rules",
+    "VIDEO_KNOWLEDGE_TOOLS",
+
+    # 数据库保存工具
+    "save_shot_video_prompt",
+    "batch_save_video_prompts",
 ]

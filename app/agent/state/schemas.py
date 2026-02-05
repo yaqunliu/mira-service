@@ -188,6 +188,11 @@ class ComicDramaState(TypedDict, total=False):
     awaiting_clarification: bool  # 是否等待用户澄清
     board_actions: List[BoardAction]  # 看板联动指令列表
 
+    # ==================== 知识库上下文 ====================
+    shot_knowledge_context: Dict[int, str]  # 分镜知识上下文 {shot_id: knowledge_context}
+    character_knowledge_context: Dict[int, str]  # 角色知识上下文
+    scene_knowledge_context: Dict[int, str]  # 场景知识上下文
+
     # ==================== 输入数据 ====================
     script_text: Optional[str]  # 原始剧本文本（用户上传或输入）
     script_url: Optional[str]  # 剧本文件 URL（US3）
