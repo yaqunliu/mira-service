@@ -1786,3 +1786,147 @@ async def clear_all(
                 "error": str(e),
                 "results": results,
             }
+
+
+@tool
+async def query_generation_tasks_status(
+    task_ids: List[str],
+    target_info: Optional[List[Dict[str, Any]]] = None,
+    timeout: int = 1000,
+    poll_interval: float = 2.0,
+) -> Dict[str, Any]:
+    """
+    查询生成任务状态，阻塞等待直到所有任务完成或超时
+    
+    用于在提交图片/视频生成任务后，轮询查询任务状态，直到所有任务都完成（成功或失败）
+    
+    Args:
+        task_ids: Celery 任务 ID 列表
+        target_info: 任务对应的资源信息列表（可选，用于返回结果时标识资源）
+            每个元素包含: {"target_type": str, "target_id": int}
+        timeout: 最大等待时间（秒），默认 1000 秒
+        poll_interval: 轮询间隔（秒），默认 2 秒
+        
+    Returns:
+        {
+            "success": bool,  # 是否成功查询（不表示任务都成功）
+            "all_completed": bool,  # 是否全部完成
+            "timed_out": bool,  # 是否超时
+            "tasks": [
+                {
+                    "task_id": str,
+                    "target_type": str,  # character/scene/shot
+                    "target_id": int,
+                    "status": str,  # SUCCESS/FAILED/PENDING/PROGRESS/TIMEOUT
+                    "result": dict,  # 任务结果（成功时）
+                    "error": str,    # 错误信息（失败时）
+                }
+            ],
+            "summary": {
+                "total": int,
+                "success": int,
+                "failed": int,
+                "pending": int,
+            }
+        }
+    """
+    from celery.result import AsyncResult
+    from app.core.celery_app import celery_app
+    
+    logger.info(f"[Query Tasks Status] 开始查询 {len(task_ids)} 个任务状态, timeout={timeout}s")
+    
+    if not task_ids:
+        return {
+            "success": True,
+            "all_completed": True,
+            "timed_out": False,
+            "tasks": [],
+            "summary": {"total": 0, "success": 0, "failed": 0, "pending": 0},
+        }
+    
+    # 初始化任务信息
+    target_info = target_info or [{}] * len(task_ids)
+    tasks_info = []
+    for i, task_id in enumerate(task_ids):
+        info = target_info[i] if i < len(target_info) else {}
+        tasks_info.append({
+            "task_id": task_id,
+            "target_type": info.get("target_type", "unknown"),
+            "target_id": info.get("target_id", 0),
+            "status": "PENDING",
+            "result": None,
+            "error": None,
+        })
+    
+    elapsed = 0
+    all_completed = False
+    
+    while elapsed < timeout and not all_completed:
+        all_completed = True
+        pending_count = 0
+        
+        for task_info in tasks_info:
+            if task_info["status"] in ["SUCCESS", "FAILED", "TIMEOUT"]:
+                continue
+            
+            try:
+                task = AsyncResult(task_info["task_id"], app=celery_app)
+                state = task.state
+                
+                if state == 'SUCCESS':
+                    task_info["status"] = "SUCCESS"
+                    task_info["result"] = task.result
+                    logger.info(f"[Query Tasks Status] 任务完成: {task_info['task_id']}")
+                elif state == 'FAILURE':
+                    task_info["status"] = "FAILED"
+                    task_info["error"] = str(task.info) if task.info else "Unknown error"
+                    logger.error(f"[Query Tasks Status] 任务失败: {task_info['task_id']}, error={task_info['error']}")
+                elif state == 'PENDING':
+                    task_info["status"] = "PENDING"
+                    all_completed = False
+                    pending_count += 1
+                else:
+                    # PROGRESS 或其他状态
+                    task_info["status"] = state
+                    all_completed = False
+                    pending_count += 1
+                    
+            except Exception as e:
+                logger.error(f"[Query Tasks Status] 查询任务状态失败: {task_info['task_id']}, error={e}")
+                task_info["status"] = "ERROR"
+                task_info["error"] = str(e)
+        
+        if not all_completed:
+            logger.debug(f"[Query Tasks Status] 还有 {pending_count} 个任务未完成, 已等待 {elapsed}s")
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+    
+    # 检查是否超时
+    timed_out = elapsed >= timeout and not all_completed
+    
+    if timed_out:
+        logger.warning(f"[Query Tasks Status] 达到最大等待时间 {timeout}s, 还有任务未完成")
+        for task_info in tasks_info:
+            if task_info["status"] not in ["SUCCESS", "FAILED"]:
+                task_info["status"] = "TIMEOUT"
+                task_info["error"] = f"达到最大等待时间 {timeout}s"
+    
+    # 统计结果
+    success_count = sum(1 for t in tasks_info if t["status"] == "SUCCESS")
+    failed_count = sum(1 for t in tasks_info if t["status"] in ["FAILED", "ERROR", "TIMEOUT"])
+    pending_count = sum(1 for t in tasks_info if t["status"] in ["PENDING", "PROGRESS"])
+    
+    logger.info(f"[Query Tasks Status] 查询结束: total={len(tasks_info)}, success={success_count}, failed={failed_count}, timed_out={timed_out}")
+    
+    return {
+        "success": True,
+        "all_completed": all_completed or timed_out,
+        "timed_out": timed_out,
+        "tasks": tasks_info,
+        "summary": {
+            "total": len(tasks_info),
+            "success": success_count,
+            "failed": failed_count,
+            "pending": pending_count,
+        }
+    }

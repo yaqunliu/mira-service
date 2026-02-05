@@ -64,7 +64,7 @@ from app.agent.tools.db_tools import (
     query_creation_info,
 )
 
-# Supervisor 工具（原子化操作、版本管理、上下文）
+# Supervisor 原子化工具
 from app.agent.tools.regenerate_worker_tools import (
     clear_asset,
     update_resource_status,
@@ -72,6 +72,7 @@ from app.agent.tools.regenerate_worker_tools import (
     regenerate,
     regenerate_with_poll,
     clear_all,
+    query_generation_tasks_status,
     REGENERATE_WORKER_TOOLS,
 )
 from app.agent.tools.version_tools import (
@@ -104,15 +105,6 @@ from app.agent.tools.template_tools import (
     TEMPLATE_TOOLS,
 )
 
-# 提示词生成工具
-from app.agent.tools.prompt_generation_tools import (
-    generate_character_prompt,
-    generate_scene_prompt,
-    generate_shot_image_prompt,
-    generate_shot_video_prompt,
-    PROMPT_GENERATION_TOOLS,
-)
-
 # 保存工具
 from app.agent.tools.save_tools import (
     save_character_prompt,
@@ -120,13 +112,6 @@ from app.agent.tools.save_tools import (
     save_shot_image_prompt,
     save_shot_video_prompt,
     SAVE_TOOLS,
-)
-
-# 生成触发工具
-from app.agent.tools.generation_trigger_tools import (
-    trigger_image_generation,
-    trigger_video_generation,
-    GENERATION_TRIGGER_TOOLS,
 )
 
 # 视频知识库工具
@@ -195,6 +180,7 @@ __all__ = [
     "regenerate",
     "regenerate_with_poll",
     "clear_all",
+    "query_generation_tasks_status",
     "REGENERATE_WORKER_TOOLS",
 
     # 版本管理
@@ -222,24 +208,12 @@ __all__ = [
     "get_visual_style_guide",
     "TEMPLATE_TOOLS",
 
-    # 提示词生成工具
-    "generate_character_prompt",
-    "generate_scene_prompt",
-    "generate_shot_image_prompt",
-    "generate_shot_video_prompt",
-    "PROMPT_GENERATION_TOOLS",
-
     # 保存工具
     "save_character_prompt",
     "save_scene_prompt",
     "save_shot_image_prompt",
     "save_shot_video_prompt",
     "SAVE_TOOLS",
-
-    # 生成触发工具
-    "trigger_image_generation",
-    "trigger_video_generation",
-    "GENERATION_TRIGGER_TOOLS",
 
     # 视频知识库工具
     "query_knowledge_for_video",

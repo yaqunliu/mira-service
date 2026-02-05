@@ -103,7 +103,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
             if operation_type == "image":
                 # 用户明确要求生成图片 - 使用旧的直接提交工具
                 guide = base_guide + """
-### 角色图片生成流程（直接提交）
+### 角色图片生成流程（直接提交并等待完成）
 
 **Step 1: 获取角色信息**
 - 工具: `query_characters`
@@ -112,13 +112,32 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 
 **Step 2: 提交图片生成任务**
 - 工具: `submit_character_image_regeneration`
-- 参数: 
+- 参数:
   - character_id (从 Step 1 获取)
   - creation_uuid
   - mode="auto"
-- 说明: 用户要求生成图片，直接提交图片生成任务
+- 说明: 提交图片生成任务，返回 task_id
+- 注意: 记录返回的 task_id，用于下一步查询状态
 
-【重要】用户说"生成图片"时，直接使用 submit_character_image_regeneration，不需要先生成提示词！
+**Step 3: 查询任务状态（阻塞等待完成）**
+- 工具: `query_generation_tasks_status`
+- 参数:
+  - task_ids: [task_id] (从 Step 2 获取的 task_id 列表)
+  - target_info: [{"target_type": "character", "target_id": character_id}]
+  - timeout: 1000 (最大等待1000秒)
+  - poll_interval: 2.0 (每2秒查询一次)
+- 说明: 轮询查询任务状态，直到任务完成或超时
+- 返回: 包含所有任务的状态、结果、错误信息
+
+**Step 4: 汇报生成结果**
+- 根据 query_generation_tasks_status 的返回结果，汇报生成成功或失败
+- 如果成功: 告知用户图片已生成完成
+- 如果失败: 告知用户失败原因
+
+【重要】用户说"生成图片"时：
+1. 提交生成任务获取 task_id
+2. 调用 query_generation_tasks_status 等待任务完成
+3. 汇报最终结果给用户
 """
             elif operation_type == "prompt":
                 # 生成提示词 - Node 自身生成
@@ -191,7 +210,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
             else:
                 # 默认：直接提交图片生成
                 guide = base_guide + """
-### 角色图片生成流程（直接提交）
+### 角色图片生成流程（直接提交并等待完成）
 
 **Step 1: 获取角色信息**
 - 工具: `query_characters`
@@ -200,16 +219,28 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 
 **Step 2: 提交图片生成任务**
 - 工具: `submit_character_image_regeneration`
-- 参数: 
+- 参数:
   - character_id (从 Step 1 获取)
   - creation_uuid
   - mode="auto"
-- 说明: 提交图片生成任务
+- 说明: 提交图片生成任务，返回 task_id
+
+**Step 3: 查询任务状态（阻塞等待完成）**
+- 工具: `query_generation_tasks_status`
+- 参数:
+  - task_ids: [task_id]
+  - target_info: [{"target_type": "character", "target_id": character_id}]
+  - timeout: 1000
+  - poll_interval: 2.0
+- 说明: 轮询查询任务状态，直到任务完成或超时
+
+**Step 4: 汇报生成结果**
+- 根据查询结果，汇报生成成功或失败
 """
         elif target_type == "scene":
             if operation_type == "image":
                 guide = base_guide + """
-### 场景图片生成流程（直接提交）
+### 场景图片生成流程（直接提交并等待完成）
 
 **Step 1: 获取场景信息**
 - 工具: `query_scenes`
@@ -218,12 +249,27 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 
 **Step 2: 提交图片生成任务**
 - 工具: `submit_scene_image_regeneration`
-- 参数: 
+- 参数:
   - scene_id (从 Step 1 获取)
   - creation_uuid
-- 说明: 用户要求生成图片，直接提交图片生成任务
+- 说明: 提交图片生成任务，返回 task_id
 
-【重要】用户说"生成图片"时，直接使用 submit_scene_image_regeneration，不需要先生成提示词！
+**Step 3: 查询任务状态（阻塞等待完成）**
+- 工具: `query_generation_tasks_status`
+- 参数:
+  - task_ids: [task_id]
+  - target_info: [{"target_type": "scene", "target_id": scene_id}]
+  - timeout: 1000
+  - poll_interval: 2.0
+- 说明: 轮询查询任务状态，直到任务完成或超时
+
+**Step 4: 汇报生成结果**
+- 根据查询结果，汇报生成成功或失败
+
+【重要】用户说"生成图片"时：
+1. 提交生成任务获取 task_id
+2. 调用 query_generation_tasks_status 等待任务完成
+3. 汇报最终结果给用户
 """
             elif operation_type == "prompt":
                 guide = base_guide + """
@@ -280,7 +326,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 """
             else:
                 guide = base_guide + """
-### 场景图片生成流程（直接提交）
+### 场景图片生成流程（直接提交并等待完成）
 
 **Step 1: 获取场景信息**
 - 工具: `query_scenes`
@@ -289,15 +335,27 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 
 **Step 2: 提交图片生成任务**
 - 工具: `submit_scene_image_regeneration`
-- 参数: 
+- 参数:
   - scene_id (从 Step 1 获取)
   - creation_uuid
-- 说明: 提交图片生成任务
+- 说明: 提交图片生成任务，返回 task_id
+
+**Step 3: 查询任务状态（阻塞等待完成）**
+- 工具: `query_generation_tasks_status`
+- 参数:
+  - task_ids: [task_id]
+  - target_info: [{"target_type": "scene", "target_id": scene_id}]
+  - timeout: 1000
+  - poll_interval: 2.0
+- 说明: 轮询查询任务状态，直到任务完成或超时
+
+**Step 4: 汇报生成结果**
+- 根据查询结果，汇报生成成功或失败
 """
         else:  # shot
             if operation_type == "video":
                 guide = base_guide + """
-### 分镜视频生成流程（直接提交）
+### 分镜视频生成流程（直接提交并等待完成）
 
 **Step 1: 获取分镜信息**
 - 工具: `query_shots`
@@ -306,17 +364,32 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 
 **Step 2: 提交视频生成任务**
 - 工具: `submit_shot_video_regeneration`
-- 参数: 
+- 参数:
   - shot_id (从 Step 1 获取)
   - creation_uuid
   - generation_mode="first_last_frame"（默认）或 "first_frame_only"
-- 说明: 用户要求生成视频，直接提交视频生成任务
+- 说明: 提交视频生成任务，返回 task_id
 
-【重要】用户说"生成视频"时，直接使用 submit_shot_video_regeneration，不需要先生成提示词！
+**Step 3: 查询任务状态（阻塞等待完成）**
+- 工具: `query_generation_tasks_status`
+- 参数:
+  - task_ids: [task_id]
+  - target_info: [{"target_type": "shot", "target_id": shot_id}]
+  - timeout: 1000
+  - poll_interval: 2.0
+- 说明: 轮询查询任务状态，直到任务完成或超时
+
+**Step 4: 汇报生成结果**
+- 根据查询结果，汇报生成成功或失败
+
+【重要】用户说"生成视频"时：
+1. 提交生成任务获取 task_id
+2. 调用 query_generation_tasks_status 等待任务完成
+3. 汇报最终结果给用户
 """
             elif operation_type == "image":
                 guide = base_guide + f"""
-### 分镜图片生成流程（直接提交）
+### 分镜图片生成流程（直接提交并等待完成）
 
 **Step 1: 获取分镜信息**
 - 工具: `query_shots`
@@ -325,16 +398,29 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 
 **Step 2: 提交图片生成任务**
 - 工具: `submit_shot_image_regeneration`
-- 参数: 
+- 参数:
   - shot_id (从 Step 1 获取)
   - creation_uuid
   - frame_type="{frame_type}"  # 检测到的帧类型
-- 说明: 用户要求生成图片，直接提交图片生成任务
-  - frame_type="start": 只生成首帧
-  - frame_type="end": 只生成尾帧
-  - frame_type="both": 生成首尾帧
+- 说明: 提交图片生成任务，返回 task_id
 
-【重要】用户说"生成图片"时，直接使用 submit_shot_image_regeneration，不需要先生成提示词！
+**Step 3: 查询任务状态（阻塞等待完成）**
+- 工具: `query_generation_tasks_status`
+- 参数:
+  - task_ids: [task_id]
+  - target_info: [{"target_type": "shot", "target_id": shot_id}]
+  - timeout: 1000
+  - poll_interval: 2.0
+- 说明: 轮询查询任务状态，直到任务完成或超时
+
+**Step 4: 汇报生成结果**
+- 根据查询结果，汇报生成成功或失败
+
+【重要】用户说"生成图片"时：
+1. 提交生成任务获取 task_id
+2. 调用 query_generation_tasks_status 等待任务完成
+3. 汇报最终结果给用户
+
 根据用户消息自动检测 frame_type：
 - "首帧"、"第一帧" → frame_type="start"
 - "尾帧"、"最后一帧" → frame_type="end"
@@ -540,12 +626,13 @@ frame_type 自动检测规则：
             query_creation_info,
         )
         
-        # 旧的直接提交工具（用于生成图片/视频）
+        # 旧的直接提交工具（用于生成图片/视频）和状态查询
         from app.agent.tools.regenerate_worker_tools import (
             submit_character_image_regeneration,
             submit_scene_image_regeneration,
             submit_shot_image_regeneration,
             submit_shot_video_regeneration,
+            query_generation_tasks_status,
         )
         
         # 新的细粒度工具（用于生成提示词）
@@ -602,6 +689,9 @@ frame_type 自动检测规则：
             query_knowledge_for_video,
             query_camera_techniques,
             query_composition_rules,
+
+            # === 任务状态查询（用于等待生成完成）===
+            query_generation_tasks_status,
         ]
     
     async def process_result(self, state: ComicDramaState, final_response: str, tool_results: List[Dict]) -> Dict[str, Any]:
