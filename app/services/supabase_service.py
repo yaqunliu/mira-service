@@ -97,7 +97,7 @@ class SupabaseService:
                     "verify_aud": False
                 }
             )
-            logger.info("Token 验证成功（ES256）")
+            logger.debug("Token 验证成功（ES256）")
             return payload
         except JWTError as e:
             logger.error(f"ES256 Token 验证失败: {str(e)}")
@@ -139,7 +139,7 @@ class SupabaseService:
                         algorithms=["HS256"],
                         options={"verify_aud": False}
                     )
-                    logger.info("Token 验证成功（HS256，不带 audience）")
+                    logger.debug("Token 验证成功（HS256，不带 audience）")
                     return payload
                 except JWTError as no_audience_error:
                     logger.error(f"HS256 Token 验证失败: {str(no_audience_error)}")

@@ -198,7 +198,7 @@ class GraphRunner:
             # script_analysis 不在此列表，因为它的 response_text 已包含结果
             COMPLETE_MESSAGE_NODES = {
                 "script_analysis": "✅ 剧本分析完成！",
-                "asset_generation": "✅ 图片生成任务已提交！",
+                "asset_generation": "✅ 资产图片生成完成！",
                 "storyboard_creation": "✅ 分镜脚本生成完成！",
                 "audio_processing": "✅ 音频处理完成！",
                 "video_generation": "✅ 视频生成完成！",
