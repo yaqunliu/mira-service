@@ -212,7 +212,7 @@ class GraphRunner:
             
             # 配置递归深度限制
             from app.core.config import settings
-            recursion_limit = getattr(settings, 'LANGGRAPH_RECURSION_LIMIT', 15)
+            recursion_limit = getattr(settings, 'LANGGRAPH_RECURSION_LIMIT', 25)
             config = {
                 "configurable": {"thread_id": self.thread_id},
                 "recursion_limit": recursion_limit,

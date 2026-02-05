@@ -152,7 +152,7 @@ class DialogueGraphRunner:
         workflow = build_dialogue_graph()
         self.graph = workflow.compile(checkpointer=self.checkpointer)
         # 设置递归深度限制
-        recursion_limit = getattr(settings, 'LANGGRAPH_RECURSION_LIMIT', 15)
+        recursion_limit = getattr(settings, 'LANGGRAPH_RECURSION_LIMIT', 25)
         self.graph.recursion_limit = recursion_limit
         logger.info(f"[DialogueGraph] Graph 已编译，递归限制: {recursion_limit}")
     

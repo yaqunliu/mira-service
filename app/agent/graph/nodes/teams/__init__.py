@@ -28,6 +28,10 @@ from app.agent.graph.nodes.teams.asset_regenerator_worker import (
     AssetRegeneratorWorkerNode,
     regenerate_assets_worker,
 )
+from app.agent.graph.nodes.teams.asset_generation_worker import (
+    AssetGenerationWorkerNode,
+    generate_assets_worker,
+)
 
 __all__ = [
     # Supervisor
@@ -43,5 +47,8 @@ __all__ = [
     # Asset Regenerator
     "AssetRegeneratorWorkerNode",
     "regenerate_assets_worker",
+    # Asset Generation
+    "AssetGenerationWorkerNode",
+    "generate_assets_worker",
 ]
 

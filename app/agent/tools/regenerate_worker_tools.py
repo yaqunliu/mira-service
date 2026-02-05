@@ -1930,3 +1930,276 @@ async def query_generation_tasks_status(
             "pending": pending_count,
         }
     }
+
+
+# ==================== 批量生成工具（AssetGenerationWorkerNode 专用） ====================
+
+@tool
+async def batch_submit_character_images(
+    character_ids: List[int],
+    creation_uuid: str,
+) -> Dict[str, Any]:
+    """
+    批量提交角色图片生成任务
+    
+    一次性为多个角色提交图片生成任务，返回所有 task_id 列表
+    
+    Args:
+        character_ids: 角色 ID 列表
+        creation_uuid: 创作项目 UUID
+        
+    Returns:
+        包含所有 task_id 的结果
+    """
+    logger.info(f"[Batch Tool] 批量提交角色图片生成: character_ids={character_ids}, creation_uuid={creation_uuid}")
+    
+    task_ids = []
+    results = []
+    
+    for character_id in character_ids:
+        try:
+            result = await _execute_regeneration(
+                target_type="character",
+                target_id=character_id,
+                creation_uuid=creation_uuid,
+                save_version=True,
+                mode="auto",
+            )
+            
+            if result.get("success"):
+                task_ids.append(result.get("task_id"))
+                results.append({
+                    "character_id": character_id,
+                    "success": True,
+                    "task_id": result.get("task_id"),
+                })
+            else:
+                results.append({
+                    "character_id": character_id,
+                    "success": False,
+                    "error": result.get("error"),
+                })
+        except Exception as e:
+            logger.error(f"[Batch Tool] 提交角色 {character_id} 图片生成失败: {e}")
+            results.append({
+                "character_id": character_id,
+                "success": False,
+                "error": str(e),
+            })
+    
+    return {
+        "success": len(task_ids) > 0,
+        "task_ids": task_ids,
+        "results": results,
+        "total": len(character_ids),
+        "submitted": len(task_ids),
+        "failed": len(character_ids) - len(task_ids),
+    }
+
+
+@tool
+async def batch_submit_scene_images(
+    scene_ids: List[int],
+    creation_uuid: str,
+) -> Dict[str, Any]:
+    """
+    批量提交场景图片生成任务
+    
+    一次性为多个场景提交图片生成任务，返回所有 task_id 列表
+    
+    Args:
+        scene_ids: 场景 ID 列表
+        creation_uuid: 创作项目 UUID
+        
+    Returns:
+        包含所有 task_id 的结果
+    """
+    logger.info(f"[Batch Tool] 批量提交场景图片生成: scene_ids={scene_ids}, creation_uuid={creation_uuid}")
+    
+    task_ids = []
+    results = []
+    
+    for scene_id in scene_ids:
+        try:
+            result = await _execute_regeneration(
+                target_type="scene",
+                target_id=scene_id,
+                creation_uuid=creation_uuid,
+                save_version=True,
+            )
+            
+            if result.get("success"):
+                task_ids.append(result.get("task_id"))
+                results.append({
+                    "scene_id": scene_id,
+                    "success": True,
+                    "task_id": result.get("task_id"),
+                })
+            else:
+                results.append({
+                    "scene_id": scene_id,
+                    "success": False,
+                    "error": result.get("error"),
+                })
+        except Exception as e:
+            logger.error(f"[Batch Tool] 提交场景 {scene_id} 图片生成失败: {e}")
+            results.append({
+                "scene_id": scene_id,
+                "success": False,
+                "error": str(e),
+            })
+    
+    return {
+        "success": len(task_ids) > 0,
+        "task_ids": task_ids,
+        "results": results,
+        "total": len(scene_ids),
+        "submitted": len(task_ids),
+        "failed": len(scene_ids) - len(task_ids),
+    }
+
+
+@tool
+async def batch_save_character_prompts(
+    prompts_data: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    批量保存角色提示词
+    
+    一次性保存多个角色的提示词
+    
+    Args:
+        prompts_data: 提示词数据列表，每个元素包含：
+            - character_id: 角色 ID
+            - prompt: 提示词内容
+            
+    Returns:
+        保存结果汇总
+    """
+    logger.info(f"[Batch Tool] 批量保存角色提示词: count={len(prompts_data)}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.character import Character
+    from sqlalchemy import select
+    
+    results = []
+    
+    async with get_async_session() as db:
+        for item in prompts_data:
+            character_id = item.get("character_id")
+            prompt = item.get("prompt")
+            
+            try:
+                stmt = select(Character).where(Character.character_id == character_id)
+                result = await db.execute(stmt)
+                character = result.scalar_one_or_none()
+                
+                if not character:
+                    results.append({
+                        "character_id": character_id,
+                        "success": False,
+                        "error": "角色不存在",
+                    })
+                    continue
+                
+                character.image_prompt = prompt
+                character.updated_at = datetime.now()
+                
+                results.append({
+                    "character_id": character_id,
+                    "success": True,
+                })
+            except Exception as e:
+                logger.error(f"[Batch Tool] 保存角色 {character_id} 提示词失败: {e}")
+                results.append({
+                    "character_id": character_id,
+                    "success": False,
+                    "error": str(e),
+                })
+        
+        await db.commit()
+    
+    success_count = sum(1 for r in results if r.get("success"))
+    
+    return {
+        "success": success_count > 0,
+        "results": results,
+        "total": len(prompts_data),
+        "saved": success_count,
+        "failed": len(prompts_data) - success_count,
+    }
+
+
+@tool
+async def batch_save_scene_prompts(
+    prompts_data: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    批量保存场景提示词
+    
+    一次性保存多个场景的提示词
+    
+    Args:
+        prompts_data: 提示词数据列表，每个元素包含：
+            - scene_id: 场景 ID
+            - prompt: 提示词内容
+            
+    Returns:
+        保存结果汇总
+    """
+    logger.info(f"[Batch Tool] 批量保存场景提示词: count={len(prompts_data)}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.scene import Scene
+    from sqlalchemy import select
+    
+    results = []
+    
+    async with get_async_session() as db:
+        for item in prompts_data:
+            scene_id = item.get("scene_id")
+            prompt = item.get("prompt")
+            
+            try:
+                stmt = select(Scene).where(Scene.scene_id == scene_id)
+                result = await db.execute(stmt)
+                scene = result.scalar_one_or_none()
+                
+                if not scene:
+                    results.append({
+                        "scene_id": scene_id,
+                        "success": False,
+                        "error": "场景不存在",
+                    })
+                    continue
+                
+                # 保存到 extra_data
+                extra_data = scene.extra_data or {}
+                extra_data["image_prompt"] = prompt
+                scene.extra_data = extra_data
+                scene.updated_at = datetime.now()
+                flag_modified(scene, "extra_data")
+                
+                results.append({
+                    "scene_id": scene_id,
+                    "success": True,
+                })
+            except Exception as e:
+                logger.error(f"[Batch Tool] 保存场景 {scene_id} 提示词失败: {e}")
+                results.append({
+                    "scene_id": scene_id,
+                    "success": False,
+                    "error": str(e),
+                })
+        
+        await db.commit()
+    
+    success_count = sum(1 for r in results if r.get("success"))
+    
+    return {
+        "success": success_count > 0,
+        "results": results,
+        "total": len(prompts_data),
+        "saved": success_count,
+        "failed": len(prompts_data) - success_count,
+    }

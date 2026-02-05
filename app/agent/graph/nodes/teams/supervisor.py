@@ -20,7 +20,7 @@ from app.agent.state.schemas import ComicDramaState, ProductionStage
 
 # ==================== 类型定义 ====================
 
-WorkerType = Literal["script_analyst", "asset_designer", "storyboard_director", "video_editor", "asset_regenerator"]
+WorkerType = Literal["script_analyst", "asset_designer", "storyboard_director", "video_editor", "audio_engineer", "asset_regenerator"]
 
 
 # ==================== 系统提示词 ====================
@@ -36,12 +36,28 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 ## Workers 列表
 
 - script_analyst: 剧本分析 → 提取角色、场景
-- asset_designer: 资产生成 → 生成角色/场景图片
-- storyboard_director: 分镜创作 → 生成分镜图片
+- asset_designer: 资产生成 → 生成角色/场景提示词、图片（支持单个/全部生成）
+- storyboard_director: 分镜创作 → 生成分镜脚本、图片
 - video_editor: 视频生成 → 生成分镜视频
-- asset_regenerator: 资产重新生成 → 重新生成如下信息：角色提示词/角色图片/场景提示词/场景图片/分镜图片/分镜提示词/分镜视频
+- audio_engineer: 音频处理 → 生成配音、音效
+- asset_regenerator: 资产重新生成 → 重新生成角色/场景/分镜的提示词、图片、视频
 
-## 资产重新生成规则（重要！）
+## 资产生成规则（asset_designer）
+
+当用户要求生成资产时，调用 asset_designer：
+- "生成角色提示词" / "生成全部角色提示词"
+- "生成角色图片" / "生成全部角色图片" / "为所有角色生图"
+- "生成场景提示词" / "生成全部场景提示词"
+- "生成场景图片" / "生成全部场景图片" / "为所有场景生图"
+- "生成分镜提示词" / "生成全部分镜提示词"
+- "生成分镜图片" / "生成全部分镜图片" / "为所有分镜生图"
+- "生成分镜视频" / "生成全部分镜视频"
+
+支持两种范围：
+- **单个**：指定具体角色/场景/分镜（如"生成阿九的图片"）
+- **全部**：批量生成所有（如"生成全部角色图片"）
+
+## 资产重新生成规则（asset_regenerator）
 
 当用户要求重新生成时，调用 asset_regenerator：
 - "重新生成角色图片" / "重新生成场景图片" / "重新生成分镜图片" / "重新生成分镜视频"
@@ -53,7 +69,7 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 
 用户说"开始创作"或"继续"时，按当前阶段执行：
 - INIT / SCRIPT_UPLOADED → 调度 script_analyst
-- SCRIPT_ANALYZED → 调度 asset_designer
+- SCRIPT_ANALYZED → 调度 asset_designer（生成全部角色/场景图片）
 - ASSETS_READY → 调度 storyboard_director
 - STORYBOARD_READY → 调度 video_editor
 - VIDEO_READY / COMPLETED → 直接回复"创作已完成！"
@@ -79,6 +95,7 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 
 - 如果 Worker 刚完成任务，直接告知用户结果，不要再调度 Worker
 - 如果当前阶段已是 COMPLETED，直接回复，不要调度任何 Worker
+- asset_designer 支持灵活的单个/全部生成，根据用户意图自动判断
 """
 
 
@@ -174,7 +191,7 @@ async def route_to_worker(
     """
     logger.info(f"[Supervisor] 调度到 Worker: {worker}, task={task}")
     
-    valid_workers = ["script_analyst", "asset_designer", "storyboard_director", "video_editor", "asset_regenerator"]
+    valid_workers = ["script_analyst", "asset_designer", "storyboard_director", "video_editor", "audio_engineer", "asset_regenerator"]
     
     if worker not in valid_workers:
         return {"success": False, "error": f"无效的 Worker: {worker}"}

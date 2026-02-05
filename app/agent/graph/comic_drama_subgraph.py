@@ -429,45 +429,51 @@ async def asset_generation_node(state: ComicDramaState) -> Dict[str, Any]:
     """
     资产生成节点
     
-    委托给 AssetDirectorNode 执行
+    委托给 AssetGenerationWorkerNode 执行（ReAct 架构）
+    支持单个/全部生成，支持提示词/图片生成
     """
-    logger.info("[SubgraphNode] asset_generation: 委托给 AssetDirectorNode")
+    logger.info("[SubgraphNode] asset_generation: 委托给 AssetGenerationWorkerNode")
     
     # 添加阶段开始消息到 messages
     from datetime import datetime
     messages = list(state.get("messages", []))
     messages.append({
         "role": "assistant",
-        "content": "🎨 好的，开始为您生成角色和场景图片，请稍候...",
+        "content": "🎨 好的，开始为您生成角色和场景资源，请稍候...",
         "timestamp": datetime.now().isoformat(),
         "node": "asset_generation",
         "metadata": {"stage": "asset_generation", "action": "start"},
     })
     
-    from app.agent.graph.nodes.teams.asset_director import AssetDirectorNode
-    director = AssetDirectorNode()
+    from app.agent.graph.nodes.teams.asset_generation_worker import AssetGenerationWorkerNode
+    worker = AssetGenerationWorkerNode()
     
-    # 将更新后的 messages 传给 director
+    # 将更新后的 messages 传给 worker
     updated_state = dict(state)
     updated_state["messages"] = messages
     
-    result = await director.run(updated_state)
+    result = await worker.run(updated_state)
     
     # 确保 messages 被保留
     if "messages" not in result:
         result["messages"] = messages
     
-    # 添加 worker_result 供 Supervisor 使用
-    char_count = result.get("generated_characters", 0)
-    scene_count = result.get("generated_scenes", 0)
-    response_text = result.get("response_text", f"资产生成完成：{char_count} 个角色，{scene_count} 个场景")
+    # 从 tool_usage_summary 获取统计信息
+    tool_summary = result.get("tool_usage_summary", {})
+    submit_count = tool_summary.get("submit_count", 0)
+    save_count = tool_summary.get("save_count", 0)
+    success_count = tool_summary.get("success_count", 0)
     
+    response_text = result.get("response_text", f"资产生成完成")
+    
+    # 添加 worker_result 供 Supervisor 使用
     result["worker_result"] = {
         "worker": "asset_designer",
-        "summary": f"生成了 {char_count} 个角色图片和 {scene_count} 个场景图片",
-        "success": True,
+        "summary": f"资产生成完成：提交了 {submit_count} 个生成任务，保存了 {save_count} 个提示词",
+        "success": success_count > 0,
         "completed": True,
         "response_text": response_text,
+        "tool_summary": tool_summary,
     }
     
     return result
