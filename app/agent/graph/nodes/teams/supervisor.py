@@ -39,12 +39,12 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 - asset_designer: 资产生成 → 生成角色/场景图片
 - storyboard_director: 分镜创作 → 生成分镜图片
 - video_editor: 视频生成 → 生成分镜视频
-- asset_regenerator: 资产重新生成 → 重新生成角色/场景/分镜图片、提示词
+- asset_regenerator: 资产重新生成 → 重新生成如下信息：角色提示词/角色图片/场景提示词/场景图片/分镜图片/分镜提示词/分镜视频
 
 ## 资产重新生成规则（重要！）
 
-当用户要求重新生成时，调用 `route_to_worker(worker="asset_regenerator")`：
-- "重新生成角色图片" / "重新生成场景图片" / "重新生成分镜图片"
+当用户要求重新生成时，调用 asset_regenerator：
+- "重新生成角色图片" / "重新生成场景图片" / "重新生成分镜图片" / "重新生成分镜视频"
 - "修改提示词" / "重新生成提示词"
 - "重新生成" / "再生成一次"
 - "改一下" / "优化一下"
@@ -313,7 +313,19 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
                     "updated_at": datetime.now().isoformat(),
                 }
         
-        # ===== 特殊处理：regenerate 意图交给 AssetRegenerator =====
+        # ===== 特殊处理：regenerate 意图直接路由到 AssetRegenerator =====
+        detected_intent = state.get("detected_intent", "")
+        if detected_intent == "regenerate":
+            logger.info(f"[Node] supervisor: 检测到 regenerate 意图，直接路由到 asset_regenerator")
+            return {
+                "response_text": "",
+                "production_cache": production_cache,
+                "next_worker": "asset_regenerator",
+                "needs_input": False,
+                "worker_result": None,
+                "updated_at": datetime.now().isoformat(),
+            }
+        
         tools = _get_supervisor_tools()
         
         llm = ChatOpenAI(

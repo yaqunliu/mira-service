@@ -211,16 +211,16 @@ async def update_shot(
         shot.video_duration = shot_data.video_duration
 
     # 如果更新了图片提示词，需要清空相关的视频提示词，以便重新生成
-    if shot_data.image_prompt is not None:
-        shot.image_prompt = shot_data.image_prompt
-        # 清空视频提示词，因为图片提示词已变更
-        if shot.extra_data and "video_prompt" in shot.extra_data:
-            shot.extra_data["video_prompt"] = ""
-            shot.extra_data["cut_method"] = ""
-            shot.extra_data["cut_reason"] = ""
-            from sqlalchemy.orm.attributes import flag_modified
-            flag_modified(shot, "extra_data")
-            logger.info(f"分镜 {shot_uuid} 图片提示词已更新，清空关联的视频提示词")
+    # if shot_data.image_prompt is not None:
+    #     shot.image_prompt = shot_data.image_prompt
+    #     # 清空视频提示词，因为图片提示词已变更
+    #     if shot.extra_data and "video_prompt" in shot.extra_data:
+    #         shot.extra_data["video_prompt"] = ""
+    #         shot.extra_data["cut_method"] = ""
+    #         shot.extra_data["cut_reason"] = ""
+    #         from sqlalchemy.orm.attributes import flag_modified
+    #         flag_modified(shot, "extra_data")
+    #         logger.info(f"分镜 {shot_identifier} 图片提示词已更新，清空关联的视频提示词")
 
     # 直接更新图片URL
     if shot_data.image_url is not None:
@@ -248,8 +248,6 @@ async def update_shot(
     await db.commit()
     await db.refresh(shot)
     
-    logger.info(f"Shot {shot_identifier} updated successfully. video_url: {shot.video_url}, audio_url: {shot.audio_url}")
-    
     return success_response(
         data=ShotResponse.model_validate(shot),
         message="分镜更新成功"
@@ -271,27 +269,55 @@ async def update_shot_characters(
         ).where(Shot.uuid == shot_uuid)
     )
     shot = result.scalar_one_or_none()
-    
+
     if not shot:
         raise HTTPException(status_code=404, detail="分镜不存在")
-    
+
     if shot.scene.creation.owner_id != user.user_id:
         raise HTTPException(status_code=403, detail="无权限更新该分镜")
-    
+
     # 更新角色关联
     if request.character_ids is not None:
-        result = await db.execute(
-            select(Character).where(
-                Character.character_id.in_(request.character_ids),
-                Character.creation_id == shot.scene.creation_id
-            )
+        # 手动操作关联表：先删除旧的关联，再添加新的关联
+        from app.models.shot import shot_characters
+
+        # 1. 删除该分镜的所有旧角色关联
+        await db.execute(
+            shot_characters.delete().where(shot_characters.c.shot_id == shot.shot_id)
         )
-        characters = result.scalars().all()
-        shot.characters = characters
+
+        # 2. 添加新的角色关联
+        valid_character_ids = request.character_ids 
+        # if request.character_ids:
+        #     # 验证角色是否属于同一个 creation
+        #     result = await db.execute(
+        #         select(Character).where(
+        #             Character.character_id.in_(request.character_ids),
+        #             Character.creation_id == shot.scene.creation_id
+        #         )
+        #     )
+        #     valid_characters = result.scalars().all()
+        #     valid_character_ids = [c.character_id for c in valid_characters]
+
+        # 批量插入新的关联关系
+        if valid_character_ids:
+            await db.execute(
+                shot_characters.insert(),
+                [{"shot_id": shot.shot_id, "character_id": char_id} for char_id in valid_character_ids]
+            )
+
         await db.commit()
-    
+
+        # 重新查询以获取完整的角色数据
+        result = await db.execute(
+            select(Shot).options(
+                selectinload(Shot.characters)
+            ).where(Shot.uuid == shot_uuid)
+        )
+        shot = result.scalar_one_or_none()
+
     return success_response(
-        data=ShotResponse.model_validate(shot),
+        data=ShotResponse.from_db_model(shot),
         message="分镜角色更新成功"
     )
 

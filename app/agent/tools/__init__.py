@@ -54,12 +54,14 @@ from app.agent.tools.db_tools import (
 )
 
 # Supervisor 工具（原子化操作、版本管理、上下文）
-from app.agent.tools.regenerate_tools import (
+from app.agent.tools.regenerate_worker_tools import (
     clear_asset,
+    update_resource_status,
     submit_generation,
     regenerate,
+    regenerate_with_poll,
     clear_all,
-    REGENERATE_TOOLS,
+    REGENERATE_WORKER_TOOLS,
 )
 from app.agent.tools.version_tools import (
     get_version_history,
@@ -137,10 +139,12 @@ __all__ = [
 
     # Supervisor 原子化工具
     "clear_asset",
+    "update_resource_status",
     "submit_generation",
     "regenerate",
+    "regenerate_with_poll",
     "clear_all",
-    "REGENERATE_TOOLS",
+    "REGENERATE_WORKER_TOOLS",
 
     # 版本管理
     "get_version_history",

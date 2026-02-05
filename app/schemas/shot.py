@@ -151,6 +151,7 @@ class ShotResponse(BaseModel):
     scene_id: int
     title: str
     associated_characters: List[int] = Field(default_factory=list)
+    characters: List[CharacterBrief] = Field(default_factory=list)  # 添加完整的角色对象列表
     description: Optional[str] = None
     narration: List[NarrationItem] = Field(default_factory=list)
     image_prompt: Optional[str] = None
@@ -211,13 +212,25 @@ class ShotResponse(BaseModel):
             except (json.JSONDecodeError, TypeError):
                 # 如果不是有效的 JSON，则作为单条旁白
                 narration_list = [NarrationItem(角色="旁白", 内容=shot.narration)]
-        
+
+        # 构建角色列表
+        characters_list = []
+        associated_characters_list = []
+        if shot.characters:
+            for char in shot.characters:
+                associated_characters_list.append(char.character_id)
+                characters_list.append(CharacterBrief(
+                    character_id=char.character_id,
+                    name=char.name
+                ))
+
         return cls(
             shot_id=shot.shot_id,
             uuid=shot.uuid,
             scene_id=shot.scene_id,
             title=shot.title,
-            associated_characters=[char.character_id for char in shot.characters] if shot.characters else [],
+            associated_characters=associated_characters_list,
+            characters=characters_list,  # 添加完整的角色对象列表
             description=shot.description,
             narration=narration_list,
             image_prompt=shot.image_prompt,
@@ -260,7 +273,7 @@ class ShotGenerateVideoRequest(BaseModel):
 
 class ShotCharactersUpdateRequest(BaseModel):
     """更新分镜关联角色的请求体"""
-    associated_characters: List[int] = Field(..., alias="associated_characters")
+    character_ids: List[int] = Field(...)
 
 
 class ShotNarrationUpdateRequest(BaseModel):

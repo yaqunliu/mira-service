@@ -6,6 +6,8 @@ Regenerate Worker Tools - 资产重新生成 Worker 专用工具
 """
 
 import asyncio
+import json
+import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -18,7 +20,164 @@ from app.core.logger import logger
 from app.core.config import settings
 
 
-# ==================== 辅助函数 ====================
+# ==================== Core Database Functions (非工具，可被内部调用) ====================
+
+async def _get_character_from_db(character_id: int) -> Dict[str, Any]:
+    """从数据库获取角色详情的核心函数"""
+    from app.agent.tools.async_db import get_async_session
+    from app.models.character import Character
+    from sqlalchemy import select
+    
+    async with get_async_session() as db:
+        stmt = select(Character).where(Character.character_id == character_id)
+        result = await db.execute(stmt)
+        character = result.scalar_one_or_none()
+        
+        if not character:
+            return {
+                "success": False,
+                "error": f"角色不存在: {character_id}",
+            }
+        
+        return {
+            "success": True,
+            "character": {
+                "character_id": character.character_id,
+                "name": character.name,
+                "basic_info": character.basic_info,
+                "appearance": character.appearance,
+                "image_prompt": character.image_prompt,
+                "image_url": character.image_url,
+                "status": character.status,
+                "status_detail": character.status_detail,
+                "voice_id": character.voice_id,
+                "voice_speed": character.voice_speed,
+                "created_at": character.created_at.isoformat() if character.created_at else None,
+                "updated_at": character.updated_at.isoformat() if character.updated_at else None,
+            }
+        }
+
+
+async def _get_scene_from_db(scene_id: int) -> Dict[str, Any]:
+    """从数据库获取场景详情的核心函数"""
+    from app.agent.tools.async_db import get_async_session
+    from app.models.scene import Scene
+    from sqlalchemy import select
+    
+    async with get_async_session() as db:
+        stmt = select(Scene).where(Scene.scene_id == scene_id)
+        result = await db.execute(stmt)
+        scene = result.scalar_one_or_none()
+        
+        if not scene:
+            return {
+                "success": False,
+                "error": f"场景不存在: {scene_id}",
+            }
+        
+        return {
+            "success": True,
+            "scene": {
+                "scene_id": scene.scene_id,
+                "title": scene.title,
+                "duration": scene.duration,
+                "time_setting": scene.time_setting,
+                "location": scene.location,
+                "space_type": scene.space_type,
+                "atmosphere": scene.atmosphere,
+                "image_prompt": scene.extra_data.get("image_prompt") if scene.extra_data else None,
+                "image_url": scene.image_url,
+                "status": scene.status,
+                "status_detail": scene.status_detail,
+                "extra_data": scene.extra_data,
+                "created_at": scene.created_at.isoformat() if scene.created_at else None,
+                "updated_at": scene.updated_at.isoformat() if scene.updated_at else None,
+            }
+        }
+
+
+async def _get_shot_from_db(shot_id: int) -> Dict[str, Any]:
+    """从数据库获取分镜详情的核心函数"""
+    from app.agent.tools.async_db import get_async_session
+    from app.models.shot import Shot
+    from app.models.scene import Scene
+    from sqlalchemy import select, and_
+    
+    async with get_async_session() as db:
+        stmt = select(Shot).where(Shot.shot_id == shot_id)
+        result = await db.execute(stmt)
+        shot = result.scalar_one_or_none()
+        
+        if not shot:
+            return {
+                "success": False,
+                "error": f"分镜不存在: {shot_id}",
+            }
+        
+        shot_dict = {
+            "shot_id": shot.shot_id,
+            "scene_id": shot.scene_id,
+            "shot_number": shot.shot_number,
+            "title": shot.title,
+            "description": shot.description,
+            "image_prompt": shot.image_prompt,
+            "image_url": shot.image_url,
+            "video_prompt": shot.extra_data.get("video_prompt") if shot.extra_data else None,
+            "status": shot.status,
+            "status_detail": shot.status_detail,
+            "extra_data": shot.extra_data,
+            "created_at": shot.created_at.isoformat() if shot.created_at else None,
+            "updated_at": shot.updated_at.isoformat() if shot.updated_at else None,
+        }
+        
+        scene_data = None
+        if shot.scene_id:
+            scene_stmt = select(Scene).where(Scene.scene_id == shot.scene_id)
+            scene_result = await db.execute(scene_stmt)
+            scene = scene_result.scalar_one_or_none()
+            if scene:
+                scene_data = {
+                    "scene_id": scene.scene_id,
+                    "title": scene.title,
+                    "duration": scene.duration,
+                    "time_setting": scene.time_setting,
+                    "location": scene.location,
+                    "space_type": scene.space_type,
+                    "atmosphere": scene.atmosphere,
+                    "image_prompt": scene.extra_data.get("image_prompt") if scene.extra_data else None,
+                    "image_url": scene.image_url,
+                    "status": scene.status,
+                    "extra_data": scene.extra_data,
+                }
+        
+        previous_shot_data = None
+        if shot.shot_number and shot.shot_number > 1:
+            prev_stmt = (
+                select(Shot)
+                .where(
+                    Shot.scene_id == shot.scene_id,
+                    Shot.shot_number == shot.shot_number - 1
+                )
+            )
+            prev_result = await db.execute(prev_stmt)
+            prev_shot = prev_result.scalar_one_or_none()
+            if prev_shot:
+                previous_shot_data = {
+                    "shot_id": prev_shot.shot_id,
+                    "shot_number": prev_shot.shot_number,
+                    "title": prev_shot.title,
+                    "description": prev_shot.description,
+                    "image_url": prev_shot.image_url,
+                    "video_url": prev_shot.extra_data.get("video_url") if prev_shot.extra_data else None,
+                    "extra_data": prev_shot.extra_data,
+                }
+        
+        return {
+            "success": True,
+            "shot": shot_dict,
+            "scene": scene_data,
+            "previous_shot": previous_shot_data,
+        }
 
 def read_prompt_template(template_name: str) -> str:
     """读取提示词模板文件"""
@@ -60,6 +219,8 @@ def _get_old_prompt(shot: Dict, prompt_type: str, frame_type: str) -> str:
 
 async def _save_shot_prompt(shot_id: int, new_prompt: str, prompt_type: str, frame_type: str) -> bool:
     """保存提示词到数据库"""
+    import json
+    
     from app.agent.tools.async_db import get_async_session
     from app.models.shot import Shot
     from sqlalchemy import select
@@ -75,12 +236,85 @@ async def _save_shot_prompt(shot_id: int, new_prompt: str, prompt_type: str, fra
         if shot.extra_data is None:
             shot.extra_data = {}
         
+        # 处理视频提示词
         if prompt_type == "video":
-            shot.extra_data["video_prompt"] = new_prompt
-        elif frame_type == "end":
-            shot.extra_data["end_frame_prompt"] = new_prompt
-        else:
-            shot.image_prompt = new_prompt
+            cleaned_prompt = new_prompt.strip()
+            if cleaned_prompt.startswith("```json"):
+                cleaned_prompt = cleaned_prompt[7:]
+            if cleaned_prompt.endswith("```"):
+                cleaned_prompt = cleaned_prompt[:-3]
+            cleaned_prompt = cleaned_prompt.strip()
+            
+            json_match = re.search(r'\{[\s\S]*\}', cleaned_prompt)
+            if json_match:
+                json_str = json_match.group()
+                json_str = json_str.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                try:
+                    prompt_json = json.loads(json_str)
+                    if "video_prompt" in prompt_json:
+                        shot.extra_data["video_prompt"] = prompt_json["video_prompt"]
+                        logger.info(f"[Save] 解析JSON video_prompt成功，长度={len(prompt_json.get('video_prompt', ''))}")
+                    else:
+                        video_match = re.search(r'"video_prompt":\s*"([^"]+)"', json_str)
+                        if video_match:
+                            shot.extra_data["video_prompt"] = video_match.group(1)
+                            logger.info(f"[Save] 正则提取video_prompt成功")
+                        else:
+                            shot.extra_data["video_prompt"] = cleaned_prompt
+                except json.JSONDecodeError:
+                    logger.warning(f"[Save] 视频JSON解析失败，尝试正则提取")
+                    video_match = re.search(r'"video_prompt":\s*"([^"]+)"', json_str)
+                    if video_match:
+                        shot.extra_data["video_prompt"] = video_match.group(1)
+                        logger.info(f"[Save] 正则提取video_prompt成功")
+                    else:
+                        shot.extra_data["video_prompt"] = cleaned_prompt
+            else:
+                shot.extra_data["video_prompt"] = new_prompt
+        
+        # 处理图片提示词（可能返回JSON格式）
+        elif prompt_type == "image":
+            prompt_to_save = new_prompt
+            
+            if frame_type == "both":
+                cleaned_prompt = new_prompt.strip()
+                if cleaned_prompt.startswith("```json"):
+                    cleaned_prompt = cleaned_prompt[7:]
+                if cleaned_prompt.endswith("```"):
+                    cleaned_prompt = cleaned_prompt[:-3]
+                cleaned_prompt = cleaned_prompt.strip()
+                
+                json_match = re.search(r'\{[\s\S]*\}', cleaned_prompt)
+                if json_match:
+                    json_str = json_match.group()
+                    json_str = json_str.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                    try:
+                        prompt_json = json.loads(json_str)
+                        if "start_frame_prompt" in prompt_json:
+                            shot.image_prompt = prompt_json["start_frame_prompt"]
+                        if "end_frame_prompt" in prompt_json:
+                            shot.extra_data["end_frame_image_prompt"] = prompt_json["end_frame_prompt"]
+                        logger.info(f"[Save] 解析JSON成功: start_frame长度={len(prompt_json.get('start_frame_prompt', ''))}, end_frame长度={len(prompt_json.get('end_frame_prompt', ''))}")
+                        prompt_to_save = None
+                    except json.JSONDecodeError:
+                        logger.warning(f"[Save] JSON解析失败，使用正则表达式兜底提取")
+                        start_match = re.search(r'"start_frame_prompt":\s*"([^"]+)"', json_str)
+                        end_match = re.search(r'"end_frame_prompt":\s*"([^"]+)"', json_str)
+                        if start_match:
+                            shot.image_prompt = start_match.group(1)
+                            logger.info(f"[Save] 正则提取start_frame成功")
+                        if end_match:
+                            shot.extra_data["end_frame_image_prompt"] = end_match.group(1)
+                            logger.info(f"[Save] 正则提取end_frame成功")
+                        prompt_to_save = None
+                else:
+                    prompt_to_save = cleaned_prompt
+            
+            if prompt_to_save:
+                if frame_type == "end":
+                    shot.extra_data["end_frame_prompt"] = prompt_to_save
+                else:
+                    shot.image_prompt = prompt_to_save
         
         flag_modified(shot, "extra_data")
         await db.commit()
@@ -129,48 +363,47 @@ async def _save_scene_prompt(scene_id: int, new_prompt: str) -> bool:
         return True
 
 
-# ==================== 知识库查询 ====================
+# ==================== 知识库查询核心函数 ====================
 
-@tool
-async def retrieve_video_prompt_knowledge(
+async def _retrieve_knowledge_from_db(
     shot_description: str,
     top_k: int = 3,
 ) -> Dict[str, Any]:
-    """
-    检索视频提示词相关的知识库内容
-    
-    在生成分镜视频提示词前调用，获取运镜技巧、镜头语言等相关知识，
-    帮助生成更专业的视频提示词。
-    
-    Args:
-        shot_description: 分镜描述（用于检索相关知识）
-        top_k: 返回的知识条目数量
-        
-    Returns:
-        相关知识列表
-    """
+    """检索视频提示词相关知识库内容的核心函数"""
     logger.info(f"[Knowledge Retrieval] 检索视频提示词知识: {shot_description[:50]}...")
     
-    from app.agent.tools.knowledge_tools import query_knowledge_base
+    from app.agent.tools.knowledge_tools import KNOWLEDGE_BASE_TYPES
     
     try:
-        # 查询多个相关知识库
+        from app.services.vector_store import VectorStoreService
+        
+        vector_store = VectorStoreService()
+        knowledge_types = ["camera_angles", "storyboard_techniques", "composition_rules"]
+        
+        async def query_single_knowledge(ktype: str):
+            results = await vector_store.similarity_search(
+                collection_name=f"knowledge_{ktype}",
+                query=shot_description,
+                top_k=top_k,
+            )
+            return {
+                "status": "success",
+                "knowledge_type": ktype,
+                "knowledge_type_desc": KNOWLEDGE_BASE_TYPES.get(ktype, ktype),
+                "results": [
+                    {
+                        "content": r["content"],
+                        "metadata": r.get("metadata", {}),
+                        "score": r.get("score", 0),
+                    }
+                    for r in results
+                ],
+            }
+        
         results = await asyncio.gather(
-            query_knowledge_base.ainvoke({
-                "query": shot_description,
-                "knowledge_type": "camera_angles",
-                "top_k": top_k,
-            }),
-            query_knowledge_base.ainvoke({
-                "query": shot_description,
-                "knowledge_type": "storyboard_techniques",
-                "top_k": top_k,
-            }),
-            query_knowledge_base.ainvoke({
-                "query": shot_description,
-                "knowledge_type": "composition_rules",
-                "top_k": top_k,
-            }),
+            query_single_knowledge("camera_angles"),
+            query_single_knowledge("storyboard_techniques"),
+            query_single_knowledge("composition_rules"),
             return_exceptions=True
         )
         
@@ -190,7 +423,6 @@ async def retrieve_video_prompt_knowledge(
                         "score": item.get("score", 0),
                     })
         
-        # 按相关度排序
         all_knowledge.sort(key=lambda x: x["score"], reverse=True)
         
         return {
@@ -200,6 +432,15 @@ async def retrieve_video_prompt_knowledge(
             "knowledge": all_knowledge[:top_k * 3],
         }
         
+    except ImportError:
+        logger.warning("[Knowledge Retrieval] 向量存储服务未实现，返回空知识")
+        return {
+            "status": "success",
+            "shot_description": shot_description,
+            "knowledge_count": 0,
+            "knowledge": [],
+        }
+        
     except Exception as e:
         logger.error(f"[Knowledge Retrieval] 检索知识库失败: {e}")
         return {
@@ -207,6 +448,29 @@ async def retrieve_video_prompt_knowledge(
             "error": str(e),
             "knowledge": [],
         }
+
+
+# ==================== 知识库查询工具 ====================
+
+@tool
+async def retrieve_video_prompt_knowledge(
+    shot_description: str,
+    top_k: int = 3,
+) -> Dict[str, Any]:
+    """
+    检索视频提示词相关的知识库内容
+    
+    在生成分镜视频提示词前调用，获取运镜技巧、镜头语言等相关知识，
+    帮助生成更专业的视频提示词。
+    
+    Args:
+        shot_description: 分镜描述（用于检索相关知识）
+        top_k: 返回的知识条目数量
+        
+    Returns:
+        相关知识列表
+    """
+    return await _retrieve_knowledge_from_db(shot_description, top_k)
 
 
 # ==================== 查询类 Tools ====================
@@ -225,40 +489,7 @@ async def query_single_character(character_id: int) -> Dict[str, Any]:
         角色完整信息
     """
     logger.info(f"[Query Tool] 查询角色详情: character_id={character_id}")
-    
-    from app.agent.tools.async_db import get_async_session
-    from app.models.character import Character
-    from sqlalchemy import select
-    
-    async with get_async_session() as db:
-        stmt = select(Character).where(Character.character_id == character_id)
-        result = await db.execute(stmt)
-        character = result.scalar_one_or_none()
-        
-        if not character:
-            return {
-                "success": False,
-                "error": f"角色不存在: {character_id}",
-            }
-        
-        return {
-            "success": True,
-            "character": {
-                "character_id": character.character_id,
-                "name": character.name,
-                "basic_info": character.basic_info,
-                "appearance": character.appearance,
-                "image_prompt": character.image_prompt,
-                "image_url": character.image_url,
-                "status": character.status,
-                "status_detail": character.status_detail,
-                "voice_id": character.voice_id,
-                "voice_speed": character.voice_speed,
-                "extra_data": character.extra_data,
-                "created_at": character.created_at.isoformat() if character.created_at else None,
-                "updated_at": character.updated_at.isoformat() if character.updated_at else None,
-            }
-        }
+    return await _get_character_from_db(character_id)
 
 
 @tool
@@ -275,40 +506,7 @@ async def query_single_scene(scene_id: int) -> Dict[str, Any]:
         场景完整信息
     """
     logger.info(f"[Query Tool] 查询场景详情: scene_id={scene_id}")
-    
-    from app.agent.tools.async_db import get_async_session
-    from app.models.scene import Scene
-    from sqlalchemy import select
-    
-    async with get_async_session() as db:
-        stmt = select(Scene).where(Scene.scene_id == scene_id)
-        result = await db.execute(stmt)
-        scene = result.scalar_one_or_none()
-        
-        if not scene:
-            return {
-                "success": False,
-                "error": f"场景不存在: {scene_id}",
-            }
-        
-        return {
-            "success": True,
-            "scene": {
-                "scene_id": scene.scene_id,
-                "title": scene.title,
-                "duration": scene.duration,
-                "time_setting": scene.time_setting,
-                "location": scene.location,
-                "space_type": scene.space_type,
-                "atmosphere": scene.atmosphere,
-                "image_url": scene.image_url,
-                "status": scene.status,
-                "status_detail": scene.status_detail,
-                "extra_data": scene.extra_data,
-                "created_at": scene.created_at.isoformat() if scene.created_at else None,
-                "updated_at": scene.updated_at.isoformat() if scene.updated_at else None,
-            }
-        }
+    return await _get_scene_from_db(scene_id)
 
 
 @tool
@@ -328,113 +526,7 @@ async def query_single_shot(shot_id: int) -> Dict[str, Any]:
         - 上一个分镜的信息（如果 shot_number > 1）
     """
     logger.info(f"[Query Tool] 查询分镜详情: shot_id={shot_id}")
-    
-    from app.agent.tools.async_db import get_async_session
-    from app.models.shot import Shot
-    from app.models.scene import Scene
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-    
-    async with get_async_session() as db:
-        # 查询当前分镜，同时加载场景关系
-        stmt = (
-            select(Shot)
-            .where(Shot.shot_id == shot_id)
-            .options(selectinload(Shot.scene))
-        )
-        result = await db.execute(stmt)
-        shot = result.scalar_one_or_none()
-        
-        if not shot:
-            return {
-                "success": False,
-                "error": f"分镜不存在: {shot_id}",
-            }
-        
-        # 构建当前分镜数据
-        shot_data = {
-            "shot_id": shot.shot_id,
-            "shot_number": shot.shot_number,
-            "title": shot.title,
-            "description": shot.description,
-            "narration": shot.narration,
-            "image_prompt": shot.image_prompt,
-            "image_url": shot.image_url,
-            "audio_url": shot.audio_url,
-            "video_url": shot.video_url,
-            "video_status": shot.video_status,
-            "video_duration": shot.video_duration,
-            "status": shot.status,
-            "status_detail": shot.status_detail,
-            "extra_data": shot.extra_data or {},
-            "scene_id": shot.scene_id,
-            "creation_id": shot.creation_id,
-            "created_at": shot.created_at.isoformat() if shot.created_at else None,
-            "updated_at": shot.updated_at.isoformat() if shot.updated_at else None,
-        }
-        
-        # 构建场景数据
-        scene_data = None
-        if shot.scene:
-            scene = shot.scene
-            scene_data = {
-                "scene_id": scene.scene_id,
-                "title": scene.title,
-                "duration": scene.duration,
-                "time_setting": scene.time_setting,
-                "location": scene.location,
-                "space_type": scene.space_type,
-                "atmosphere": scene.atmosphere,
-                "image_url": scene.image_url,
-                "status": scene.status,
-                "extra_data": scene.extra_data,
-            }
-        
-        # 查询上一个分镜（用于连贯性处理）
-        previous_shot_data = None
-        if shot.shot_number and shot.shot_number > 1:
-            # 获取同一 creation 下的所有场景
-            from app.models.creation import Creation
-            creation_stmt = select(Creation).where(Creation.creation_id == shot.creation_id)
-            creation_result = await db.execute(creation_stmt)
-            creation = creation_result.scalar_one_or_none()
-            
-            if creation:
-                # 获取该 creation 下的所有场景 ID
-                scene_stmt = select(Scene.scene_id).where(Scene.creation_id == creation.creation_id)
-                scene_result = await db.execute(scene_stmt)
-                scene_ids = [s[0] for s in scene_result.fetchall()]
-                
-                if scene_ids:
-                    # 查询上一个分镜（shot_number - 1）
-                    prev_stmt = (
-                        select(Shot)
-                        .where(
-                            Shot.scene_id.in_(scene_ids),
-                            Shot.shot_number == shot.shot_number - 1
-                        )
-                    )
-                    prev_result = await db.execute(prev_stmt)
-                    prev_shot = prev_result.scalar_one_or_none()
-                    
-                    if prev_shot:
-                        previous_shot_data = {
-                            "shot_id": prev_shot.shot_id,
-                            "shot_number": prev_shot.shot_number,
-                            "title": prev_shot.title,
-                            "description": prev_shot.description,
-                            "narration": prev_shot.narration,
-                            "image_url": prev_shot.image_url,
-                            "video_url": prev_shot.video_url,
-                            "extra_data": prev_shot.extra_data or {},
-                        }
-        
-        return {
-            "success": True,
-            "shot": shot_data,
-            "scene": scene_data,
-            "previous_shot": previous_shot_data,
-        }
+    return await _get_shot_from_db(shot_id)
 
 
 # ==================== 提交重新生成 Tools ====================
@@ -460,15 +552,13 @@ async def submit_character_image_regeneration(
     """
     logger.info(f"[Submit Tool] 提交角色图片重新生成: character_id={character_id}")
     
-    from app.agent.tools.regenerate_tools import regenerate
-    
-    result = await regenerate.ainvoke({
-        "target_type": "character",
-        "target_id": character_id,
-        "creation_uuid": creation_uuid,
-        "save_version": True,
-        "mode": mode,
-    })
+    result = await _execute_regeneration(
+        target_type="character",
+        target_id=character_id,
+        creation_uuid=creation_uuid,
+        save_version=True,
+        mode=mode,
+    )
     
     return {
         "success": result.get("success", False),
@@ -502,7 +592,7 @@ async def submit_character_prompt_regeneration(
     logger.info(f"[Submit Tool] 提交角色提示词重新生成: character_id={character_id}, operation={operation_type}")
     
     # 查询角色信息
-    char_result = await query_single_character.ainvoke({"character_id": character_id})
+    char_result = await _get_character_from_db(character_id)
     if not char_result.get("success"):
         return char_result
     
@@ -606,15 +696,13 @@ async def submit_scene_image_regeneration(
     """
     logger.info(f"[Submit Tool] 提交场景图片重新生成: scene_id={scene_id}")
     
-    from app.agent.tools.regenerate_tools import regenerate
-    
-    result = await regenerate.ainvoke({
-        "target_type": "scene",
-        "target_id": scene_id,
-        "creation_uuid": creation_uuid,
-        "save_version": True,
-        "mode": "auto",
-    })
+    result = await _execute_regeneration(
+        target_type="scene",
+        target_id=scene_id,
+        creation_uuid=creation_uuid,
+        save_version=True,
+        mode="auto",
+    )
     
     return {
         "success": result.get("success", False),
@@ -650,7 +738,7 @@ async def submit_scene_prompt_regeneration(
     logger.info(f"[Submit Tool] 提交场景提示词重新生成: scene_id={scene_id}, operation={operation_type}")
     
     # 查询场景信息
-    scene_result = await query_single_scene.ainvoke({"scene_id": scene_id})
+    scene_result = await _get_scene_from_db(scene_id)
     if not scene_result.get("success"):
         return scene_result
     
@@ -774,28 +862,26 @@ async def submit_shot_image_regeneration(
     """
     logger.info(f"[Submit Tool] 提交分镜图片重新生成: shot_id={shot_id}, frame_type={frame_type}")
     
-    from app.agent.tools.regenerate_tools import regenerate
-    
     results = []
     
     if frame_type in ["start", "both"]:
-        result = await regenerate.ainvoke({
-            "target_type": "shot_start",
-            "target_id": shot_id,
-            "creation_uuid": creation_uuid,
-            "save_version": True,
-            "mode": "auto",
-        })
+        result = await _execute_regeneration(
+            target_type="shot_start",
+            target_id=shot_id,
+            creation_uuid=creation_uuid,
+            save_version=True,
+            mode="auto",
+        )
         results.append({"frame": "start", "result": result})
     
     if frame_type in ["end", "both"]:
-        result = await regenerate.ainvoke({
-            "target_type": "shot_end",
-            "target_id": shot_id,
-            "creation_uuid": creation_uuid,
-            "save_version": True,
-            "mode": "auto",
-        })
+        result = await _execute_regeneration(
+            target_type="shot_end",
+            target_id=shot_id,
+            creation_uuid=creation_uuid,
+            save_version=True,
+            mode="auto",
+        )
         results.append({"frame": "end", "result": result})
     
     success = all(r["result"].get("success", False) for r in results)
@@ -836,7 +922,7 @@ async def submit_shot_prompt_regeneration(
     logger.info(f"[Submit Tool] 提交分镜提示词重新生成: shot_id={shot_id}, prompt_type={prompt_type}, operation={operation_type}")
 
     # 查询分镜信息（包含场景和上一个分镜信息）
-    shot_result = await query_single_shot.ainvoke({"shot_id": shot_id})
+    shot_result = await _get_shot_from_db(shot_id)
     if not shot_result.get("success"):
         return shot_result
 
@@ -866,22 +952,33 @@ async def submit_shot_prompt_regeneration(
     # 查询角色信息（用于填充 CHARACTER_PROFILES）
     character_profiles = ""
     try:
-        from app.agent.tools.db_tools import query_characters
-        char_result = await query_characters.ainvoke({
-            "creation_uuid": creation_uuid,
-            "include_images": False,
-        })
-        characters = char_result.get("characters", [])
-        if characters:
-            char_lines = []
-            for char in characters:
-                char_name = char.get("name", "未命名")
-                char_basic = char.get("basic_info", "")
-                char_appearance = char.get("appearance", "")
-                char_lines.append(f"- {char_name}: {char_basic or '无基本信息'}，{char_appearance or '无外貌描述'}")
-            character_profiles = "\n".join(char_lines)
-        else:
-            character_profiles = "无角色信息"
+        from app.agent.tools.async_db import get_async_session
+        from app.models.character import Character
+        from app.models.creation import Creation
+        from sqlalchemy import select
+        
+        async with get_async_session() as db:
+            creation_stmt = select(Creation).where(Creation.uuid == creation_uuid)
+            creation_result = await db.execute(creation_stmt)
+            creation = creation_result.scalar_one_or_none()
+            
+            if creation and creation.character_ids:
+                stmt = select(Character).where(Character.character_id.in_(creation.character_ids))
+                result = await db.execute(stmt)
+                characters = result.scalars().all()
+                
+                if characters:
+                    char_lines = []
+                    for char in characters:
+                        char_name = char.name or "未命名"
+                        char_basic = char.basic_info or ""
+                        char_appearance = char.appearance or ""
+                        char_lines.append(f"- {char_name}: {char_basic or '无基本信息'}，{char_appearance or '无外貌描述'}")
+                    character_profiles = "\n".join(char_lines)
+                else:
+                    character_profiles = "无角色信息"
+            else:
+                character_profiles = "无角色信息"
     except Exception as e:
         logger.warning(f"[Submit Tool] 获取角色信息失败: {e}")
         character_profiles = "无角色信息"
@@ -889,7 +986,7 @@ async def submit_shot_prompt_regeneration(
     # 如果是视频提示词，检索知识库
     knowledge_context = ""
     if prompt_type == "video" and operation_type == "regenerate":
-        knowledge_result = await retrieve_video_prompt_knowledge(
+        knowledge_result = await _retrieve_knowledge_from_db(
             shot_description=shot.get("description", ""),
             top_k=3,
         )
@@ -926,6 +1023,7 @@ async def submit_shot_prompt_regeneration(
                         .replace("{{SHOT_TITLE}}", shot.get("title", "") or f"分镜{shot.get('shot_number', '')}") \
                         .replace("{{SHOT_DESCRIPTION}}", shot.get("description", "") or "无") \
                         .replace("{{SHOT_NARRATION}}", shot.get("narration", "") or "无") \
+                        .replace("{{SHOT_VIDEO_DURATION}}", str(shot.get("video_duration", "5"))) \
                         .replace("{{SCENE_TITLE}}", scene.get("title", "") if scene else "未指定") \
                         .replace("{{SCENE_LOCATION}}", scene.get("location", "") or "未指定") \
                         .replace("{{SCENE_TIME}}", scene.get("time_setting", "") or "未指定") \
@@ -958,6 +1056,7 @@ async def submit_shot_prompt_regeneration(
                            .replace("{{SHOT_TITLE}}", shot.get("title", "") or f"分镜{shot.get('shot_number', '')}") \
                            .replace("{{SHOT_DESCRIPTION}}", shot.get("description", "") or "无") \
                            .replace("{{SHOT_NARRATION}}", shot.get("narration", "") or "无") \
+                           .replace("{{SHOT_VIDEO_DURATION}}", str(shot.get("video_duration", "5"))) \
                            .replace("{{SCENE_TITLE}}", scene.get("title", "") if scene else "未指定") \
                            .replace("{{SCENE_LOCATION}}", scene.get("location", "") or "未指定") \
                            .replace("{{SCENE_TIME}}", scene.get("time_setting", "") or "未指定") \
@@ -1000,8 +1099,6 @@ async def submit_shot_video_regeneration(
     """
     logger.info(f"[Submit Tool] 提交分镜视频重新生成: shot_id={shot_id}, mode={generation_mode}")
     
-    from app.agent.tools.regenerate_tools import regenerate
-    
     # 先更新 generation_mode 到数据库
     from app.agent.tools.async_db import get_async_session
     from app.models.shot import Shot
@@ -1020,13 +1117,13 @@ async def submit_shot_video_regeneration(
             await db.commit()
     
     # 提交视频生成任务
-    result = await regenerate.ainvoke({
-        "target_type": "shot_video",
-        "target_id": shot_id,
-        "creation_uuid": creation_uuid,
-        "save_version": True,
-        "mode": generation_mode,
-    })
+    result = await _execute_regeneration(
+        target_type="shot_video",
+        target_id=shot_id,
+        creation_uuid=creation_uuid,
+        save_version=True,
+        mode=generation_mode,
+    )
     
     return {
         "success": result.get("success", False),
@@ -1055,3 +1152,653 @@ REGENERATE_WORKER_TOOLS = [
     submit_shot_prompt_regeneration,
     submit_shot_video_regeneration,
 ]
+
+
+# ==================== 资源生成工具（已合并） ====================
+
+@tool
+async def clear_asset(
+    target_type: str,
+    target_id: int,
+    save_version: bool = True,
+) -> Dict[str, Any]:
+    """
+    清空单个资源的图片/视频（原子操作）
+    
+    Args:
+        target_type: 资源类型 (character | scene | shot_start | shot_end | shot_video)
+        target_id: 资源 ID
+        save_version: 是否保存历史版本到 status_detail
+        
+    Returns:
+        操作结果
+    """
+    logger.info(f"[Regenerate Tool] 清空资源: type={target_type}, id={target_id}, save_version={save_version}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.character import Character
+    from app.models.scene import Scene
+    from app.models.shot import Shot
+    from sqlalchemy import select
+    
+    async with get_async_session() as db:
+        try:
+            # 根据类型获取资源
+            if target_type == "character":
+                stmt = select(Character).where(Character.character_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"角色不存在: {target_id}"}
+                field_name = "image_url"
+                old_value = resource.image_url
+                resource.image_url = None
+                resource.status = "pending"
+                
+            elif target_type == "scene":
+                stmt = select(Scene).where(Scene.scene_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"场景不存在: {target_id}"}
+                field_name = "image_url"
+                old_value = resource.image_url
+                resource.image_url = None
+                resource.status = "pending"
+                
+            elif target_type in ["shot_start", "shot_end"]:
+                stmt = select(Shot).where(Shot.shot_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"分镜不存在: {target_id}"}
+                field_name = "image_url"
+                old_value = resource.image_url
+                resource.image_url = None
+                resource.status = "pending"
+                
+            elif target_type == "shot_video":
+                stmt = select(Shot).where(Shot.shot_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"分镜不存在: {target_id}"}
+                field_name = "video_url"
+                old_value = resource.video_url
+                resource.video_url = None
+                resource.video_status = "pending"
+                resource.status = "pending"
+                
+            else:
+                return {"success": False, "error": f"不支持的资源类型: {target_type}"}
+            
+            # 保存版本
+            if save_version:
+                status_detail = resource.status_detail or {}
+                versions = status_detail.get("versions", [])
+                version_record = {
+                    "version": len(versions) + 1,
+                    "created_at": datetime.now().isoformat(),
+                    "field": field_name,
+                    "value": old_value,
+                    "trigger": "clear",
+                }
+                versions.append(version_record)
+                status_detail["versions"] = versions
+                resource.status_detail = status_detail
+            
+            await db.commit()
+            
+            return {
+                "success": True,
+                "target_type": target_type,
+                "target_id": target_id,
+                "field_cleared": field_name,
+                "version_saved": save_version,
+            }
+            
+        except Exception as e:
+            logger.error(f"[Regenerate Tool] 清空资源失败: {e}")
+            return {"success": False, "error": str(e)}
+
+
+async def submit_generation(
+    target_type: str,
+    target_id: int,
+    creation_uuid: str,
+    mode: str = "auto",
+    reference_image_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    提交生成任务（原子操作）
+    
+    Args:
+        target_type: 资源类型 (character | scene | shot_start | shot_end | shot_video)
+        target_id: 资源 ID
+        creation_uuid: 创作项目 UUID
+        mode: 生成模式 (txt2img | img2img | auto)
+        reference_image_url: 参考图片 URL（img2img 模式需要）
+        
+    Returns:
+        任务提交结果
+    """
+    logger.info(f"[Regenerate Tool] 提交生成任务: type={target_type}, id={target_id}, mode={mode}")
+    logger.info(f"[Regenerate Tool] DEBUG: target_type={target_type}, 将决定 frame_type")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.character import Character
+    from app.models.scene import Scene
+    from app.models.shot import Shot
+    from sqlalchemy import select
+    
+    try:
+        # 获取创建任务的函数
+        from app.tasks.character_task import generate_character_image_task
+        from app.tasks.step4_scene_image_gen_task import generate_single_scene_image_task
+        from app.tasks.shot_task import generate_single_shot_image_task
+        
+        async with get_async_session() as db:
+            if target_type == "character":
+                # 获取 Character 的 creation_id
+                stmt = select(Character).where(Character.character_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"角色不存在: {target_id}"}
+                creation_id = resource.creation_id
+                logger.info(f"[Regenerate Tool] 调用 generate_character_image_task: character_id={target_id}, creation_id={creation_id}")
+                task = generate_character_image_task.delay(
+                    character_id=target_id,
+                    creation_id=creation_id,
+                )
+                
+            elif target_type == "scene":
+                # 获取 Scene 的 creation_id
+                stmt = select(Scene).where(Scene.scene_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"场景不存在: {target_id}"}
+                creation_id = resource.creation_id
+                logger.info(f"[Regenerate Tool] 调用 generate_single_scene_image_task: scene_id={target_id}, creation_id={creation_id}")
+                task = generate_single_scene_image_task.delay(
+                    scene_id=target_id,
+                    creation_id=creation_id,
+                )
+                
+            elif target_type == "shot_start":
+                # 首帧
+                stmt = select(Shot).where(Shot.shot_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"分镜不存在: {target_id}"}
+                
+                # 获取 creation_id
+                from app.models.creation import Creation
+                creation_stmt = select(Creation).where(Creation.uuid == creation_uuid)
+                creation_result = await db.execute(creation_stmt)
+                creation_obj = creation_result.scalar_one_or_none()
+                creation_id = creation_obj.creation_id if creation_obj else resource.creation_id
+                
+                logger.info(f"[Regenerate Tool] 调用 generate_single_shot_image_task: shot_id={target_id}, frame_type=start")
+                task = generate_single_shot_image_task.delay(
+                    shot_id=target_id,
+                    creation_id=creation_id,
+                    frame_type="start",
+                )
+                
+            elif target_type == "shot_end":
+                logger.info(f"[Regenerate Tool] 进入 shot_end 分支: target_id={target_id}")
+                stmt = select(Shot).where(Shot.shot_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"分镜不存在: {target_id}"}
+                
+                # 获取 creation_id
+                from app.models.creation import Creation
+                creation_stmt = select(Creation).where(Creation.uuid == creation_uuid)
+                creation_result = await db.execute(creation_stmt)
+                creation_obj = creation_result.scalar_one_or_none()
+                creation_id = creation_obj.creation_id if creation_obj else resource.creation_id
+                
+                logger.info(f"[Regenerate Tool] 调用 generate_single_shot_image_task: shot_id={target_id}, frame_type=end")
+                task = generate_single_shot_image_task.delay(
+                    shot_id=target_id,
+                    creation_id=creation_id,
+                    frame_type="end",
+                )
+                
+            elif target_type == "shot_image":
+                # 同时生成首帧和尾帧
+                stmt = select(Shot).where(Shot.shot_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"分镜不存在: {target_id}"}
+                
+                # 获取 creation_id
+                from app.models.creation import Creation
+                creation_stmt = select(Creation).where(Creation.uuid == creation_uuid)
+                creation_result = await db.execute(creation_stmt)
+                creation_obj = creation_result.scalar_one_or_none()
+                creation_id = creation_obj.creation_id if creation_obj else resource.creation_id
+                
+                logger.info(f"[Regenerate Tool] 调用 generate_single_shot_image_task: shot_id={target_id}, frame_type=both")
+                task = generate_single_shot_image_task.delay(
+                    shot_id=target_id,
+                    creation_id=creation_id,
+                    frame_type="both",
+                )
+                
+            elif target_type == "shot_video":
+                stmt = select(Shot).where(Shot.shot_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"分镜不存在: {target_id}"}
+                
+                # 获取 extra_data 并更新 generation_mode
+                extra_data = resource.extra_data or {}
+                generation_mode = mode if mode in ["first_frame_only", "first_last_frame"] else "first_frame_only"
+                extra_data["generation_mode"] = generation_mode
+                resource.extra_data = extra_data
+
+                # 标记修改
+                flag_modified(resource, "extra_data")
+                await db.commit()
+                
+                logger.info(f"[Regenerate Tool] 调用 agent_generate_single_shot_video_task: shot_id={target_id}, generation_mode={generation_mode}")
+                
+                from app.agent.tasks.video_tasks import agent_generate_single_shot_video_task
+                task = agent_generate_single_shot_video_task.delay(
+                    creation_uuid=creation_uuid,
+                    shot_id=target_id,
+                )
+            else:
+                return {"success": False, "error": f"不支持的资源类型: {target_type}"}
+            
+            return {
+                "success": True,
+                "target_type": target_type,
+                "target_id": target_id,
+                "task_id": task.id,
+                "mode": mode,
+            }
+            
+    except Exception as e:
+        logger.error(f"[Regenerate Tool] 提交生成任务失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def update_resource_status(
+    target_type: str,
+    target_id: int,
+    status: str,
+    save_version: bool = True,
+) -> Dict[str, Any]:
+    """
+    更新资源状态（重新生成时不清空历史，只修改状态）
+    
+    Args:
+        target_type: 资源类型 (character | scene | shot_start | shot_end | shot_video)
+        target_id: 资源 ID
+        status: 新状态 (pending/generating/completed/failed)
+        save_version: 是否保存当前版本到历史
+        
+    Returns:
+        操作结果
+    """
+    logger.info(f"[Regenerate Tool] 更新状态: type={target_type}, id={target_id}, status={status}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from app.models.character import Character
+    from app.models.scene import Scene
+    from app.models.shot import Shot
+    from sqlalchemy import select
+    
+    async with get_async_session() as db:
+        try:
+            # 根据类型获取资源
+            if target_type == "character":
+                stmt = select(Character).where(Character.character_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"角色不存在: {target_id}"}
+                old_status = resource.status
+                resource.status = status
+                
+            elif target_type == "scene":
+                stmt = select(Scene).where(Scene.scene_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"场景不存在: {target_id}"}
+                old_status = resource.status
+                resource.status = status
+                
+            elif target_type in ["shot_start", "shot_end"]:
+                stmt = select(Shot).where(Shot.shot_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"分镜不存在: {target_id}"}
+                old_status = resource.status
+                resource.status = status
+                
+            elif target_type == "shot_video":
+                stmt = select(Shot).where(Shot.shot_id == target_id)
+                result = await db.execute(stmt)
+                resource = result.scalar_one_or_none()
+                if not resource:
+                    return {"success": False, "error": f"分镜不存在: {target_id}"}
+                old_status = resource.video_status
+                resource.video_status = status
+                
+            else:
+                return {"success": False, "error": f"不支持的资源类型: {target_type}"}
+            
+            # 保存版本
+            if save_version:
+                status_detail = resource.status_detail or {}
+                versions = status_detail.get("versions", [])
+                version_record = {
+                    "version": len(versions) + 1,
+                    "created_at": datetime.now().isoformat(),
+                    "field": "status" if target_type != "shot_video" else "video_status",
+                    "value": {
+                        "old": old_status,
+                        "new": status,
+                    },
+                    "trigger": "regenerate",
+                }
+                versions.append(version_record)
+                status_detail["versions"] = versions
+                resource.status_detail = status_detail
+            
+            await db.commit()
+            
+            return {
+                "success": True,
+                "target_type": target_type,
+                "target_id": target_id,
+                "old_status": old_status,
+                "new_status": status,
+                "version_saved": save_version,
+            }
+            
+        except Exception as e:
+            logger.error(f"[Regenerate Tool] 更新状态失败: {e}")
+            return {"success": False, "error": str(e)}
+
+
+async def _poll_task_status(task_id: str, max_wait: int = 300, poll_interval: int = 3) -> Dict[str, Any]:
+    """
+    轮询 Celery 任务状态
+    
+    Args:
+        task_id: Celery 任务 ID
+        max_wait: 最大等待时间（秒）
+        poll_interval: 轮询间隔（秒）
+        
+    Returns:
+        任务最终状态
+    """
+    from celery.result import AsyncResult
+    from app.core.celery_app import celery_app
+    
+    elapsed = 0
+    logger.info(f"[_poll_task_status] 开始轮询任务: {task_id}, max_wait={max_wait}s")
+    
+    while elapsed < max_wait:
+        try:
+            task = AsyncResult(task_id, app=celery_app)
+            state = task.state
+            
+            if state == 'SUCCESS':
+                result = task.result or {}
+                logger.info(f"[_poll_task_status] 任务完成: {task_id}")
+                return {
+                    "status": "completed",
+                    "task_id": task_id,
+                    "result": result,
+                }
+            elif state == 'FAILURE':
+                error_msg = str(task.info) if task.info else "Unknown error"
+                logger.error(f"[_poll_task_status] 任务失败: {task_id}, error={error_msg}")
+                return {
+                    "status": "failed",
+                    "task_id": task_id,
+                    "error": error_msg,
+                }
+            else:
+                logger.debug(f"[_poll_task_status] 任务 {task_id} 状态: {state}, 已等待 {elapsed}s")
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+                
+        except Exception as e:
+            logger.error(f"[_poll_task_status] 轮询任务状态失败: {e}")
+            return {
+                "status": "error",
+                "task_id": task_id,
+                "error": str(e),
+            }
+    
+    logger.warning(f"[_poll_task_status] 达到最大等待时间: {task_id}")
+    return {
+        "status": "timeout",
+        "task_id": task_id,
+        "elapsed": elapsed,
+        "error": "达到最大等待时间",
+    }
+
+
+async def _execute_regeneration(
+    target_type: str,
+    target_id: int,
+    creation_uuid: str,
+    save_version: bool = True,
+    mode: str = "auto",
+) -> Dict[str, Any]:
+    """执行资源重新生成操作的核心函数"""
+    logger.info(f"[Regenerate Tool] 重新生成: type={target_type}, id={target_id}")
+    
+    status_result = await update_resource_status(
+        target_type=target_type,
+        target_id=target_id,
+        status="generating",
+        save_version=save_version,
+    )
+    
+    if not status_result.get("success"):
+        return status_result
+    
+    submit_result = await submit_generation(
+        target_type=target_type,
+        target_id=target_id,
+        creation_uuid=creation_uuid,
+        mode=mode,
+    )
+    
+    if not submit_result.get("success"):
+        return submit_result
+    
+    return {
+        "success": True,
+        "target_type": target_type,
+        "target_id": target_id,
+        "task_id": submit_result.get("task_id"),
+        "version_saved": save_version,
+        "mode": mode,
+    }
+
+
+@tool
+async def regenerate(
+    target_type: str,
+    target_id: int,
+    creation_uuid: str,
+    save_version: bool = True,
+    mode: str = "auto",
+) -> Dict[str, Any]:
+    """
+    重新生成资源（组合操作：更新状态为 generating + 提交生成任务）
+    
+    Args:
+        target_type: 资源类型 (character | scene | shot_start | shot_end | shot_video | shot_image)
+        target_id: 资源 ID
+        creation_uuid: 创作项目 UUID
+        save_version: 是否保存历史版本
+        mode: 生成模式 (txt2img | img2img | auto)
+        
+    Returns:
+        操作结果
+    """
+    return await _execute_regeneration(target_type, target_id, creation_uuid, save_version, mode)
+
+
+@tool
+async def regenerate_with_poll(
+    target_type: str,
+    target_id: int,
+    creation_uuid: str,
+    save_version: bool = True,
+    mode: str = "auto",
+    max_wait: int = 300,
+) -> Dict[str, Any]:
+    """
+    重新生成资源并轮询等待完成（带状态轮询的完整版本）
+    
+    Args:
+        target_type: 资源类型
+        target_id: 资源 ID
+        creation_uuid: 创作项目 UUID
+        save_version: 是否保存历史版本
+        mode: 生成模式
+        max_wait: 最大等待时间（秒）
+        
+    Returns:
+        包含任务执行结果的字典
+    """
+    logger.info(f"[Regenerate Tool] 重新生成并轮询: type={target_type}, id={target_id}")
+    
+    # Step 1: 执行重新生成（更新状态 + 提交任务）
+    result = await _execute_regeneration(
+        target_type=target_type,
+        target_id=target_id,
+        creation_uuid=creation_uuid,
+        save_version=save_version,
+        mode=mode,
+    )
+    
+    if not result.get("success"):
+        return result
+    
+    # Step 2: 轮询等待任务完成
+    task_id = result.get("task_id")
+    logger.info(f"[Regenerate Tool] 开始轮询任务: {task_id}")
+    
+    poll_result = await _poll_task_status(task_id, max_wait=max_wait)
+    
+    return {
+        "success": poll_result.get("status") == "completed",
+        "task_id": task_id,
+        "poll_status": poll_result.get("status"),
+        "poll_result": poll_result,
+    }
+
+
+@tool
+async def clear_all(
+    creation_uuid: str,
+    target_types: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    清空创作项目下所有或指定类型资源
+    
+    Args:
+        creation_uuid: 创作项目 UUID
+        target_types: 要清空的资源类型列表，默认清空所有
+        
+    Returns:
+        清空结果汇总
+    """
+    logger.info(f"[Regenerate Tool] 清空所有资源: creation_uuid={creation_uuid}, types={target_types}")
+    
+    from app.agent.tools.async_db import get_async_session
+    from sqlalchemy import select
+    from app.models.character import Character
+    from app.models.scene import Scene
+    from app.models.shot import Shot
+    
+    default_types = ["character", "scene", "shot_start", "shot_end", "shot_video"]
+    target_types = target_types or default_types
+    
+    results = []
+    
+    async with get_async_session() as db:
+        try:
+            for target_type in target_types:
+                if target_type == "character":
+                    stmt = select(Character).where(Character.creation_uuid == creation_uuid)
+                    result = await db.execute(stmt)
+                    resources = result.scalars().all()
+                    
+                elif target_type == "scene":
+                    stmt = select(Scene).where(Scene.creation_uuid == creation_uuid)
+                    result = await db.execute(stmt)
+                    resources = result.scalars().all()
+                    
+                elif target_type == "shot":
+                    stmt = select(Shot).where(Shot.creation_uuid == creation_uuid)
+                    result = await db.execute(stmt)
+                    resources = result.scalars().all()
+                    
+                else:
+                    results.append({
+                        "type": target_type,
+                        "success": False,
+                        "error": f"不支持的资源类型: {target_type}",
+                        "cleared_count": 0,
+                    })
+                    continue
+                
+                cleared_count = 0
+                for resource in resources:
+                    if target_type == "character":
+                        resource.status = "pending"
+                        resource.image_url = None
+                        cleared_count += 1
+                    elif target_type == "scene":
+                        resource.status = "pending"
+                        resource.image_url = None
+                        cleared_count += 1
+                    elif target_type == "shot":
+                        resource.status = "pending"
+                        resource.image_url = None
+                        resource.video_url = None
+                        resource.video_status = "pending"
+                        cleared_count += 1
+                
+                results.append({
+                    "type": target_type,
+                    "success": True,
+                    "cleared_count": cleared_count,
+                })
+            
+            await db.commit()
+            
+            return {
+                "success": all(r.get("success") for r in results),
+                "results": results,
+            }
+            
+        except Exception as e:
+            logger.error(f"[Regenerate Tool] 清空所有资源失败: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "results": results,
+            }
