@@ -165,7 +165,7 @@ class AudioEngineerNode:
                     return {
                         "response_text": f"已为角色选择合适的音色！\n\n{voice_summary}",
                         "production_stage": ProductionStage.STORYBOARD_READY,
-                        "pending_approval": False,
+                        "worker_result": {"worker": "audio_engineer", "completed": True, "response_text": f"已为角色选择合适的音色！"},
                     }
                 
                 if not audio_items:
@@ -174,13 +174,7 @@ class AudioEngineerNode:
                     return {
                         "response_text": "所有音频已生成完成！请在分镜中试听确认。",
                         "production_stage": ProductionStage.AUDIO_READY,
-                        "production_progress": production_progress,
-                        "pending_approval": True,
-                        "checkpoint_data": {
-                            "checkpoint_type": "audio_confirmation",
-                            "data": {},
-                            "message": "请确认配音效果",
-                        },
+                        "worker_result": {"worker": "audio_engineer", "completed": True, "response_text": "所有音频已生成完成！"},
                     }
                 
                 # 5. 提取需要生成音频的 shot_ids
@@ -237,22 +231,17 @@ class AudioEngineerNode:
                     "completed": success_count,
                 }
                 
-                return {
-                    "response_text": f"""配音生成完成！
+                response_text = f"""配音生成完成！
 
 🎤 **共 {success_count} 个分镜音频生成成功**
 
 {voice_summary}
 
-请在分镜中试听确认配音效果。""",
+请在分镜中试听确认配音效果。"""
+                return {
+                    "response_text": response_text,
                     "production_stage": ProductionStage.AUDIO_READY,
-                    "production_progress": production_progress,
-                    "pending_approval": True,
-                    "checkpoint_data": {
-                        "checkpoint_type": "audio_confirmation",
-                        "data": {},
-                        "message": "请确认配音效果",
-                    },
+                    "worker_result": {"worker": "audio_engineer", "completed": True, "response_text": response_text},
                     "board_actions": [
                         {"type": "switch_view", "target": "storyboards"},
                     ],
@@ -267,18 +256,18 @@ class AudioEngineerNode:
                     "failed": failed_count,
                 }
                 
-                return {
-                    "response_text": f"""配音生成部分完成！
+                response_text = f"""配音生成部分完成！
 
 🎤 **成功：{success_count} 个分镜**
 ❌ **失败：{failed_count} 个分镜**
 
 {voice_summary}
 
-部分音频生成失败，请检查日志或重试。""",
+部分音频生成失败，请检查日志或重试。"""
+                return {
+                    "response_text": response_text,
                     "production_stage": ProductionStage.AUDIO_READY,
-                    "production_progress": production_progress,
-                    "pending_approval": True,
+                    "worker_result": {"worker": "audio_engineer", "completed": True, "response_text": response_text},
                     "errors": [{"message": f"{failed_count} 个分镜音频生成失败"}],
                     "board_actions": [
                         {"type": "switch_view", "target": "storyboards"},

@@ -114,7 +114,6 @@ class ScriptAnalystNode(ReActWorkerNode):
             return {
                 "response_text": "请先在左侧上传您的剧本文件，或在剧本编辑区粘贴剧本内容。",
                 "production_stage": ProductionStage.INIT,
-                "needs_input": True,
                 "board_actions": [
                     {"type": "switch_view", "target": "script"},
                     {"type": "highlight", "target": "upload_button"},
@@ -183,20 +182,9 @@ class ScriptAnalystNode(ReActWorkerNode):
             return {
                 "response_text": response,
                 "production_stage": ProductionStage.SCRIPT_ANALYZED,
-                "production_progress": production_progress,
-                "pending_approval": False,
-                "needs_input": False,
                 "characters": characters,
                 "scenes": scenes,
-                "checkpoint_data": {
-                    "checkpoint_type": "script_analysis",
-                    "data": {
-                        "characters_count": total_chars,
-                        "scenes_count": total_scenes,
-                        "summary": analysis_result.get("summary", ""),
-                    },
-                    "message": "请确认角色和场景识别是否准确",
-                },
+                "worker_result": {"worker": "script_analyst", "completed": True, "response_text": response},
                 "board_actions": [
                     {"type": "switch_view", "target": "characters"},
                     {"type": "refresh"},

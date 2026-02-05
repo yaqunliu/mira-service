@@ -485,16 +485,16 @@ class PointsAsyncService:
         extra_data: Optional[Dict[str, Any]] = None
     ) -> PointsRecord:
         """
-        手动添加积分
+        手动添加积分（长期积分）
         """
         account = await PointsAsyncService.get_or_create_account(db, user_id)
         
         balance_before = account.available_points
         
-        if points >= 0:
-            account.available_points += points
-        else:
-            account.available_points += points
+        # 更新 permanent_points 和 total_points（修复：之前只更新 available_points 导致同步时积分丢失）
+        account.permanent_points += points
+        account.total_points += points
+        account.available_points = account.total_points - account.frozen_points
         
         balance_after = account.available_points
         

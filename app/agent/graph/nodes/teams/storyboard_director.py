@@ -1,10 +1,10 @@
 """
 分镜导演节点 - StoryboardDirectorNode
 
-两步 LLM 流程：
+职责：
 1. LLM 生成分镜脚本（描述、旁白、时长）→ save_shots Tool 保存
-2. LLM 生成图片提示词（首帧/尾帧）→ save_shot_prompts Tool 保存
-3. generate_shot_images Tool 触发图片生成任务
+
+注意：图片提示词生成和图片生成已移至 asset_generation_worker
 """
 
 import json
@@ -24,108 +24,71 @@ class StoryboardDirectorNode:
     
     职责:
     1. LLM 生成分镜脚本（调用 save_shots Tool 保存）
-    2. LLM 生成图片提示词（调用 save_shot_prompts Tool 保存）
-    3. 触发分镜图片生成任务（调用 generate_shot_images Tool）
+    
+    注意：图片提示词生成和图片生成已移至 asset_generation_worker
     """
     
-    # 第一步：生成分镜脚本
+    # 生成分镜脚本的提示词
     SCRIPT_PROMPT = """你是一位专业的分镜导演，负责将剧本拆解为详细的分镜脚本。
 
 ## 输出格式
 返回 JSON 数组，每个分镜包含：
+
+### 基础信息
 - scene_name: 所属场景名称（必须与已有场景标题完全一致）
-- title: 分镜标题
-- description: 画面描述（详细描述镜头内容、人物动作、表情等）
-- characters: 出场角色名称数组（必须与已有角色名称完全一致，如 ["林晚", "李明"]）
-- narration: 旁白或对话内容（JSON数组格式：[{"角色": "角色名", "内容": "对话内容"}]）
+- title: 分镜标题（简短有力，如"初次相遇"、"激烈对峙"）
+- characters: 出场角色名称数组（必须与已有角色名称完全一致）
 - duration: 预估时长（秒，3-8秒）
+
+### 画面描述（核心字段，越详细越好）
+- description: 综合画面描述，需包含以下维度：
+  1. **场景环境**: 具体地点、空间特征（如"宽敞的现代咖啡厅"）
+  2. **空间布局**: 物体摆放、空间层次（如"吧台在左侧，落地窗在右侧"）
+  3. **人物位置**: 角色在画面中的位置和朝向（如"女主位于画面中央偏右，面朝窗外"）
+  4. **人物状态**: 动作、姿态、表情、视线方向（如"双手捧着咖啡杯，眼神迷离"）
+  5. **天气光线**: 时间、天气、光源、光影效果（如"午后阳光斜照，形成温暖的逆光轮廓"）
+  6. **情绪氛围**: 整体氛围、色调倾向（如"温馨惬意的午后氛围"）
+
+### 镜头建议（辅助后续生图）
+- shot_type: 景别建议（远景/全景/中景/近景/特写）
+- camera_angle: 机位角度（平视/俯视/仰视/侧面）
+
+### 对话旁白
+- narration: 旁白或对话内容（JSON数组格式：[{"角色": "角色名", "内容": "对话内容"}]）
 
 ## 要求
 1. 分镜数量控制在 15-30 个
 2. 每个分镜时长 3-8 秒
-3. 画面描述要详细具体，便于后续生成图片
+3. **description 字段是最重要的，必须从多个维度详细描述画面**
 4. 保持剧情连贯性和节奏感
-5. **characters 字段必须填写本分镜中出现的所有角色名称**
+5. 景别要有变化，避免单调（远→近→特写→中景...）
+6. 情绪转折处可用特写强调
 
 ## 输出示例
 ```json
 [
     {
         "scene_name": "咖啡厅",
-        "title": "初次相遇",
-        "description": "女主角坐在靠窗的位置，阳光透过玻璃洒在她的脸上，她正在看书。",
+        "title": "午后邂逅",
         "characters": ["林晚"],
-        "narration": [{"角色": "旁白", "内容": "那是一个平凡的午后"}],
-        "duration": 5
+        "duration": 5,
+        "description": "现代风格的咖啡厅内，暖色调的木质装潢。落地窗外是繁忙的都市街景。林晚独自坐在靠窗的双人座位，身体微微侧向窗外。她穿着浅色毛衣，双手捧着白色咖啡杯，目光出神地望向窗外。午后三点的阳光斜射进来，在她的侧脸形成温柔的光晕。整体氛围宁静而略带忧郁。",
+        "shot_type": "中景",
+        "camera_angle": "侧面平视",
+        "narration": [{"角色": "旁白", "内容": "那是一个看似平凡的午后"}]
+    },
+    {
+        "scene_name": "咖啡厅",
+        "title": "眼神交汇",
+        "characters": ["林晚", "李明"],
+        "duration": 4,
+        "description": "林晚的眼睛特写，瞳孔中倒映着门口的人影。她的眼神从恍惚变为惊讶，睫毛微微颤动。柔和的侧光勾勒出眼眶的轮廓，眼眶微微泛红。",
+        "shot_type": "特写",
+        "camera_angle": "平视",
+        "narration": [{"角色": "林晚", "内容": "是...你？"}]
     }
 ]
 ```
-
-只输出 JSON，不要其他内容。"""
-
-    # 第二步：生成图片提示词 - 专业版（参考 shot_image_v4.md）
-    PROMPT_GENERATION_PROMPT = """你是一位世界级电影导演兼专业布景师，负责为分镜生成首帧和尾帧的静态图片提示词。
-
-## 视觉风格
-{visual_style}
-
-## 角色档案
-{character_profiles}
-
-## 场景环境
-{scene_environment}
-
-## 核心创作原则
-
-### 1. 情绪分析（必须）
-在生成每个分镜的提示词前，先分析角色的情绪状态：
-- 表面情绪与内心情绪
-- 情绪转变（首帧 → 尾帧）
-- 通过面部表情、眼神、肢体语言传达
-
-### 2. 景别选择（灵活）
-根据故事需要选择最合适的景别：
-- **远景/全景**：建立空间感、交代环境
-- **中景**：展示肢体动作、多人互动
-- **近景/特写**：强调面部表情、传达情绪
-
-### 3. 首尾帧区分
-- **首帧**：分镜开始时的画面状态（动作起点 + 起始情绪）
-- **尾帧**：分镜结束时的画面状态，可以是：
-  - 眼睛特写（情感高潮）
-  - 手部特写（动作/情绪细节）
-  - 物品特写（象征意义）
-  - 脚步特写（奔跑/离别）
-
-### 4. 禁止事项
-- ❌ 禁止镜头运动描述（推镜、拉镜、平移）
-- ❌ 禁止动态过程（"从...到..."、"逐渐..."）
-- ✅ 只描述固定的瞬间画面
-
-## 分镜列表
-{shots_description}
-
-## 输出格式
-返回 JSON 数组，每项包含：
-```json
-[
-    {{
-        "shot_number": 1,
-        "emotion_analysis": {{
-            "character": "角色名",
-            "start_emotion": "首帧情绪",
-            "end_emotion": "尾帧情绪"
-        }},
-        "image_prompt": "首帧提示词（英文，包含风格、景别、角色外貌、表情、服装、场景、光影）",
-        "end_frame_prompt": "尾帧提示词（英文，可以是特写或不同景别，体现情绪/动作变化）"
-    }}
-]
-```
-
-## 提示词模板
-首帧：`{visual_style}, [景别], [视角]视角, 16:9宽屏构图. [场景描述]. [角色名]([外貌特征], [服装], [表情], [眼神], [肢体语言]), 位于画面[位置]. [光影氛围], high quality, 8K detail.`
-
-尾帧（特写模式）：`{visual_style}, extreme close-up, 16:9构图. [聚焦部位]的特写: [细节描述], [情绪体现]. [光影], high quality, 8K detail.`
 
 只输出 JSON，不要其他内容。"""
     
@@ -142,58 +105,33 @@ class StoryboardDirectorNode:
     
     async def _check_progress(self, creation_uuid: str, query_shots) -> Dict[str, Any]:
         """
-        检查当前分镜进度，确定从哪个步骤继续
+        检查当前分镜进度
         
         Returns:
             {
-                "step": 0-5,  # 当前完成的步骤
                 "total_shots": int,
-                "with_prompts": int,
-                "with_images": int,
+                "has_shots": bool,
             }
         """
         result = await query_shots.ainvoke({
             "creation_uuid": creation_uuid,
-            "include_details": True,
+            "include_details": False,
         })
         
-        # 直接使用 query_shots 返回的汇总数据
         total = result.get("total", 0)
-        with_images = result.get("with_image", 0)
         
-        if total == 0:
-            return {"step": 0, "total_shots": 0, "with_prompts": 0, "with_images": 0}
-        
-        # 统计有提示词的分镜数
-        shots = result.get("shots", [])
-        with_prompts = sum(1 for s in shots if s.get("image_prompt"))
-        
-        # 确定当前步骤
-        if with_images >= total:
-            step = 5  # 全部完成
-        elif with_prompts >= total:
-            step = 3  # 有提示词，可直接生成图片
-        else:
-            step = 1  # 有分镜，但需要生成提示词
-        
-        logger.info(f"[StoryboardDirector] 进度检查: total={total}, with_prompts={with_prompts}, with_images={with_images}, step={step}")
+        logger.info(f"[StoryboardDirector] 进度检查: total={total}")
         
         return {
-            "step": step,
             "total_shots": total,
-            "with_prompts": with_prompts,
-            "with_images": with_images,
+            "has_shots": total > 0,
         }
     
     async def run(self, state: ComicDramaState) -> Dict[str, Any]:
         """
-        执行分镜创建（支持断点续传）
+        执行分镜创建
         
-        进度检查逻辑：
-        1. 如果已有分镜且有图片 → 直接返回成功
-        2. 如果已有分镜且有提示词 → 从 Step 5 继续（生成图片）
-        3. 如果已有分镜但无提示词 → 从 Step 3 继续（生成提示词）
-        4. 如果无分镜 → 从 Step 1 开始
+        只负责生成分镜脚本，不生成提示词和图片
         """
         creation_uuid = state.get("creation_uuid")
         script_text = state.get("script_text")
@@ -202,30 +140,44 @@ class StoryboardDirectorNode:
             return {
                 "response_text": "请先上传剧本内容。",
                 "production_stage": ProductionStage.INIT,
-                "needs_input": True,
             }
         
         try:
             from app.agent.tools.db_tools import (
-                query_scene_titles, save_shots, save_shot_prompts, query_shots
+                query_scene_titles, save_shots, query_shots
             )
-            from app.agent.tools.agent_generation_tools import generate_shot_images
             
             # ========== 检查当前进度 ==========
             progress = await self._check_progress(creation_uuid, query_shots)
             logger.info(f"[StoryboardDirector] 进度检查: {progress}")
             
-            shot_count = progress["total_shots"]
-            shots_data = None  # 仅在需要生成时使用
+            # 如果已有分镜，直接返回成功
+            if progress["has_shots"]:
+                shot_count = progress["total_shots"]
+                logger.info(f"[StoryboardDirector] 已有 {shot_count} 个分镜，跳过生成")
+                
+                response_text = f"""✅ **分镜脚本已存在！**
+
+📋 **分镜数量**: {shot_count} 个
+
+分镜脚本已生成，请继续下一步操作。"""
+                return {
+                    "response_text": response_text,
+                    "production_stage": ProductionStage.STORYBOARD_READY,
+                    "worker_result": {"worker": "storyboard_director", "completed": True, "response_text": response_text},
+                    "board_actions": [
+                        {"type": "switch_view", "target": "storyboards"},
+                        {"type": "refresh"},
+                    ],
+                }
             
-            # ========== Step 1 & 2: 生成并保存分镜脚本 ==========
-            if progress["step"] < 1:
-                logger.info("[StoryboardDirector] Step 1: LLM 生成分镜脚本...")
-                
-                scene_result = await query_scene_titles.ainvoke({"creation_uuid": creation_uuid})
-                scene_titles = scene_result.get("scene_titles", []) if scene_result.get("success") else []
-                
-                script_prompt = f"""根据以下剧本生成分镜脚本：
+            # ========== Step 1: LLM 生成分镜脚本 ==========
+            logger.info("[StoryboardDirector] Step 1: LLM 生成分镜脚本...")
+            
+            scene_result = await query_scene_titles.ainvoke({"creation_uuid": creation_uuid})
+            scene_titles = scene_result.get("scene_titles", []) if scene_result.get("success") else []
+            
+            script_prompt = f"""根据以下剧本生成分镜脚本：
 
 ## 剧本内容
 {script_text[:6000]}
@@ -234,335 +186,51 @@ class StoryboardDirectorNode:
 {', '.join(scene_titles) if scene_titles else '无（请自行创建场景名）'}
 
 请生成分镜脚本。"""
-                
-                response = await self.llm.ainvoke([
-                    SystemMessage(content=self.SCRIPT_PROMPT),
-                    HumanMessage(content=script_prompt)
-                ])
-                
-                shots_data = self._parse_json_response(response.content)
-                if not shots_data:
-                    return {
-                        "response_text": "分镜脚本生成失败，请重试。",
-                        "production_stage": ProductionStage.ASSETS_READY,
-                        "errors": [{"message": "分镜脚本 JSON 解析失败"}],
-                    }
-                
-                logger.info(f"[StoryboardDirector] LLM 生成 {len(shots_data)} 个分镜")
-                
-                # Step 2: 保存分镜
-                logger.info("[StoryboardDirector] Step 2: 保存分镜脚本到数据库...")
-                
-                save_result = await save_shots.ainvoke({
-                    "creation_uuid": creation_uuid,
-                    "shots": shots_data,
-                })
-                
-                if not save_result.get("success"):
-                    return {
-                        "response_text": f"保存分镜失败：{save_result.get('error')}",
-                        "production_stage": ProductionStage.ASSETS_READY,
-                        "errors": [{"message": save_result.get("error")}],
-                    }
-                
-                shot_count = save_result.get("saved_count", 0)
-                logger.info(f"[StoryboardDirector] Tool 保存 {shot_count} 个分镜")
-            else:
-                logger.info(f"[StoryboardDirector] ⏭️ 跳过 Step 1-2: 已有 {shot_count} 个分镜")
             
-            # ========== Step 3 & 4: 生成并保存图片提示词 ==========
-            if progress["step"] < 3:
-                logger.info("[StoryboardDirector] Step 3: LLM 生成图片提示词（专业版）...")
-                
-                # 需要从 DB 获取分镜描述
-                if not shots_data:
-                    shots_result = await query_shots.ainvoke({
-                        "creation_uuid": creation_uuid,
-                        "include_details": True,
-                    })
-                    existing_shots = shots_result.get("shots", [])
-                    shots_desc = "\n".join([
-                        f"{i+1}. 【分镜{i+1}】{s.get('description', s.get('narration', ''))}"
-                        for i, s in enumerate(existing_shots)
-                    ])
-                    shot_count = len(existing_shots)
-                else:
-                    shots_desc = "\n".join([
-                        f"{i+1}. 【{s.get('title', f'分镜{i+1}')}】{s.get('description', '')}"
-                        for i, s in enumerate(shots_data)
-                    ])
-                
-                # 获取视觉风格
-                visual_style = "日本动漫风格"  # 默认
-                if state.get("creation_extra_data"):
-                    extra_data = state.get("creation_extra_data", {})
-                    visual_style = extra_data.get("visual_style", visual_style)
-                
-                # 获取角色档案
-                character_profiles = "未指定角色"
-                try:
-                    from app.agent.tools.db_tools import query_characters
-                    chars_result = await query_characters.ainvoke({"creation_uuid": creation_uuid})
-                    if chars_result.get("success"):
-                        characters = chars_result.get("characters", [])
-                        if characters:
-                            profiles = []
-                            for char in characters:
-                                profile = f"- {char.get('name', '未知')}"
-                                if char.get("appearance"):
-                                    profile += f": {char['appearance']}"
-                                if char.get("costume"):
-                                    profile += f"，服装: {char['costume']}"
-                                profiles.append(profile)
-                            character_profiles = "\n".join(profiles)
-                except Exception as e:
-                    logger.warning(f"[StoryboardDirector] 获取角色档案失败: {e}")
-                
-                # 获取场景环境
-                scene_environment = "未指定场景"
-                try:
-                    from app.agent.tools.db_tools import query_scenes
-                    scenes_result = await query_scenes.ainvoke({"creation_uuid": creation_uuid})
-                    if scenes_result.get("success"):
-                        scenes = scenes_result.get("scenes", [])
-                        if scenes:
-                            scene_descs = []
-                            for scene in scenes:
-                                desc = f"- {scene.get('title', '未知场景')}"
-                                if scene.get("description"):
-                                    desc += f": {scene['description']}"
-                                scene_descs.append(desc)
-                            scene_environment = "\n".join(scene_descs)
-                except Exception as e:
-                    logger.warning(f"[StoryboardDirector] 获取场景信息失败: {e}")
-                
-                # 格式化专业模板
-                formatted_prompt = self.PROMPT_GENERATION_PROMPT.format(
-                    visual_style=visual_style,
-                    character_profiles=character_profiles,
-                    scene_environment=scene_environment,
-                    shots_description=shots_desc,
-                )
-                
-                prompt_request = f"""为以下 {shot_count} 个分镜生成首帧和尾帧图片提示词，请严格按照上述专业要求生成。"""
-                
-                prompt_response = await self.llm.ainvoke([
-                    SystemMessage(content=formatted_prompt),
-                    HumanMessage(content=prompt_request)
-                ])
-                
-                prompts_data = self._parse_json_response(prompt_response.content)
-                if not prompts_data:
-                    logger.warning("[StoryboardDirector] 图片提示词生成失败")
-                else:
-                    logger.info(f"[StoryboardDirector] LLM 生成 {len(prompts_data)} 个专业提示词")
-                    
-                    # Step 4: 保存提示词
-                    logger.info("[StoryboardDirector] Step 4: 保存图片提示词...")
-                    
-                    prompts_result = await save_shot_prompts.ainvoke({
-                        "creation_uuid": creation_uuid,
-                        "prompts": prompts_data,
-                    })
-                    
-                    if prompts_result.get("success"):
-                        logger.info(f"[StoryboardDirector] Tool 更新 {prompts_result.get('updated_count')} 个分镜提示词")
-                    else:
-                        logger.warning(f"[StoryboardDirector] 保存提示词失败: {prompts_result.get('error')}")
-            else:
-                logger.info(f"[StoryboardDirector] ⏭️ 跳过 Step 3-4: 已有 {progress['with_prompts']} 个提示词")
+            response = await self.llm.ainvoke([
+                SystemMessage(content=self.SCRIPT_PROMPT),
+                HumanMessage(content=script_prompt)
+            ])
             
-            # ========== Step 5: 触发图片生成 ==========
-            if progress["step"] < 5:
-                logger.info("[StoryboardDirector] Step 5: 触发分镜图片生成...")
-                
-                gen_result = await generate_shot_images.ainvoke({
-                    "creation_uuid": creation_uuid,
-                    "force_regenerate": False,
-                })
-                
-                if not gen_result.get("success"):
-                    if gen_result.get("task_id") is None and "无需生成" in str(gen_result.get("message", "")):
-                        # 所有分镜已有图片
-                        logger.info("[StoryboardDirector] 所有分镜已有图片，无需生成")
-                    else:
-                        return {
-                            "response_text": f"分镜图生成启动失败：{gen_result.get('error')}",
-                            "production_stage": ProductionStage.STORYBOARD_GENERATING,
-                            "errors": [{"message": gen_result.get("error")}],
-                        }
-                
-                task_id = gen_result.get("task_id")
-                
-                if task_id:
-                    task_id = gen_result.get("task_id")
-                    group_id = gen_result.get("group_id")
-                    shot_task_ids = gen_result.get("shot_task_ids", {})
-                    logger.info(f"[StoryboardDirector] 触发分镜图生成任务: task_id={task_id}, group_id={group_id}, shots={len(shot_task_ids)}")
-            else:
-                logger.info(f"[StoryboardDirector] ⏭️ 跳过 Step 5: 已有 {progress['with_images']} 个图片")
-                task_id = None
-                group_id = None
-                shot_task_ids = {}
-                
-                # 所有步骤已完成，直接返回成功
-                if progress["with_images"] >= progress["total_shots"]:
-                    logger.info(f"[StoryboardDirector] 所有分镜已有图片，直接返回完成状态")
-                    return {
-                        "response_text": f"""✅ **分镜创作已完成！**
-
-📋 **分镜数量**: {progress['total_shots']} 个
-🖼️ **分镜图片**: 全部已生成
-
-所有分镜图片已生成完成，是否开始下一阶段（生成视频）？
-
-请在分镜看板上查看结果，确认后回复"继续"开始视频生成。""",
-                        "production_stage": ProductionStage.STORYBOARD_READY,
-                        "pending_approval": True,
-                        "board_actions": [
-                            {"type": "switch_view", "target": "storyboards"},
-                            {"type": "refresh"},
-                        ],
-                    }
+            shots_data = self._parse_json_response(response.content)
+            if not shots_data:
+                return {
+                    "response_text": "分镜脚本生成失败，请重试。",
+                    "production_stage": ProductionStage.ASSETS_READY,
+                    "errors": [{"message": "分镜脚本 JSON 解析失败"}],
+                }
             
-            # 更新进度
-            production_progress = dict(state.get("production_progress", {}))
-            production_progress["storyboard_creation"] = {
-                "status": "generating_images",
-                "total": shot_count,
-                "completed": progress["with_images"],
-                "task_id": task_id,
-                "group_id": group_id,
-            }
+            logger.info(f"[StoryboardDirector] LLM 生成 {len(shots_data)} 个分镜")
             
-            # ========== Step 6: 使用 Task Group 状态轮询 ==========
-            import asyncio
-            from app.agent.tools.agent_generation_tools import check_task_group_status
+            # ========== Step 2: 保存分镜 ==========
+            logger.info("[StoryboardDirector] Step 2: 保存分镜脚本到数据库...")
             
-            max_wait_time = 600
-            poll_interval = 5
-            elapsed = 0
+            save_result = await save_shots.ainvoke({
+                "creation_uuid": creation_uuid,
+                "shots": shots_data,
+            })
             
-            while elapsed < max_wait_time and shot_task_ids:
-                try:
-                    await asyncio.sleep(poll_interval)
-                    elapsed += poll_interval
-                except asyncio.CancelledError:
-                    logger.warning(f"[StoryboardDirector] 轮询被取消")
-                    raise
-                
-                # 检查任务组状态
-                group_status = await check_task_group_status.ainvoke({
-                    "group_id": group_id or "",
-                    "shot_task_ids": shot_task_ids,
-                })
-                
-                completed = group_status.get("completed", 0)
-                failed = group_status.get("failed", 0)
-                pending = group_status.get("pending", 0)
-                total = group_status.get("total", 0)
-                all_done = group_status.get("all_done", False)
-                
-                logger.info(f"[StoryboardDirector] 轮询 ({elapsed}s): 完成={completed}, 失败={failed}, 待处理={pending}")
-                
-                production_progress["storyboard_creation"]["completed"] = completed
-                
-                # 检查是否有失败
-                if failed > 0 and all_done:
-                    failed_shots = group_status.get("failed_shots", [])
-                    error_msg = f"有 {failed} 个分镜图片生成失败"
-                    if failed_shots:
-                        error_details = ", ".join([f"shot_id={s['shot_id']}: {s.get('error', 'Unknown')[:50]}" for s in failed_shots[:3]])
-                        error_msg += f": {error_details}"
-                    
-                    logger.error(f"[StoryboardDirector] {error_msg}")
-                    
-                    # 部分成功的情况：返回部分完成状态
-                    if completed > 0:
-                        return {
-                            "response_text": f"""⚠️ **分镜图片生成部分完成**
-
-📋 **分镜数量**: {total} 个
-✅ **成功**: {completed} 个
-❌ **失败**: {failed} 个
-
-部分分镜图片生成失败，您可以在看板中查看并重试失败的分镜。""",
-                            "production_stage": ProductionStage.STORYBOARD_GENERATING,
-                            "production_progress": production_progress,
-                            "errors": [{"message": error_msg}],
-                            "board_actions": [
-                                {"type": "switch_view", "target": "storyboards"},
-                                {"type": "refresh"},
-                            ],
-                        }
-                    else:
-                        raise Exception(error_msg)
-                
-                # 全部完成
-                if all_done and failed == 0:
-                    logger.info(f"[StoryboardDirector] 所有分镜图生成完成！耗时 {elapsed}s")
-                    
-                    production_progress["storyboard_creation"]["status"] = "completed"
-                    
-                    return {
-                        "response_text": f"""✅ **分镜创作完成！**
-
-📋 **分镜数量**: {total} 个
-🖼️ **首帧图片**: 全部生成完成
-🖼️ **尾帧图片**: 全部生成完成
-
-所有分镜图片（包括首帧和尾帧）已生成完成！
-
-请在分镜看板上查看结果，确认后回复"继续"开始下一阶段（视频生成）。""",
-                        "production_stage": ProductionStage.STORYBOARD_READY,
-                        "production_progress": production_progress,
-                        "pending_approval": True,
-                        "needs_input": True,
-                        "board_actions": [
-                            {"type": "switch_view", "target": "storyboards"},
-                            {"type": "refresh"},
-                        ],
-                    }
+            if not save_result.get("success"):
+                return {
+                    "response_text": f"保存分镜失败：{save_result.get('error')}",
+                    "production_stage": ProductionStage.ASSETS_READY,
+                    "errors": [{"message": save_result.get("error")}],
+                }
             
-            # 如果没有 shot_task_ids（使用旧的轮询方式 fallback）
-            if not shot_task_ids:
-                shots_result = await query_shots.ainvoke({"creation_uuid": creation_uuid})
-                shots = shots_result.get("shots", [])
-                shots_with_images = sum(1 for s in shots if s.get("image_url"))
-                total_shots = len(shots)
-                
-                if total_shots > 0 and shots_with_images >= total_shots:
-                    production_progress["storyboard_creation"]["status"] = "completed"
-                    return {
-                        "response_text": f"""✅ **分镜创作完成！**
-
-📋 **分镜数量**: {total_shots} 个
-🖼️ **分镜图片**: 全部生成完成
-
-请在分镜看板上查看结果，确认后回复"继续"开始下一阶段（视频生成）。""",
-                        "production_stage": ProductionStage.STORYBOARD_READY,
-                        "production_progress": production_progress,
-                        "pending_approval": True,
-                        "needs_input": True,
-                        "board_actions": [
-                            {"type": "switch_view", "target": "storyboards"},
-                            {"type": "refresh"},
-                        ],
-                    }
+            shot_count = save_result.get("saved_count", 0)
+            logger.info(f"[StoryboardDirector] Tool 保存 {shot_count} 个分镜")
             
-            # 超时
-            logger.warning(f"[StoryboardDirector] 等待超时 ({max_wait_time}s)")
-            return {
-                "response_text": f"""⏳ **分镜图生成仍在进行中**
+            # ========== 返回成功 ==========
+            response_text = f"""✅ **分镜脚本生成完成！**
 
 📋 **分镜数量**: {shot_count} 个
-🖼️ **已完成**: {production_progress['storyboard_creation'].get('completed', 0)} 个
 
-部分图片仍在生成中，您可以稍后在看板上查看进度。
-图片生成完成后，回复"继续"开始下一阶段。""",
-                "production_stage": ProductionStage.STORYBOARD_GENERATING,
-                "production_progress": production_progress,
-                "pending_approval": False,
+分镜脚本已保存，请继续生成分镜图片。"""
+            
+            return {
+                "response_text": response_text,
+                "production_stage": ProductionStage.STORYBOARD_READY,
+                "worker_result": {"worker": "storyboard_director", "completed": True, "response_text": response_text},
                 "board_actions": [
                     {"type": "switch_view", "target": "storyboards"},
                     {"type": "refresh"},
@@ -659,7 +327,6 @@ class StoryboardDirectorNode:
         
         # 匹配完整的 JSON 对象
         objects = []
-        # 匹配 { ... } 模式，处理嵌套
         depth = 0
         start = None
         

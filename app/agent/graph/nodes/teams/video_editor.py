@@ -298,10 +298,11 @@ class VideoEditorNode:
             
             # 如果所有视频都已生成
             if with_video == total_shots:
+                response_text = "✅ 所有分镜视频已生成完成！请预览确认。"
                 return {
-                    "response_text": "✅ 所有分镜视频已生成完成！请预览确认。",
+                    "response_text": response_text,
                     "production_stage": ProductionStage.VIDEO_READY,
-                    "pending_approval": True,
+                    "worker_result": {"worker": "video_editor", "completed": True, "response_text": response_text},
                     "board_actions": [
                         {"type": "switch_view", "target": "preview"},
                     ],
@@ -330,10 +331,11 @@ class VideoEditorNode:
             # Step 3: 创建视频生成任务
             if not needs_video and not needs_prompt:
                 # 所有都已完成
+                response_text = "✅ 所有分镜视频已生成完成！"
                 return {
-                    "response_text": "✅ 所有分镜视频已生成完成！",
+                    "response_text": response_text,
                     "production_stage": ProductionStage.VIDEO_READY,
-                    "pending_approval": True,
+                    "worker_result": {"worker": "video_editor", "completed": True, "response_text": response_text},
                 }
             
             from app.agent.tools.agent_generation_tools import generate_shot_videos
@@ -350,10 +352,11 @@ class VideoEditorNode:
             shot_count = task_result.get("shot_count", 0)
             
             if shot_count == 0:
+                response_text = "✅ 所有分镜视频已生成完成！"
                 return {
-                    "response_text": "✅ 所有分镜视频已生成完成！",
+                    "response_text": response_text,
                     "production_stage": ProductionStage.VIDEO_READY,
-                    "pending_approval": True,
+                    "worker_result": {"worker": "video_editor", "completed": True, "response_text": response_text},
                 }
             
             logger.info(f"[VideoEditor] 已创建 {shot_count} 个视频生成任务, group_id={group_id}")
@@ -363,15 +366,16 @@ class VideoEditorNode:
             
             # Step 5: 返回结果
             if poll_result.get("success"):
-                return {
-                    "response_text": f"""✅ 视频生成完成！
+                response_text = f"""✅ 视频生成完成！
 
 🎬 **共生成 {poll_result.get('completed')} 个分镜视频**
 ⏱️ 耗时 {int(poll_result.get('elapsed', 0))} 秒
 
-请预览确认视频效果。""",
+请预览确认视频效果。"""
+                return {
+                    "response_text": response_text,
                     "production_stage": ProductionStage.VIDEO_READY,
-                    "pending_approval": True,
+                    "worker_result": {"worker": "video_editor", "completed": True, "response_text": response_text},
                     "board_actions": [
                         {"type": "switch_view", "target": "preview"},
                         {"type": "refresh"},
@@ -422,14 +426,11 @@ class FinalEditorNode:
         """执行剪辑合成"""
         logger.info("[FinalEditor] 执行剪辑合成")
         
-        production_progress = dict(state.get("production_progress", {}))
-        production_progress["editing"] = {"status": "completed"}
-        
+        response_text = "🎉 恭喜！您的漫剧制作完成！"
         return {
-            "response_text": "🎉 恭喜！您的漫剧制作完成！",
+            "response_text": response_text,
             "production_stage": ProductionStage.COMPLETED,
-            "production_progress": production_progress,
-            "current_stage": "completed",
+            "worker_result": {"worker": "final_editor", "completed": True, "response_text": response_text},
             "board_actions": [
                 {"type": "switch_view", "target": "preview"},
             ],

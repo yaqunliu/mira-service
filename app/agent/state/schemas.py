@@ -56,44 +56,6 @@ class StoryboardState(TypedDict, total=False):
     error: Optional[str]
 
 
-class AudioSegmentState(TypedDict, total=False):
-    """音频片段状态"""
-    segment_id: int  # 片段序号（对应分镜序号）
-    audio_type: Literal["dialogue", "narration", "music", "sfx"]  # 音频类型
-    text: Optional[str]  # 文本内容（TTS 用）
-    voice_id: Optional[str]  # 语音模型 ID
-    audio_url: Optional[str]  # 音频文件 URL
-    duration: float  # 时长（秒）
-    status: Literal["pending", "generating", "completed", "failed"]
-    error: Optional[str]
-
-
-class VideoSegmentState(TypedDict, total=False):
-    """视频片段状态"""
-    segment_id: int  # 片段序号（对应分镜序号）
-    image_url: str  # 源图片 URL
-    video_url: Optional[str]  # 生成的视频 URL
-    duration: float  # 时长（秒）
-    status: Literal["pending", "generating", "completed", "failed"]
-    error: Optional[str]
-
-
-class CheckpointData(TypedDict, total=False):
-    """检查点数据（待审核）"""
-    checkpoint_type: Literal["script_analysis", "asset_finalization", "storyboard_batch", "audio_confirmation", "final_review"]
-    data: Dict[str, Any]  # 待审核的数据
-    message: str  # 提示信息
-    suggestions: Optional[List[str]]  # 建议
-
-
-class UserFeedback(TypedDict, total=False):
-    """用户反馈"""
-    action: Literal["approve", "reject", "modify"]  # 用户操作
-    comments: Optional[str]  # 反馈意见
-    modifications: Optional[Dict[str, Any]]  # 修改内容
-    approved_items: Optional[List[int]]  # 部分通过的项目 ID 列表
-    rejected_items: Optional[List[int]]  # 驳回的项目 ID 列表
-
 
 class ProductionStage(StrEnum):
     """
@@ -133,25 +95,30 @@ class ProductionStage(StrEnum):
     ERROR = "error"
 
 
+class BoardActionType(StrEnum):
+    """
+    Board 交互类型 - 用于人工介入
+    """
+    APPROVE_REJECT = "approve_reject"     # 同意/拒绝
+    TEXT_INPUT = "text_input"             # 文本输入
+    SELECT_OPTIONS = "select_options"     # 多选项选择
+
+
 class BoardAction(TypedDict, total=False):
-    """看板联动动作 - 控制前端看板的行为"""
-    type: Literal["switch_view", "highlight", "scroll", "update", "refresh"]
-    target: str  # 目标元素 ID 或视图名称
+    """
+    看板联动动作 - 控制前端看板的行为和人工交互
+    
+    用途：
+    1. 视图控制：switch_view, highlight, scroll, update, refresh
+    2. 人工介入：approve_reject, text_input, select_options
+    """
+    type: str  # BoardActionType 或视图控制类型
+    target: Optional[str]  # 目标元素 ID 或视图名称
+    message: Optional[str]  # 提示信息（人工介入时）
+    options: Optional[List[Dict[str, Any]]]  # 选项列表 [{id, text}]
+    input_placeholder: Optional[str]  # 输入框占位符
     data: Optional[Dict[str, Any]]  # 附加数据
 
-
-class ProductionProgress(TypedDict, total=False):
-    """
-    各阶段制作进度详情
-    
-    用于子图路由决策和进度展示
-    """
-    script_analysis: Dict[str, Any]  # {"status": "completed", "characters": 5, "scenes": 3}
-    asset_generation: Dict[str, Any]  # {"status": "in_progress", "completed": 3, "total": 8}
-    storyboard: Dict[str, Any]        # {"status": "pending", "completed": 0, "total": 24}
-    audio: Dict[str, Any]
-    video: Dict[str, Any]
-    editing: Dict[str, Any]
 
 
 # ==================== 主状态定义 ====================
@@ -198,26 +165,13 @@ class ComicDramaState(TypedDict, total=False):
     script_url: Optional[str]  # 剧本文件 URL（US3）
 
     # ==================== 创作阶段 ====================
-    current_stage: Literal[
-        "init",  # 初始化
-        "script_analysis",  # 剧本解析
-        "asset_generation",  # 资产生成（角色+场景）
-        "storyboard_creation",  # 分镜创建
-        "audio_processing",  # 音频处理
-        "video_generation",  # 视频生成
-        "editing",  # 剪辑合成
-        "completed",  # 完成
-        "error",  # 错误
-    ]
-    
-    # 子图阶段（更细粒度）
-    production_stage: ProductionStage  # 细粒度制作阶段
-    production_progress: ProductionProgress  # 各阶段详细进度
+    # 子图阶段
+    production_stage: ProductionStage  # 制作阶段
     
     # Supervisor 调度相关
     production_cache: Dict[str, Any]  # 生产状态缓存（避免重复 DB 查询）
     next_worker: Optional[str]  # Supervisor 调度的下一个 Worker
-    needs_input: bool  # 是否需要用户输入
+    needs_input: bool  # LLM 决策是否需要等待用户输入
     worker_result: Optional[Dict[str, Any]]  # Worker 执行结果（用于 Supervisor 决策）
 
     # ==================== 剧本分析结果 ====================
@@ -228,30 +182,6 @@ class ComicDramaState(TypedDict, total=False):
     # ==================== 资产数据 ====================
     characters: List[CharacterState]  # 角色列表
     scenes: List[SceneState]  # 场景列表
-    props: List[Dict[str, Any]]  # 道具列表（暂时简化为字典）
-
-    # ==================== 分镜数据 ====================
-    storyboards: List[StoryboardState]  # 分镜列表
-    total_duration: Optional[float]  # 总时长（秒）
-
-    # ==================== 音频数据 ====================
-    audio_segments: List[AudioSegmentState]  # 音频片段列表
-    final_audio_url: Optional[str]  # 最终合成音频 URL
-    subtitle_url: Optional[str]  # 字幕文件 URL（SRT）
-
-    # ==================== 视频数据 ====================
-    video_segments: List[VideoSegmentState]  # 视频片段列表
-    final_video_url: Optional[str]  # 最终合成视频 URL
-
-    # ==================== 检查点控制 ====================
-    checkpoint_data: Optional[CheckpointData]  # 当前检查点数据
-    user_feedback: Optional[UserFeedback]  # 用户反馈
-    pending_approval: bool  # 是否等待审核
-
-    # ==================== 工具调用记录 ====================
-    tool_calls: List[Dict[str, Any]]  # 工具调用历史
-    retry_count: Dict[str, int]  # 重试计数器（按工具名称）
-
     # ==================== 错误处理 ====================
     errors: List[Dict[str, Any]]  # 错误记录
     error_message: Optional[str]  # 当前错误信息
@@ -265,11 +195,3 @@ class ComicDramaState(TypedDict, total=False):
     extra_data: Optional[Dict[str, Any]]  # 扩展数据
 
 
-# ==================== 辅助类型 ====================
-
-class StateUpdateResult(TypedDict):
-    """状态更新结果"""
-    success: bool
-    message: str
-    updated_fields: List[str]
-    errors: Optional[List[str]]

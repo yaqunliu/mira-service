@@ -187,28 +187,28 @@ class GraphRunner:
             
             # 需要发送开始消息的节点（用户可见的阶段）
             START_MESSAGE_NODES = {
-                "script_analysis": "📖 好的，正在分析剧本内容，识别角色和场景信息，请稍候...",
-                "asset_generation": "🎨 好的，开始为您生成角色和场景图片，请稍候...",
-                "storyboard_creation": "🎬 好的，正在生成分镜脚本，请稍候...",
-                "audio_processing": "🎤 好的，正在处理音频内容，请稍候...",
-                "video_generation": "🎥 好的，正在生成视频内容，请稍候...",
+                # "script_analysis": "📖 好的，正在分析剧本内容，识别角色和场景信息，请稍候...",
+                # "asset_generation": "🎨 好的，开始为您生成角色和场景图片，请稍候...",
+                # "storyboard_creation": "🎬 好的，正在生成分镜脚本，请稍候...",
+                # "audio_processing": "🎤 好的，正在处理音频内容，请稍候...",
+                # "video_generation": "🎥 好的，正在生成视频内容，请稍候...",
             }
             
             # 需要发送完成消息的节点（只有这些节点发送自动完成消息）
             # script_analysis 不在此列表，因为它的 response_text 已包含结果
             COMPLETE_MESSAGE_NODES = {
-                "script_analysis": "✅ 剧本分析完成！",
-                "asset_generation": "✅ 资产图片生成完成！",
-                "storyboard_creation": "✅ 分镜脚本生成完成！",
-                "audio_processing": "✅ 音频处理完成！",
-                "video_generation": "✅ 视频生成完成！",
+                # "script_analysis": "✅ 剧本分析完成！",
+                # "asset_generation": "✅ 资产图片生成完成！",
+                # "storyboard_creation": "✅ 分镜脚本生成完成！",
+                # "audio_processing": "✅ 音频处理完成！",
+                # "video_generation": "✅ 视频生成完成！",
             }
             
             # 需要发送 response_text 的节点
             # 只有外层包装节点发送，内部子图节点（如 script_analysis）不在此列表
             # storyboard_creation 需要发送完成消息到 SSE
             # supervisor: 重新生成等操作需要展示结果给用户
-            RESPONSE_TEXT_NODES = {"human_review", "clarify", "status_query", "supervisor"}
+            RESPONSE_TEXT_NODES = {"supervisor"}
             
             # 配置递归深度限制
             from app.core.config import settings
@@ -220,7 +220,7 @@ class GraphRunner:
             
             # 使用 asyncio.Queue 来合并事件和心跳
             import time
-            HEARTBEAT_INTERVAL = 5  # 每 5 秒发送一次心跳
+            HEARTBEAT_INTERVAL = 10  # 每 10 秒发送一次心跳
             event_queue = asyncio.Queue()
             graph_done = asyncio.Event()
             
@@ -339,9 +339,7 @@ class GraphRunner:
                             
                             # 为特定阶段发送完成/错误消息（只发送一次）
                             # 只对 COMPLETE_MESSAGE_NODES 中的节点发送完成消息
-                            if node_name in COMPLETE_MESSAGE_NODES and node_name not in sent_complete_nodes:
-                                sent_complete_nodes.add(node_name)
-                                
+                            if node_name in COMPLETE_MESSAGE_NODES:
                                 if has_error:
                                     error_msg = output.get("errors", [{}])[0].get("message", "未知错误")
                                     complete_msg = f"❌ {node_name} 执行失败：{error_msg}"
@@ -362,10 +360,9 @@ class GraphRunner:
                             if isinstance(output, dict) and "response_text" in output:
                                 # 只有在 RESPONSE_TEXT_NODES 白名单中的节点才发送 response_text
                                 # 同时检查是否已经发送过（防止重复）
-                                if node_name in RESPONSE_TEXT_NODES and node_name not in sent_response_nodes:
+                                if node_name in RESPONSE_TEXT_NODES:
                                     resp_text = output["response_text"]
                                     if resp_text:
-                                        sent_response_nodes.add(node_name)
                                         # 发送响应内容
                                         yield formatter._format_sse({
                                             "event": "message.delta",
@@ -376,6 +373,24 @@ class GraphRunner:
                                             },
                                         })
                                         full_response += resp_text
+                            
+                            # 处理 board_actions - 发送给前端控制看板
+                            # 只有特定节点才发送 board_actions（避免状态累积导致重复发送）
+                            BOARD_ACTION_NODES = {"supervisor"}
+                            if node_name in BOARD_ACTION_NODES and isinstance(output, dict) and "board_actions" in output:
+                                board_actions = output.get("board_actions", [])
+                                if board_actions:
+                                    for action in board_actions:
+                                        if action:  # 确保 action 不为 None
+                                            yield formatter._format_sse({
+                                                "event": "board_action",
+                                                "data": {
+                                                    "action": action,
+                                                    "node": node_name,
+                                                },
+                                            })
+                                            logger.info(f"[GraphRunner] 发送 board_action: {action}")
+            
             finally:
                 # 清理后台任务
                 heartbeat_task.cancel()

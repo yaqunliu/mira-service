@@ -15,8 +15,6 @@ from app.agent.graph.nodes import (
     router_node,
     status_query_node,
     clarify_node,
-    response_formatter_node,
-    human_review_node,
 )
 from app.agent.graph.comic_drama_subgraph import build_comic_drama_subgraph
 from app.core.logger import logger
@@ -30,10 +28,8 @@ def build_dialogue_graph() -> StateGraph:
     """
     构建对话调度层 Graph
     
-    流程：
-    entry → intent_detection → router → [status_query | task_execution | clarify]
-                                                      ↓
-                                             response_formatter → [human_review | end]
+    简化流程：
+    entry → intent_detection → [status_query | task_execution | clarify] → END
     
     Returns:
         编译后的 StateGraph
@@ -51,21 +47,14 @@ def build_dialogue_graph() -> StateGraph:
     # 意图识别节点
     workflow.add_node("intent_detection", intent_detection_node)
     
-    # 路由节点（纯逻辑，不改状态）
-    # 注意：router_node 返回目标节点名称，用作条件边
-    
     # 处理节点
     workflow.add_node("status_query", status_query_node)
     
-    # task_execution 使用子图而不是普通节点
+    # task_execution 使用子图
     comic_drama_subgraph = build_comic_drama_subgraph()
     workflow.add_node("task_execution", comic_drama_subgraph)
     
     workflow.add_node("clarify", clarify_node)
-    
-    # 输出节点
-    workflow.add_node("response_formatter", response_formatter_node)
-    workflow.add_node("human_review", human_review_node)
     
     # ==================== 设置边 ====================
     
@@ -86,23 +75,10 @@ def build_dialogue_graph() -> StateGraph:
         }
     )
     
-    # 处理节点 → response_formatter
-    workflow.add_edge("status_query", "response_formatter")
-    workflow.add_edge("task_execution", "response_formatter")
-    workflow.add_edge("clarify", "response_formatter")
-    
-    # response_formatter → [human_review | end]
-    workflow.add_conditional_edges(
-        "response_formatter",
-        _route_after_response,
-        {
-            "human_review": "human_review",
-            "end": END,
-        }
-    )
-    
-    # human_review → end
-    workflow.add_edge("human_review", END)
+    # 处理节点 → END
+    workflow.add_edge("status_query", END)
+    workflow.add_edge("task_execution", END)
+    workflow.add_edge("clarify", END)
     
     logger.info("[DialogueGraph] Graph 构建完成")
     return workflow
@@ -116,16 +92,6 @@ def _route_by_intent(state: ComicDramaState) -> str:
     """
     return router_node(state)
 
-
-def _route_after_response(state: ComicDramaState) -> str:
-    """
-    响应格式化后路由
-    
-    如果需要人工确认则进入 human_review，否则结束
-    """
-    if state.get("pending_approval"):
-        return "human_review"
-    return "end"
 
 
 class DialogueGraphRunner:
