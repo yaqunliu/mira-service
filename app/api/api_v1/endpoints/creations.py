@@ -4,6 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+import httpx
 
 from app.api.deps import get_async_db, get_current_user
 from app.models.user import User
@@ -682,6 +683,64 @@ async def analyze_characters(
         data={"task_id": task_id, "message": "角色分析任务已提交"},
         message="任务提交成功"
     )
+
+
+@router.get("/{creation_uuid}/chapter_content")
+async def get_creation_chapter_content(
+    creation_uuid: str,
+    db: AsyncSession = Depends(get_async_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    获取创作关联的章节文本内容
+    """
+    creation = await CreationAsyncService.get_creation_by_uuid(db, creation_uuid)
+    
+    if not creation:
+        raise HTTPException(status_code=404, detail="创作不存在")
+    
+    if creation.owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail="无权访问此创作")
+        
+    if not creation.chapter_id:
+        raise HTTPException(status_code=400, detail="该创作未关联章节")
+        
+    # Get chapter
+    from app.services.novel_async_service import ChapterAsyncService
+    chapter = await ChapterAsyncService.get_chapter_by_id(db, creation.chapter_id)
+    
+    if not chapter:
+        raise HTTPException(status_code=404, detail="关联的章节未找到")
+        
+    if not chapter.content_url:
+        logger.warning(f"Chapter {chapter.chapter_id} has no content_url")
+        raise HTTPException(status_code=404, detail="章节内容不存在")
+        
+    # Fetch content
+    try:
+        # 确保使用外网地址下载，以防本地环境无法解析内网域名
+        from app.utils.upload_helper import upload_helper
+        download_url = upload_helper.convert_to_external_url(chapter.content_url)
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(download_url, follow_redirects=True, timeout=30.0)
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to fetch chapter content from US3: {response.status_code} - {download_url}")
+                raise HTTPException(status_code=502, detail="获取章节内容失败")
+                
+            content = response.text
+            
+            return success_response(
+                data={"content": content},
+                message="获取章节内容成功"
+            )
+    except httpx.RequestError as e:
+        logger.error(f"Network error fetching chapter content: {e}")
+        raise HTTPException(status_code=502, detail="网络错误，获取章节内容失败")
+    except Exception as e:
+        logger.error(f"Error fetching chapter content: {e}")
+        raise HTTPException(status_code=500, detail="服务器内部错误")
 
 
 from app.api.api_v1.endpoints.agent import (
