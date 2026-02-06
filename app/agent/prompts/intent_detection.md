@@ -48,6 +48,7 @@ max_tokens: 800
 用户响应确认请求：
 - `confirm` - 确认继续
 - `cancel` - 取消操作
+- `continue_workflow` - 继续工作流（用户说"继续"、"下一步"、"执行"时，根据当前阶段决定下一步操作）
 
 ### 超出范围 (out_of_scope)
 非漫剧创作相关的请求：
@@ -102,10 +103,42 @@ max_tokens: 800
   - "用首帧生成视频"、"首帧生图" → `first_frame_only`
   - "生成视频"、"视频生成"（未指定）→ `first_last_frame`
 
+## 继续工作流规则
+
+当用户说"继续"、"下一步"、"执行"、"开始创作"时，需要结合当前创作阶段返回具体意图：
+
+| 当前阶段 | 返回意图 | details |
+|---------|---------|---------|
+| INIT / SCRIPT_UPLOADED | `auto_create` | `{"target": "all", "scope": "all", "description": "开始完整的创作流程"}` |
+| SCRIPT_ANALYZED | `generate_character_images` | `{"target": "character", "scope": "all", "description": "生成角色和场景图片"}` |
+| ASSETS_READY | `extract_scenes` | `{"target": "storyboard", "scope": "all", "description": "解析分镜"}` |
+| STORYBOARD_READY | `generate_shot_images` | `{"target": "shot", "scope": "all", "description": "生成分镜图片"}` |
+| VIDEO_READY / COMPLETED | `confirm` | `{"description": "创作已完成"}` |
+
+**重要**：`details` 中必须包含 `user_intent` 字段，总结用户想要做什么，用于传递给后续 Worker 节点。
+
+示例：
+- 用户说"继续"，当前阶段是 `SCRIPT_ANALYZED`：
+  ```json
+  {
+    "intent": "generate_character_images",
+    "intent_category": "production",
+    "confidence": 0.9,
+    "details": {
+      "target": "character",
+      "scope": "all",
+      "user_intent": "根据剧本生成所有角色和场景的提示词和图片",
+      "reason": "用户说'继续'，当前阶段是 SCRIPT_ANALYZED，需要生成角色和场景"
+    }
+  }
+  ```
+
 ## 意图识别示例
 
 | 用户消息 | intent | details |
-|---------|--------|---------|
+|---------|---------|---------|
+| "继续"、"下一步"、"执行" | continue_workflow | 根据当前阶段判断下一步操作 |
+| "开始创作"、"自动创作" | auto_create | `{"target": "all", "scope": "all", "user_intent": "开始完整的创作流程"}` |
 | "给分镜11重新生成视频" | regenerate | `{"target": "shot", "target_numbers": [11], "scope": "specific", "resource_type": "video", "video_mode": "first_last_frame"}` |
 | "用首帧给分镜11生成视频" | regenerate | `{"target": "shot", "target_numbers": [11], "scope": "specific", "resource_type": "video", "video_mode": "first_frame_only"}` |
 | "重新生成分镜3和5的图片" | regenerate | `{"target": "shot", "target_numbers": [3, 5], "scope": "specific", "resource_type": "image", "frame_type": "both"}` |
@@ -146,6 +179,7 @@ max_tokens: 800
     "target_names": [名称列表],
     "scope": "all/specific/failed",
     "resource_type": "image/video/both",
+    "user_intent": "用户意图的简短总结，用于传递给后续 Worker 节点",
     "reason": "识别理由"
   }
 }

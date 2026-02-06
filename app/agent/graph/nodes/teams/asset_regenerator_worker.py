@@ -14,7 +14,7 @@ Asset Regenerator Worker Node - 资产重新生成 Worker (ReAct 版本)
 新的细粒度工具架构，Agent 负责协调整个流程。
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from app.agent.state.schemas import ComicDramaState
@@ -43,58 +43,224 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
     """
     
     USE_REACT = True
-    
+
     def __init__(self):
         super().__init__(model="Qwen/Qwen-Plus", temperature=0.3)
-    
+
+    def _get_supervisor_params(self, state: ComicDramaState) -> Optional[Dict[str, Any]]:
+        """
+        从 Supervisor 传递的参数中获取意图信息
+
+        支持两种参数格式：
+        1. 简单模式：
+           {
+             "target_type": "character/scene/shot/shot_video",
+             "target_id": int,
+             "operation_type": "generate_image/generate_prompt/generate_video/modify_prompt",
+             "frame_type": "both/start/end"
+           }
+
+        2. 任务模式（支持多个操作）：
+           {
+             "user_intent": "用户意图总结",
+             "tasks": [
+               {
+                 "target": "character/scene/shot/shot_video",
+                 "target_id": int,
+                 "actions": ["prompt"],
+                 "frame_type": "both/start/end"
+               }
+             ]
+           }
+        """
+        task_params = state.get("task_params", "")
+        if task_params:
+            logger.info(f"[AssetRegenerator] 从 Supervisor 获取参数: {task_params}")
+            return task_params
+        return None
+
+    def _parse_tasks_from_params(self, supervisor_params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        从参数中解析任务列表
+        """
+        # 任务模式
+        if "tasks" in supervisor_params and isinstance(supervisor_params["tasks"], list):
+            tasks = supervisor_params["tasks"]
+            logger.info(f"[AssetRegenerator] 使用任务模式，任务数: {len(tasks)}")
+            return tasks
+
+        # 简单模式
+        target_type = supervisor_params.get("target_type", "shot")
+        target_id = supervisor_params.get("target_id")
+        operation_type = supervisor_params.get("operation_type", "generate_image")
+        frame_type = supervisor_params.get("frame_type", "both")
+
+        # 将 operation_type 转换为 action
+        action_map = {
+            "generate_image": "regenerate",
+            "generate_prompt": "regenerate",
+            "generate_video": "regenerate",
+            "modify_prompt": "modify_prompt",
+        }
+        action = action_map.get(operation_type, "regenerate")
+
+        task = {
+            "target": target_type,
+            "target_id": target_id,
+            "action": action,
+            "frame_type": frame_type,
+        }
+
+        logger.info(f"[AssetRegenerator] 使用简单模式，单任务")
+        return [task]
+
     def get_system_prompt(self, state: ComicDramaState) -> str:
         """
         获取系统提示词
 
-        根据用户消息检测目标类型，加载对应的提示词模板
+        意图解析优先级：
+        1. Supervisor 传递的参数（task_params）—— 最准确
+        2. LLM 解析用户消息 —— 更灵活
+        3. 关键词匹配 —— 兜底
         """
         user_message = state.get("user_message", "")
         creation_uuid = state.get("creation_uuid", "")
-        target_type = self._detect_target_type(user_message)
-        operation_type = self._detect_operation_type(user_message)
-        frame_type = self._detect_frame_type(user_message) if target_type == "shot" else "both"
 
-        from app.utils.file_utils import read_prompt_file
+        supervisor_params = self._get_supervisor_params(state)
+        if supervisor_params:
+            tasks = self._parse_tasks_from_params(supervisor_params)
+            task = tasks[0] if tasks else {}
 
-        # 获取系统提示词模板
-        if target_type == "character":
-            prompt_template = read_prompt_file("agent_regenerate_character.md")
-        elif target_type == "scene":
-            prompt_template = read_prompt_file("agent_regenerate_scene.md")
-        else:  # shot
-            prompt_template = read_prompt_file("agent_regenerate_shot.md")
+            target_type = task.get("target", "shot")
+            target_id = task.get("target_id")
+            action = task.get("action", "regenerate")
+            frame_type = task.get("frame_type", "both")
 
-        # 在提示词中注入 creation_uuid 和 frame_type
-        if prompt_template:
-            prompt_template = prompt_template.replace("{{CREATION_UUID}}", creation_uuid)
-            prompt_template = prompt_template.replace("{{FRAME_TYPE}}", frame_type)
+            logger.info(f"[AssetRegenerator] 使用 Supervisor 参数: target={target_type}, id={target_id}, action={action}, frame={frame_type}")
 
-        # 添加新的细粒度工具使用指南
-        tool_guide = self._get_tool_usage_guide(target_type, operation_type, frame_type)
+            # 获取操作类型描述
+            operation_type = {
+                "regenerate": "generate_image",
+                "modify_prompt": "modify_prompt",
+            }.get(action, "generate_image")
+        else:
+            target_type = self._detect_target_type(user_message)
+            operation_type = self._detect_operation_type(user_message)
+            frame_type = self._detect_frame_type(user_message) if target_type == "shot" else "both"
+            target_id = self._extract_target_id(user_message)
+            logger.info(f"[AssetRegenerator] 使用关键词检测: target={target_type}, op={operation_type}, frame={frame_type}, id={target_id}")
 
-        if tool_guide:
-            prompt_template = (prompt_template or "") + tool_guide
+    async def _parse_intent_with_llm(self, user_message: str) -> Dict[str, str]:
+        """
+        使用 LLM 解析用户意图（替代硬编码关键词匹配）
 
-        return prompt_template
-    
-    def _get_tool_usage_guide(self, target_type: str, operation_type: str, frame_type: str = "both") -> str:
+        返回:
+            - target_type: "character" | "scene" | "shot"
+            - operation_type: "generate_prompt" | "generate_image" | "generate_video" | "modify_prompt"
+            - frame_type: "start" | "end" | "both"
+            - target_id: int (可选，LLM 从消息中提取)
+        """
+        prompt = f"""分析用户消息，提取以下参数：
+
+用户消息：{user_message}
+
+请以 JSON 格式返回分析结果（必须是合法的 JSON）：
+{{
+    "target_type": "character/scene/shot",
+    "operation_type": "generate_prompt/generate_image/generate_video/modify_prompt",
+    "frame_type": "start/end/both",
+    "target_id": null 或数字,
+    "reasoning": "简要说明判断理由"
+}}
+
+判断规则：
+1. target_type:
+   - "character": 明确提到角色相关（角色、人物、character）
+   - "scene": 明确提到场景相关（场景、背景、scene）
+   - "shot": 明确提到分镜相关（分镜、镜头、shot）或没有明确类型
+
+2. operation_type:
+   - "generate_video": 明确提到视频（视频、video、生视频）
+   - "generate_image": 明确提到图片（图、生图、图像）
+   - "modify_prompt": 提到"修改"、"优化"提示词
+   - "generate_prompt": 明确提到提示词（提示词、prompt）或没有明确指定
+
+3. frame_type:
+   - "start": 明确提到"首帧"、"第一帧"
+   - "end": 明确提到"尾帧"、"最后一帧"
+   - "both": 其他情况或默认
+
+4. target_id:
+   - 如果用户提到了具体的 ID（如"角色123"、"分镜5"），提取数字
+   - 否则为 null
+"""
+
+        try:
+            llm = self._get_llm()
+            response = await llm.ainvoke(prompt)
+            content = response.content.strip()
+
+            import json
+            import re
+
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if json_match:
+                json_str = json_match.group()
+                result = json.loads(json_str)
+
+                return {
+                    "target_type": result.get("target_type", "shot"),
+                    "operation_type": result.get("operation_type", "generate_image"),
+                    "frame_type": result.get("frame_type", "both"),
+                    "target_id": result.get("target_id"),
+                }
+        except Exception as e:
+            logger.warning(f"[AssetRegenerator] LLM 意图解析失败，使用关键词匹配: {e}")
+
+        return {
+            "target_type": self._detect_target_type(user_message),
+            "operation_type": self._detect_operation_type(user_message),
+            "frame_type": self._detect_frame_type(user_message),
+            "target_id": self._extract_target_id(user_message),
+        }
+
+    def _extract_target_id(self, user_message: str) -> Optional[int]:
+        """从用户消息中提取目标 ID"""
+        import re
+        patterns = [
+            r'[角色角色编号]\s*[:：]?\s*(\d+)',
+            r'[场景场景编号]\s*[:：]?\s*(\d+)',
+            r'[分镜分镜编号]\s*[:：]?\s*(\d+)',
+            r'[编号No\.#]\s*(\d+)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, user_message)
+            if match:
+                return int(match.group(1))
+        return None
+
+    def _map_operation_type(self, op_type: str) -> str:
+        """将 Supervisor 的 operation_type 映射为工具指南使用的格式"""
+        mapping = {
+            "generate_image": "image",
+            "generate_video": "video",
+            "generate_prompt": "prompt",
+            "modify_prompt": "modify_prompt",
+        }
+        return mapping.get(op_type, "image")
+
+    def _get_tool_usage_guide(self, target_type: str, operation_type: str, frame_type: str = "both", target_id: Optional[int] = None) -> str:
         """获取工具使用指南"""
 
-        # 根据操作类型确定是否强制触发生成
-        is_trigger_required = operation_type in ["image", "video"]
-        trigger_step_desc = "必须触发图片生成" if is_trigger_required else "可选：如果用户要求生成图片"
+        mapped_op_type = self._map_operation_type(operation_type)
+        target_id_info = f"\n目标 ID: {target_id}" if target_id else "\n目标 ID: 未指定（需要从列表中匹配）"
 
         base_guide = f"""
 
 【细粒度工具使用指南】
 
-用户操作类型: {operation_type}
-检测到的帧类型: {frame_type}
+用户操作类型: {mapped_op_type} ({operation_type})
+检测到的帧类型: {frame_type}{target_id_info}
 你作为中央协调器，需要按顺序调用以下工具完成任务：
 
 """

@@ -40,26 +40,44 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 | Worker | 职责 |
 |--------|------|
 | script_analyst | 剧本分析 → 提取角色、场景 |
-| asset_designer | 资产生成 → 生成角色/场景图片（需在 task 中指定：生成角色图片/生成场景图片/生成所有资产图片）|
-| storyboard_director | 分镜创作 → 生成分镜图片 |
+| asset_designer | 资产生成 → 生成角色/场景/分镜图片（需在 task 中指定具体任务）|
+| storyboard_director | 分镜创作 → 解析分镜 |
 | video_editor | 视频生成 → 生成分镜视频 |
 | audio_engineer | 音频生成 → 生成语音和配音 |
 | asset_regenerator | 资产重新生成 → 重新生成指定的角色/场景/分镜/视频 |
 
-### asset_designer 调用示例
-- 生成所有资产：task="生成所有角色和场景图片"
-- 仅生成角色：task="生成所有角色图片"
-- 仅生成场景：task="生成所有场景图片"
+### asset_designer 任务类型（task 参数）
+- "生成所有角色图片" → 仅生成角色图片
+- "生成所有场景图片" → 仅生成场景图片
+- "生成所有角色和场景图片" → 生成角色+场景图片（资产生成阶段）
+- "生成所有分镜图片" → 生成分镜图片（包含提示词生成+图片生成）
 
 ## 工作流指导规则
 
-| Worker 完成后 | 建议行为 | 下一阶段 | board_action |
-|--------------|----------|----------|--------------|
+| 当前阶段 | 完成后行为 | 下一阶段 | board_action |
+|---------|-----------|----------|--------------|
 | script_analyst | 自动继续 | asset_designer | switch_view → characters |
-| asset_designer | 暂停确认 | storyboard_director | approve_reject |
-| storyboard_director | 暂停确认 | video_editor | approve_reject |
+| asset_designer<br>(角色+场景) | 暂停确认 | storyboard_director | approve_reject |
+| storyboard_director | 自动继续 | asset_designer | switch_view → storyboards |
+| asset_designer<br>(分镜) | 暂停确认 | video_editor | approve_reject |
 | video_editor | 暂停确认 | - | approve_reject |
 | asset_regenerator | 暂停确认 | - | approve_reject |
+
+## 完整创作流程
+
+```
+1. script_analyst（剧本分析）
+   ↓
+2. asset_designer（生成角色+场景 提示词+图片）
+   ↓ 暂停确认
+3. storyboard_director（解析分镜）
+   ↓
+4. asset_designer（生成分镜提示词+分镜图片）
+   ↓ 暂停确认
+5. video_editor（生成分镜提示词+视频）
+   ↓ 暂停确认
+6. 创作完成
+```
 
 ## Board Actions (前端交互指令)
 
@@ -82,9 +100,9 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 
 用户说"开始创作"或"继续"时，按当前阶段决策：
 - INIT / SCRIPT_UPLOADED → next_worker: script_analyst
-- SCRIPT_ANALYZED → next_worker: asset_designer
+- SCRIPT_ANALYZED → next_worker: asset_designer, task: "生成所有角色和场景图片"
 - ASSETS_READY → next_worker: storyboard_director
-- STORYBOARD_READY → next_worker: video_editor
+- STORYBOARD_READY → next_worker: asset_designer, task: "生成所有分镜图片"
 - VIDEO_READY / COMPLETED → needs_input: false, response: "创作已完成！"
 
 ## 资产重新生成
@@ -104,14 +122,82 @@ Worker 执行结果: {worker_result}
 
 ## 决策示例
 
-1. 剧本分析完成后:
-   supervisor_decision(next_worker="asset_designer", needs_input=False, board_actions=[{{"type": "switch_view", "target": "characters"}}], response_text="剧本分析完成，正在生成资产...")
+1. 剧本分析完成后（生成角色+场景）:
+   supervisor_decision(next_worker="asset_designer", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'characters'}}], response_text="剧本分析完成，正在生成角色和场景...", task_params='{{"user_intent": "根据剧本生成所有角色和场景的提示词和图片", "tasks": [{{"target": "character", "actions": ["prompt", "image"]}}, {{"target": "scene", "actions": ["prompt", "image"]}}]}}')
 
-2. 资产生成完成后:
-   supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "请确认角色和场景形象"}}], response_text="资产生成完成，请确认后继续。")
+2. 角色+场景生成完成后（用户确认）:
+   supervisor_decision(next_worker="storyboard_director", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'storyboards'}}], response_text="资产生成完成，正在解析分镜...")
 
-3. 用户问进度:
-   supervisor_decision(next_worker=None, needs_input=False, board_actions=[], response_text="当前进度...")
+3. 分镜解析完成后（生成分镜提示词+图片）:
+   supervisor_decision(next_worker="asset_designer", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'storyboards'}}], response_text="分镜解析完成，正在生成分镜图片...", task_params='{{"user_intent": "根据分镜脚本生成分镜图片提示词并生成首帧和尾帧图片", "tasks": [{{"target": "shot", "actions": ["prompt", "image"], "scope": "all"}}]}}')
+
+4. 分镜图片生成完成后（用户确认）:
+   supervisor_decision(next_worker="video_editor", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'preview'}}], response_text="分镜图片生成完成，正在生成视频...", task_params='{{"user_intent": "根据分镜首帧和尾帧图片生成分镜视频", "tasks": [{{"target": "shot_video", "actions": ["prompt", "video"], "scope": "all"}}]}}')
+
+5. 用户要求重新生成某个资源:
+   supervisor_decision(next_worker="asset_regenerator", needs_input=False, board_actions=[], response_text="正在重新生成...", task_params='{{"user_intent": "重新生成场景2的图片", "tasks": [{{"target": "scene", "actions": ["image"]}}]}}')
+
+6. 任何阶段完成后需要用户确认:
+   supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{'type': 'approve_reject', 'message': '请确认生成的[资产/分镜/视频]'}}], response_text="生成完成，请确认后继续。")
+
+## task_params 参数说明
+
+当需要调度 Worker 生成资源时，必须通过 `task_params` 参数指定任务详情：
+
+### 完整结构示例
+```json
+{{
+  "user_intent": "用户想要生成所有角色和场景的提示词和图片",
+  "tasks": [
+    {{
+      "target": "character",
+      "actions": ["prompt", "image"],
+      "scope": "all"
+    }},
+    {{
+      "target": "scene",
+      "actions": ["prompt", "image"],
+      "scope": "all"
+    }}
+  ]
+}}
+```
+
+### 字段说明
+
+| 字段 | 必填 | 可选值 | 说明 |
+|-----|------|--------|------|
+| user_intent | 是 | 字符串 | 用户意图总结（从上下文提取） |
+| tasks | 是 | 数组 | 任务列表，支持 1 个或多个任务 |
+| target | 是 | character, scene, shot, shot_video | 资源类型 |
+| actions | 是 | ["prompt"], ["image"], ["prompt", "image"], ["prompt", "video"] | 要执行的操作 |
+| scope | 否 | all, single | 范围，默认 all |
+| frame_type | 否 | both, start, end | 帧类型（仅 shot/shot_video），默认 both |
+
+### 常见用法
+
+1. **生成角色+场景提示词和图片**:
+   `task_params='{{"user_intent": "生成所有角色和场景的提示词和图片", "tasks": [{{"target": "character", "actions": ["prompt", "image"]}}, {{"target": "scene", "actions": ["prompt", "image"]}}]}}'`
+
+2. **生成分镜图片（首帧+尾帧）**:
+   `task_params='{{"user_intent": "生成分镜图片，包括首帧和尾帧", "tasks": [{{"target": "shot", "actions": ["prompt", "image"], "scope": "all"}}]}}'`
+
+3. **生成分镜视频**:
+   `task_params='{{"user_intent": "生成分镜视频", "tasks": [{{"target": "shot_video", "actions": ["prompt", "video"], "scope": "all"}}]}}'`
+
+4. **重新生成某个资源（Worker 会自动从消息中提取目标 ID）**:
+   `task_params='{{"user_intent": "重新生成场景2的图片", "tasks": [{{"target": "scene", "actions": ["image"]}}]}}'`
+
+5. **仅生成提示词**:
+   `task_params='{{"user_intent": "生成分镜提示词", "tasks": [{{"target": "shot", "actions": ["prompt"], "scope": "all"}}]}}'`
+
+### 注意事项
+
+- JSON 字符串中的花括号必须使用双花括号 `{{` 和 `}}` 进行转义
+- user_intent 必须填写，用于 Worker 理解用户意图
+- actions 数组不能为空，至少包含一个操作
+- scope 为 single 时，Worker 会自动从用户消息中提取目标 ID
+- shot 和 shot_video 的 frame_type 默认是 "both"（同时生成首帧和尾帧）
 
 ## 重要规则！
 
@@ -252,6 +338,7 @@ async def supervisor_decision(
     needs_input: bool = False,
     board_actions: List[Dict[str, Any]] = None,
     response_text: str = "",
+    task_params: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     返回 Supervisor 的智能决策结果
@@ -261,11 +348,12 @@ async def supervisor_decision(
         needs_input: 是否需要等待用户输入
         board_actions: 前端交互指令列表（如 switch_view, refresh, approve_reject 等）
         response_text: 给用户的消息
+        task_params: 传递给 Worker 的参数（JSON 字符串格式），仅当 next_worker 有值时使用
         
     Returns:
         决策结果
     """
-    logger.info(f"[Supervisor] 决策: next_worker={next_worker}, needs_input={needs_input}, board_actions={board_actions}")
+    logger.info(f"[Supervisor] 决策: next_worker={next_worker}, needs_input={needs_input}, board_actions={board_actions}, task_params={task_params}")
     
     return {
         "success": True,
@@ -274,6 +362,7 @@ async def supervisor_decision(
         "needs_input": needs_input,
         "board_actions": board_actions or [],
         "response_text": response_text,
+        "task_params": task_params,
     }
 
 
@@ -384,7 +473,22 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
                     needs_input = tool_args.get("needs_input", False)
                     board_actions = tool_args.get("board_actions", [])
                     final_response = tool_args.get("response_text", "")
-                    logger.info(f"[Node] supervisor: 智能决策 -> next_worker={next_worker}, needs_input={needs_input}, board_actions={board_actions}")
+                    task_params = tool_args.get("task_params")
+                    if task_params:
+                        import json
+                        if isinstance(task_params, str):
+                            try:
+                                task_params = json.loads(task_params)
+                            except json.JSONDecodeError as e:
+                                task_params = None
+                            
+                        # 保存解析后的 task_params
+                        state["task_params"] = task_params
+                    # 调试日志
+                    logger.info(f"[Node] supervisor: 工具返回的原始 args_keys: {list(tool_args.keys())}")
+                    logger.info(f"[Node] supervisor: task_params 类型: {type(task_params)}, 值: {repr(task_params)[:300]}")
+
+                    logger.info(f"[Node] supervisor: 智能决策 -> next_worker={next_worker}, needs_input={needs_input}, board_actions={board_actions}, task_params={task_params}")
                     break
                     
                 elif tool_name == "query_production_status":
@@ -407,13 +511,14 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
             "metadata": {
                 "mode": "single_decision",
                 "next_worker": next_worker,
+                "task_params": task_params,  # 调试用
             },
         }
-        
+
         state_messages = list(state.get("messages", []))
         state_messages.append(assistant_message)
-        
-        logger.info(f"[Node] supervisor: 完成，next_worker={next_worker}")
+
+        logger.info(f"[Node] supervisor: 完成，next_worker={next_worker}, task_params={task_params}")
         
         return {
             "messages": state_messages,
@@ -422,13 +527,15 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
             "next_worker": next_worker,
             "needs_input": needs_input,
             "board_actions": board_actions,
+            "task_params": task_params,
             "worker_result": None,  # 清空 worker 结果
             "updated_at": datetime.now().isoformat(),
         }
         
     except Exception as e:
         logger.error(f"[Node] supervisor 错误: {e}")
-        
+        import traceback
+        traceback.print_exc()
         error_message = {
             "role": "assistant",
             "content": f"抱歉，处理您的请求时出现错误：{str(e)}",

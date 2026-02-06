@@ -53,29 +53,208 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
     def __init__(self):
         super().__init__(model="Qwen/Qwen-Plus", temperature=0.3)
 
+    def _get_supervisor_params(self, state: ComicDramaState) -> Optional[Dict[str, Any]]:
+        """
+        从 Supervisor 传递的参数中获取意图信息
+
+        支持两种参数格式：
+        1. 简单模式（向后兼容）：
+           {
+             "target_type": "character/scene/shot/shot_video/all",
+             "operation_type": "generate_image/generate_prompt/generate_video",
+             "scope": "all/single",
+             "frame_type": "both/start/end"
+           }
+
+        2. 任务数组模式（推荐）：
+           {
+             "user_intent": "用户意图总结",
+             "tasks": [
+               {
+                 "target": "character/scene/shot/shot_video",
+                 "actions": ["prompt", "image"],
+                 "scope": "all/single",
+                 "frame_type": "both/start/end"
+               }
+             ]
+           }
+        """
+        task_params = state.get("task_params", {})
+        if task_params:
+            logger.info(f"[AssetGeneration] 从 Supervisor 获取参数: {task_params}")
+            return task_params
+        return None
+
+    def _parse_tasks_from_params(self, supervisor_params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        从参数中解析任务列表
+
+        支持简单模式和任务数组模式
+        """
+        # 任务数组模式（优先）
+        if "tasks" in supervisor_params and isinstance(supervisor_params["tasks"], list):
+            tasks = supervisor_params["tasks"]
+            logger.info(f"[AssetGeneration] 使用任务数组模式，任务数: {len(tasks)}")
+            return tasks
+
+        # 简单模式（向后兼容）
+        target_type = supervisor_params.get("target_type", "all")
+        operation_type = supervisor_params.get("operation_type", "generate_image")
+        scope = supervisor_params.get("scope", "all")
+        frame_type = supervisor_params.get("frame_type", "both")
+
+        # 将 operation_type 转换为 actions
+        action_map = {
+            "generate_image": ["image"],
+            "generate_prompt": ["prompt"],
+            "generate_video": ["video"],
+        }
+        actions = action_map.get(operation_type, ["image"])
+
+        # 处理 "all" 类型
+        if target_type == "all":
+            tasks = [
+                {"target": "character", "actions": actions, "scope": scope, "frame_type": frame_type},
+                {"target": "scene", "actions": actions, "scope": scope, "frame_type": frame_type},
+            ]
+        else:
+            tasks = [
+                {"target": target_type, "actions": actions, "scope": scope, "frame_type": frame_type}
+            ]
+
+        logger.info(f"[AssetGeneration] 使用简单模式，任务数: {len(tasks)}")
+        return tasks
+
+    def _build_prompt_from_tasks(self, tasks: List[Dict[str, Any]], creation_uuid: str, user_intent: str = "") -> str:
+        """
+        根据任务列表构建系统提示词
+
+        Args:
+            tasks: 任务列表
+            creation_uuid: 创作 UUID
+            user_intent: 用户意图总结
+        """
+        from app.utils.file_utils import read_prompt_file
+
+        # 添加用户意图（如果有）
+        prompt_parts = []
+        if user_intent:
+            prompt_parts.append(f"# 用户意图\n\n{user_intent}\n")
+
+        task_descriptions = []
+
+        for i, task in enumerate(tasks):
+            target = task.get("target", "character")
+            actions = task.get("actions", ["image"])
+            scope = task.get("scope", "all")
+            frame_type = task.get("frame_type", "both")
+
+            target_name = {
+                "character": "角色",
+                "scene": "场景",
+                "shot": "分镜图片",
+                "shot_video": "分镜视频",
+            }.get(target, target)
+
+            action_descriptions = {
+                "prompt": "提示词",
+                "image": "图片",
+                "video": "视频",
+            }
+            action_str = " + ".join([action_descriptions.get(a, a) for a in actions])
+
+            task_descriptions.append(f"{i+1}. {target_name}：{action_str}")
+
+            # 获取对应模板
+            if target == "character":
+                template = read_prompt_file("agent_generate_character.md")
+            elif target == "scene":
+                template = read_prompt_file("agent_generate_scene.md")
+            else:
+                template = read_prompt_file("agent_generate_shot.md")
+
+            if template:
+                template = template.replace("{{CREATION_UUID}}", creation_uuid)
+                template = template.replace("{{SCOPE}}", scope)
+                if "frame_type" in task:
+                    template = template.replace("{{FRAME_TYPE}}", frame_type)
+                prompt_parts.append(f"\n## 任务 {i+1}：{target_name}（{action_str}）\n{template}")
+
+        # 构建主提示词
+        if len(tasks) == 1:
+            main_prompt = f"# 资产生成任务\n\n你需要完成以下任务："
+        else:
+            main_prompt = f"# 多任务资产生成\n\n你需要按顺序完成以下 {len(tasks)} 个任务："
+
+        main_prompt += "\n" + "\n".join(task_descriptions)
+
+        if len(tasks) > 1:
+            main_prompt += "\n\n## 执行顺序（重要）\n必须按顺序执行：先完成所有提示词生成，再进行所有图片/视频生成。"
+
+        main_prompt += "\n".join(prompt_parts)
+
+        return main_prompt
+
     def get_system_prompt(self, state: ComicDramaState) -> str:
         """
         获取系统提示词
 
-        根据用户消息检测目标类型、操作类型、范围，加载对应的提示词模板
+        意图解析优先级：
+        1. Supervisor 传递的任务数组（task_params.tasks + user_intent）—— 最灵活
+        2. Supervisor 传递的简单参数（task_params）—— 向后兼容
+        3. LLM 解析用户消息 —— 更灵活
+        4. 关键词匹配 —— 兜底
         """
         user_message = state.get("user_message", "")
         creation_uuid = state.get("creation_uuid", "")
-        target_type = self._detect_target_type(user_message)
-        operation_type = self._detect_operation_type(user_message)
-        scope = self._detect_scope(user_message)
-        frame_type = self._detect_frame_type(user_message) if target_type == "shot" else "both"
 
+        # 获取 user_intent
+        supervisor_params = self._get_supervisor_params(state)
+        user_intent = ""
+        if supervisor_params and isinstance(supervisor_params, dict):
+            user_intent = supervisor_params.get("user_intent", "")
+
+        # 1. 优先使用 Supervisor 传递的参数
+        if supervisor_params:
+            # 检查是否是任务数组模式
+            if "tasks" in supervisor_params and isinstance(supervisor_params["tasks"], list):
+                tasks = self._parse_tasks_from_params(supervisor_params)
+                prompt_template = self._build_prompt_from_tasks(tasks, creation_uuid, user_intent)
+                logger.info(f"[AssetGeneration] 使用任务数组模式，user_intent: {user_intent}")
+                return prompt_template
+            else:
+                # 简单模式
+                target_type = supervisor_params.get("target_type", "all")
+                operation_type = supervisor_params.get("operation_type", "generate_image")
+                scope = supervisor_params.get("scope", "all")
+                frame_type = supervisor_params.get("frame_type", "both")
+                logger.info(f"[AssetGeneration] 使用简单模式: target={target_type}, op={operation_type}, scope={scope}")
+
+                # 构建简单模式提示词
+                prompt_template = self._build_simple_prompt(target_type, operation_type, scope, frame_type, creation_uuid, user_intent)
+                return prompt_template
+
+        # 兜底：使用 LLM 解析或关键词匹配
+        logger.warning(f"[AssetGeneration] 未获取到 Supervisor 参数，使用关键词匹配")
+        
+        return self._build_fallback_prompt(user_message, creation_uuid)
+
+    def _build_simple_prompt(self, target_type: str, operation_type: str, scope: str, frame_type: str, creation_uuid: str, user_intent: str = "") -> str:
+        """构建简单模式的提示词（向后兼容）"""
         from app.utils.file_utils import read_prompt_file
+
+        # 添加用户意图（如果有）
+        intent_prefix = ""
+        if user_intent:
+            intent_prefix = f"# 用户意图\n\n{user_intent}\n\n"
 
         # 获取系统提示词模板
         if target_type == "all":
-            # 完整创作模式：角色 + 场景
             character_prompt = read_prompt_file("agent_generate_character.md")
             scene_prompt = read_prompt_file("agent_generate_scene.md")
             prompt_template = f"""# 完整资产生成模式
 
-你需要完成以下任务（按顺序执行）：
+{intent_prefix}你需要完成以下任务（按顺序执行）：
 
 ## 第一阶段：生成全部角色提示词和图片
 
@@ -97,11 +276,18 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
 当所有角色的提示词和图片、所有场景的提示词和图片都生成完成后，任务才算完成。
 """
         elif target_type == "character":
-            prompt_template = read_prompt_file("agent_generate_character.md")
+            character_prompt = read_prompt_file("agent_generate_character.md")
+            prompt_template = f"# 角色生成任务\n\n{intent_prefix}{character_prompt}" if intent_prefix else character_prompt
         elif target_type == "scene":
-            prompt_template = read_prompt_file("agent_generate_scene.md")
-        else:  # shot
-            prompt_template = read_prompt_file("agent_generate_shot.md")
+            scene_prompt = read_prompt_file("agent_generate_scene.md")
+            prompt_template = f"# 场景生成任务\n\n{intent_prefix}{scene_prompt}" if intent_prefix else scene_prompt
+        elif target_type in ["shot", "shot_video"]:
+            shot_prompt = read_prompt_file("agent_generate_shot.md")
+            prompt_template = f"# 分镜生成任务\n\n{intent_prefix}{shot_prompt}" if intent_prefix else shot_prompt
+        else:
+            logger.warning(f"[AssetGeneration] 未知的 target_type: {target_type}，使用默认 shot 模板")
+            shot_prompt = read_prompt_file("agent_generate_shot.md")
+            prompt_template = f"# 分镜生成任务\n\n{intent_prefix}{shot_prompt}" if intent_prefix else shot_prompt
 
         # 在提示词中注入变量
         if prompt_template:
@@ -116,6 +302,17 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
                 prompt_template = (prompt_template or "") + tool_guide
 
         return prompt_template
+
+    def _build_fallback_prompt(self, user_message: str, creation_uuid: str) -> str:
+        """兜底的关键词匹配提示词"""
+        target_type = self._detect_target_type(user_message)
+        operation_type = self._detect_operation_type(user_message)
+        scope = self._detect_scope(user_message)
+        frame_type = self._detect_frame_type(user_message) if target_type in ["shot", "shot_video"] else "both"
+
+        logger.info(f"[AssetGeneration] 兜底模式: target={target_type}, op={operation_type}, scope={scope}")
+
+        return self._build_simple_prompt(target_type, operation_type, scope, frame_type, creation_uuid)
 
     def _detect_target_type(self, user_message: str) -> str:
         """
@@ -837,6 +1034,7 @@ frame_type 自动检测规则：
             query_single_character,
             query_single_scene,
             query_single_shot,
+            query_all_shots,
             query_generation_tasks_status,
         )
 
@@ -852,8 +1050,12 @@ frame_type 自动检测规则：
         from app.agent.tools.regenerate_worker_tools import (
             batch_submit_character_images,
             batch_submit_scene_images,
+            batch_submit_shot_images,
+            batch_submit_shot_videos,
             batch_save_character_prompts,
             batch_save_scene_prompts,
+            batch_save_shot_image_prompts,
+            batch_save_shot_video_prompts,
         )
 
         # 模板工具
@@ -885,6 +1087,7 @@ frame_type 自动检测规则：
             query_characters,
             query_scenes,
             query_shots,
+            query_all_shots,
             query_single_character,
             query_single_scene,
             query_single_shot,
@@ -920,8 +1123,12 @@ frame_type 自动检测规则：
             # === 批量生成工具 ===
             batch_submit_character_images,
             batch_submit_scene_images,
+            batch_submit_shot_images,
+            batch_submit_shot_videos,
             batch_save_character_prompts,
             batch_save_scene_prompts,
+            batch_save_shot_image_prompts,
+            batch_save_shot_video_prompts,
         ]
 
     async def process_result(self, state: ComicDramaState, final_response: str, tool_results: List[Dict]) -> Dict[str, Any]:

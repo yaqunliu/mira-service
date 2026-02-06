@@ -529,6 +529,148 @@ async def query_single_shot(shot_id: int) -> Dict[str, Any]:
     return await _get_shot_from_db(shot_id)
 
 
+async def _get_all_shots_from_db(creation_uuid: str) -> Dict[str, Any]:
+    """从数据库获取指定创作项目的所有分镜、角色和场景（去重）"""
+    from app.agent.tools.async_db import get_async_db_session
+    from app.models.shot import Shot
+    from app.models.scene import Scene
+    from app.models.creation import Creation
+    from app.models.character import Character
+    from app.models.shot_characters import shot_characters
+    from sqlalchemy import select
+
+    try:
+        async with get_async_db_session() as db:
+            stmt = select(Creation).where(Creation.uuid == creation_uuid)
+            result = await db.execute(stmt)
+            creation = result.scalar_one_or_none()
+
+            if not creation:
+                return {
+                    "success": False,
+                    "error": f"创作项目不存在: {creation_uuid}",
+                }
+
+            shot_stmt = (
+                select(Shot)
+                .join(Scene, Shot.scene_id == Scene.scene_id)
+                .where(Scene.creation_id == creation.creation_id)
+                .order_by(Shot.shot_number)
+            )
+            result = await db.execute(shot_stmt)
+            shots = result.scalars().all()
+
+            scene_ids = list(set(shot.scene_id for shot in shots if shot.scene_id))
+            scene_stmt = select(Scene).where(Scene.scene_id.in_(scene_ids))
+            scenes_result = await db.execute(scene_stmt)
+            scenes = {s.scene_id: s for s in scenes_result.scalars().all()}
+
+            all_character_ids = set()
+            for shot in shots:
+                query = select(shot_characters.c.character_id).where(shot_characters.c.shot_id == shot.shot_id)
+                chars_result = await db.execute(query)
+                all_character_ids.update(row[0] for row in chars_result.fetchall())
+
+            char_stmt = select(Character).where(Character.character_id.in_(all_character_ids))
+            chars_result = await db.execute(char_stmt)
+            characters = {c.character_id: c for c in chars_result.scalars().all()}
+
+            shot_list = []
+            for shot in shots:
+                query = (
+                    select(shot_characters.c.character_id)
+                    .where(shot_characters.c.shot_id == shot.shot_id)
+                )
+                chars_result = await db.execute(query)
+                shot_character_ids = [row[0] for row in chars_result.fetchall()]
+
+                shot_dict = {
+                    "shot_id": shot.shot_id,
+                    "shot_number": shot.shot_number,
+                    "title": shot.title,
+                    "description": shot.description,
+                    "image_prompt": shot.image_prompt,
+                    "image_url": shot.image_url,
+                    "status": shot.status,
+                    "status_detail": shot.status_detail,
+                    "extra_data": shot.extra_data or {},
+                    "scene_id": shot.scene_id,
+                    "character_ids": shot_character_ids,
+                }
+                shot_list.append(shot_dict)
+
+            scene_list = [
+                {
+                    "scene_id": s.scene_id,
+                    "title": s.title,
+                    "location": s.location,
+                    "time_setting": s.time_setting,
+                    "atmosphere": s.atmosphere,
+                    "space_type": s.space_type,
+                }
+                for s in scenes.values()
+            ]
+
+            character_list = [
+                {
+                    "character_id": c.character_id,
+                    "name": c.name,
+                    "basic_info": c.basic_info,
+                    "appearance": c.appearance,
+                }
+                for c in characters.values()
+            ]
+
+            return {
+                "success": True,
+                "shots": shot_list,
+                "scenes": scene_list,
+                "characters": character_list,
+                "total": len(shot_list),
+            }
+    except Exception as e:
+        logger.error(f"[_get_all_shots_from_db] 获取数据失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+@tool
+async def query_all_shots(creation_uuid: str) -> Dict[str, Any]:
+    """
+    查询指定创作项目的所有分镜、角色和场景
+
+    批量获取所有资源信息，用于一次性处理多个分镜任务。
+
+    Args:
+        creation_uuid: 创作项目 UUID
+
+    Returns:
+        {
+            "success": True,
+            "shots": [...],       # 所有分镜列表
+            "scenes": [...],      # 所有场景列表（去重）
+            "characters": [...], # 所有角色列表（去重）
+            "total": 10          # 分镜总数
+        }
+
+        其中每个 shot 包含：
+        - shot_id, shot_number, title, description
+        - image_prompt, image_url
+        - status, status_detail, extra_data
+        - scene_id, character_ids
+
+        每个 scene 包含：
+        - scene_id, title, location, time_setting, atmosphere, space_type
+
+        每个 character 包含：
+        - character_id, name, basic_info, appearance
+    """
+    logger.info(f"[Query Tool] 查询所有分镜: creation_uuid={creation_uuid}")
+    return await _get_all_shots_from_db(creation_uuid)
+
+
 # ==================== 提交重新生成 Tools ====================
 
 @tool
@@ -1897,7 +2039,11 @@ async def query_generation_tasks_status(
                 task_info["error"] = str(e)
         
         if not all_completed:
-            logger.debug(f"[Query Tasks Status] 还有 {pending_count} 个任务未完成, 已等待 {elapsed}s")
+            success_count_current = sum(1 for t in tasks_info if t["status"] == "SUCCESS")
+            failed_count_current = sum(1 for t in tasks_info if t["status"] in ["FAILED", "ERROR"])
+            pending_count_current = sum(1 for t in tasks_info if t["status"] in ["PENDING", "PROGRESS"])
+            
+            logger.info(f"[Query Tasks Status] 进度: {success_count_current}成功/{failed_count_current}失败/{pending_count_current}进行中, 已等待 {elapsed}s/{timeout}s")
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
     
@@ -2127,6 +2273,263 @@ async def batch_save_character_prompts(
         "total": len(prompts_data),
         "saved": success_count,
         "failed": len(prompts_data) - success_count,
+    }
+
+
+@tool
+async def batch_save_shot_image_prompts(
+    prompts_data: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    批量保存分镜图片提示词
+    
+    一次性保存多个分镜的图片提示词
+    
+    Args:
+        prompts_data: 提示词数据列表，每个元素包含：
+            - shot_id: 分镜 ID
+            - prompt: 图片提示词内容
+            - frame_type: 帧类型 ("start", "end", "both")，默认为 "start"
+            
+    Returns:
+        保存结果汇总
+    """
+    logger.info(f"[Batch Tool] 批量保存分镜图片提示词: count={len(prompts_data)}")
+    
+    results = []
+    saved_count = 0
+    
+    for item in prompts_data:
+        shot_id = item.get("shot_id")
+        prompt = item.get("prompt")
+        frame_type = item.get("frame_type", "start")
+        
+        try:
+            success = await _save_shot_prompt(
+                shot_id=shot_id,
+                new_prompt=prompt,
+                prompt_type="image",
+                frame_type=frame_type,
+            )
+            
+            if success:
+                saved_count += 1
+                results.append({
+                    "shot_id": shot_id,
+                    "success": True,
+                    "frame_type": frame_type,
+                })
+            else:
+                results.append({
+                    "shot_id": shot_id,
+                    "success": False,
+                    "error": "保存失败",
+                    "frame_type": frame_type,
+                })
+        except Exception as e:
+            logger.error(f"[Batch Tool] 保存分镜 {shot_id} 图片提示词失败: {e}")
+            results.append({
+                "shot_id": shot_id,
+                "success": False,
+                "error": str(e),
+                "frame_type": frame_type,
+            })
+    
+    return {
+        "success": saved_count > 0,
+        "results": results,
+        "total": len(prompts_data),
+        "saved": saved_count,
+        "failed": len(prompts_data) - saved_count,
+    }
+
+
+@tool
+async def batch_save_shot_video_prompts(
+    prompts_data: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    批量保存分镜视频提示词
+    
+    一次性保存多个分镜的视频提示词
+    
+    Args:
+        prompts_data: 提示词数据列表，每个元素包含：
+            - shot_id: 分镜 ID
+            - prompt: 视频提示词内容
+            
+    Returns:
+        保存结果汇总
+    """
+    logger.info(f"[Batch Tool] 批量保存分镜视频提示词: count={len(prompts_data)}")
+    
+    results = []
+    saved_count = 0
+    
+    for item in prompts_data:
+        shot_id = item.get("shot_id")
+        prompt = item.get("prompt")
+        
+        try:
+            success = await _save_shot_prompt(
+                shot_id=shot_id,
+                new_prompt=prompt,
+                prompt_type="video",
+                frame_type="start",
+            )
+            
+            if success:
+                saved_count += 1
+                results.append({
+                    "shot_id": shot_id,
+                    "success": True,
+                })
+            else:
+                results.append({
+                    "shot_id": shot_id,
+                    "success": False,
+                    "error": "保存失败",
+                })
+        except Exception as e:
+            logger.error(f"[Batch Tool] 保存分镜 {shot_id} 视频提示词失败: {e}")
+            results.append({
+                "shot_id": shot_id,
+                "success": False,
+                "error": str(e),
+            })
+    
+    return {
+        "success": saved_count > 0,
+        "results": results,
+        "total": len(prompts_data),
+        "saved": saved_count,
+        "failed": len(prompts_data) - saved_count,
+    }
+
+
+@tool
+async def batch_submit_shot_images(
+    shot_ids: List[int],
+    creation_uuid: str,
+) -> Dict[str, Any]:
+    """
+    批量提交分镜图片生成任务
+    
+    一次性为多个分镜提交图片生成任务，返回所有 task_id 列表
+    
+    Args:
+        shot_ids: 分镜 ID 列表
+        creation_uuid: 创作项目 UUID
+        
+    Returns:
+        包含所有 task_id 的结果
+    """
+    logger.info(f"[Batch Tool] 批量提交分镜图片生成: shot_ids={shot_ids}, creation_uuid={creation_uuid}")
+    
+    task_ids = []
+    results = []
+    
+    for shot_id in shot_ids:
+        try:
+            result = await _execute_regeneration(
+                target_type="shot",
+                target_id=shot_id,
+                creation_uuid=creation_uuid,
+                save_version=True,
+                mode="auto",
+            )
+            
+            if result.get("success"):
+                task_ids.append(result.get("task_id"))
+                results.append({
+                    "shot_id": shot_id,
+                    "success": True,
+                    "task_id": result.get("task_id"),
+                })
+            else:
+                results.append({
+                    "shot_id": shot_id,
+                    "success": False,
+                    "error": result.get("error"),
+                })
+        except Exception as e:
+            logger.error(f"[Batch Tool] 提交分镜 {shot_id} 图片生成失败: {e}")
+            results.append({
+                "shot_id": shot_id,
+                "success": False,
+                "error": str(e),
+            })
+    
+    return {
+        "success": len(task_ids) > 0,
+        "task_ids": task_ids,
+        "results": results,
+        "total": len(shot_ids),
+        "submitted": len(task_ids),
+        "failed": len(shot_ids) - len(task_ids),
+    }
+
+
+@tool
+async def batch_submit_shot_videos(
+    shot_ids: List[int],
+    creation_uuid: str,
+) -> Dict[str, Any]:
+    """
+    批量提交分镜视频生成任务
+    
+    一次性为多个分镜提交视频生成任务，返回所有 task_id 列表
+    
+    Args:
+        shot_ids: 分镜 ID 列表
+        creation_uuid: 创作项目 UUID
+        
+    Returns:
+        包含所有 task_id 的结果
+    """
+    logger.info(f"[Batch Tool] 批量提交分镜视频生成: shot_ids={shot_ids}, creation_uuid={creation_uuid}")
+    
+    task_ids = []
+    results = []
+    
+    for shot_id in shot_ids:
+        try:
+            result = await _execute_regeneration(
+                target_type="shot_video",
+                target_id=shot_id,
+                creation_uuid=creation_uuid,
+                save_version=True,
+                mode="auto",
+            )
+            
+            if result.get("success"):
+                task_ids.append(result.get("task_id"))
+                results.append({
+                    "shot_id": shot_id,
+                    "success": True,
+                    "task_id": result.get("task_id"),
+                })
+            else:
+                results.append({
+                    "shot_id": shot_id,
+                    "success": False,
+                    "error": result.get("error"),
+                })
+        except Exception as e:
+            logger.error(f"[Batch Tool] 提交分镜 {shot_id} 视频生成失败: {e}")
+            results.append({
+                "shot_id": shot_id,
+                "success": False,
+                "error": str(e),
+            })
+    
+    return {
+        "success": len(task_ids) > 0,
+        "task_ids": task_ids,
+        "results": results,
+        "total": len(shot_ids),
+        "submitted": len(task_ids),
+        "failed": len(shot_ids) - len(task_ids),
     }
 
 

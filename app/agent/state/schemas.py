@@ -173,6 +173,7 @@ class ComicDramaState(TypedDict, total=False):
     next_worker: Optional[str]  # Supervisor 调度的下一个 Worker
     needs_input: bool  # LLM 决策是否需要等待用户输入
     worker_result: Optional[Dict[str, Any]]  # Worker 执行结果（用于 Supervisor 决策）
+    task_params: Optional[Dict[str, Any]]  # 任务参数（用于 Worker 执行）
 
     # ==================== 剧本分析结果 ====================
     script_summary: Optional[str]  # 剧本摘要
