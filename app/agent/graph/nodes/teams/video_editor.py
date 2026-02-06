@@ -374,7 +374,7 @@ class VideoEditorNode:
 请预览确认视频效果。"""
                 return {
                     "response_text": response_text,
-                    "production_stage": ProductionStage.VIDEO_READY,
+                    "production_stage": ProductionStage.COMPLETED,  # 视频生成完成，进入 COMPLETED 阶段
                     "worker_result": {"worker": "video_editor", "completed": True, "response_text": response_text},
                     "board_actions": [
                         {"type": "switch_view", "target": "preview"},

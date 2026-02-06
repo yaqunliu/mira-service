@@ -102,7 +102,7 @@
   - 参数:
     - task_ids: [task_id]（任务ID列表）
     - target_info: [{"target_type": "character", "target_id": character_id}]（资源信息）
-    - timeout: 1000（最大等待时间，秒）
+    - timeout: 1200（最大等待时间，秒）
     - poll_interval: 2.0（轮询间隔，秒）
   - 返回: 包含所有任务的状态、结果、错误信息
   - 说明: 轮询查询任务状态，直到所有任务完成或超时
@@ -132,7 +132,7 @@
 2. 调用 `query_generation_tasks_status` 查询任务状态（阻塞等待完成）
    - 参数 task_ids: [task_id]
    - 参数 target_info: [{"target_type": "character", "target_id": character_id}]
-   - 参数 timeout: 1000, poll_interval: 2.0
+   - 参数 timeout: 1200, poll_interval: 2.0
 3. 根据返回结果汇报成功或失败
 
 #### 生成/修改提示词

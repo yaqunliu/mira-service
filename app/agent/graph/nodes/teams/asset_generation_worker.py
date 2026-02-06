@@ -641,7 +641,7 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
 - 参数:
   - task_ids: [task_id1, task_id2, ...]（所有任务的 task_id 列表）
   - target_info: [{"target_type": "character", "target_id": id1}, ...]
-  - timeout: 1000
+  - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询所有任务状态，直到全部完成或超时
 
@@ -677,7 +677,7 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
 - 参数:
   - task_ids: [task_id]
   - target_info: [{"target_type": "character", "target_id": character_id}]
-  - timeout: 1000
+  - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询任务状态，直到完成或超时
 
@@ -777,7 +777,7 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
 - 参数:
   - task_ids: [task_id1, task_id2, ...]（所有任务的 task_id 列表）
   - target_info: [{"target_type": "scene", "target_id": id1}, ...]
-  - timeout: 1000
+  - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询所有任务状态，直到全部完成或超时
 
@@ -813,7 +813,7 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
 - 参数:
   - task_ids: [task_id]
   - target_info: [{"target_type": "scene", "target_id": scene_id}]
-  - timeout: 1000
+  - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询任务状态，直到完成或超时
 
@@ -942,7 +942,7 @@ frame_type 自动检测规则：
 - 参数:
   - task_ids: [task_id1, task_id2, ...]（所有任务的 task_id 列表）
   - target_info: [{{"target_type": "shot", "target_id": id1}}, ...]
-  - timeout: 1000
+  - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询所有任务状态，直到全部完成或超时
 
@@ -983,7 +983,7 @@ frame_type 自动检测规则：
 - 参数:
   - task_ids: [task_id]
   - target_info: [{{"target_type": "shot", "target_id": shot_id}}]
-  - timeout: 1000
+  - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询任务状态，直到完成或超时
 
@@ -1055,7 +1055,7 @@ frame_type 自动检测规则：
 - 参数:
   - task_ids: [task_id]
   - target_info: [{"target_type": "shot", "target_id": shot_id}]
-  - timeout: 1000
+  - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询任务状态，直到完成或超时
 

@@ -1946,7 +1946,7 @@ async def clear_all(
 async def query_generation_tasks_status(
     task_ids: List[str],
     target_info: Optional[List[Dict[str, Any]]] = None,
-    timeout: int = 1000,
+    timeout: int = 1200,
     poll_interval: float = 2.0,
 ) -> Dict[str, Any]:
     """
@@ -1958,7 +1958,7 @@ async def query_generation_tasks_status(
         task_ids: Celery 任务 ID 列表
         target_info: 任务对应的资源信息列表（可选，用于返回结果时标识资源）
             每个元素包含: {"target_type": str, "target_id": int}
-        timeout: 最大等待时间（秒），默认 1000 秒
+        timeout: 最大等待时间（秒），默认 1200 秒
         poll_interval: 轮询间隔（秒），默认 2 秒
         
     Returns:

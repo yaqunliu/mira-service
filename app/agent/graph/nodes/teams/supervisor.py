@@ -146,7 +146,7 @@ supervisor_decision(
 | ASSETS_READY | **必须**暂停等待用户确认（不要重复生成角色场景！）|
     | STORYBOARD_READY | 调度到 asset_designer（生成分镜图片） |
 | VIDEO_READY | **必须**暂停等待用户确认（分镜图片刚完成，需确认后再生成视频）|
-| COMPLETED | 结束或根据用户指令处理 |
+| COMPLETED | **创作已完成** → 等待用户导出视频或结束 |
 
 ### 2. 重要：用户说"继续"时
 
@@ -154,7 +154,7 @@ supervisor_decision(
 - ASSETS_READY + "继续" → 调度到 storyboard_director（解析分镜）
 - STORYBOARD_READY + "继续" → 调度到 asset_designer（生成分镜图片）
 - VIDEO_READY + "继续" → 调度到 video_editor（生成分镜视频）⚠️ **这是关键！**
-- COMPLETED + "继续" → 确认完成
+- COMPLETED + "继续"/"确认" → **创作已完成**，不要调度任何 Worker，等待用户指令
 
 **绝对不要**在 ASSETS_READY 阶段重复调度到 asset_designer 生成角色场景！
 
@@ -268,7 +268,11 @@ Worker 执行结果: {worker_result}
 7. 分镜视频生成完成后（必须用户确认）:
    supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": 'approve_reject', "message": "请确认生成的分镜视频"}}], response_text="分镜视频生成完成，漫剧创作已全部完成！")
 
-8. 用户要求重新生成某个资源（生成完成后确认）:
+8. **COMPLETED 阶段用户确认后（结束流程）**:
+   当 production_stage="COMPLETED" 且用户说"确认"、"完成"、"结束"时，表示创作已完成：
+   supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "漫剧创作已全部完成！是否导出最终视频？"}}], response_text="恭喜！您的漫剧创作已全部完成。您可以导出最终视频或继续调整。")
+
+9. 用户要求重新生成某个资源（生成完成后确认）:
    supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "重新生成完成，请确认"}}], response_text="重新生成完成，请确认后继续。")
 
 9. 用户要求重新生成某个资源（提交任务）:

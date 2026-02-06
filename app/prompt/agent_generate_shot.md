@@ -166,7 +166,7 @@
   - 参数:
     - task_ids: [task_id]（任务ID列表）
     - target_info: [{"target_type": "shot", "target_id": shot_id}]（资源信息）
-    - timeout: 1000（最大等待时间，秒）
+    - timeout: 1200（最大等待时间，秒）
     - poll_interval: 2.0（轮询间隔，秒）
   - 返回: 包含所有任务的状态、结果、错误信息
   - 说明: 轮询查询任务状态，直到所有任务完成或超时
@@ -295,7 +295,7 @@
    - **注意**：首次生成默认使用 "both"，同时生成首尾帧图片
 5. **查询任务状态（阻塞等待完成）**：
    - 调用 **query_generation_tasks_status**
-   - 参数: `task_ids`, `timeout=1000`, `poll_interval=2.0`
+   - 参数: `task_ids`, `timeout=1200`, `poll_interval=2.0`
 6. 汇报结果："生成了 X 个，跳过了 Y 个（已有图片），Z 个缺少提示词"
 
 #### 全部分镜视频生成（不支持）
@@ -355,7 +355,7 @@
    - 返回: `task_ids` 列表
 5. **查询任务状态（阻塞等待完成）**：
    - 调用 **query_generation_tasks_status**
-   - 参数: `task_ids`, `timeout=1000`, `poll_interval=2.0`
+   - 参数: `task_ids`, `timeout=1200`, `poll_interval=2.0`
 6. 汇报结果："生成了 X 个，跳过了 Y 个（已有视频），Z 个缺少前置条件"
 
 #### 单个分镜视频生成

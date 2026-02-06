@@ -19,7 +19,7 @@ from app.core.logger import logger
 async def wait_for_task_with_progress(
     task,
     poll_interval: float = 1.0,
-    timeout: float = 300.0,
+    timeout: float = 1200.0,
 ) -> Dict[str, Any]:
     """
     等待 Celery 任务完成，同时可获取进度信息

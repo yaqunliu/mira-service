@@ -346,7 +346,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 参数:
   - task_ids: [task_id] (从 Step 2 获取的 task_id 列表)
   - target_info: [{"target_type": "character", "target_id": character_id}]
-  - timeout: 1000 (最大等待1000秒)
+  - timeout: 1200 (最大等待1200秒)
   - poll_interval: 2.0 (每2秒查询一次)
 - 说明: 轮询查询任务状态，直到任务完成或超时
 - 返回: 包含所有任务的状态、结果、错误信息
@@ -452,7 +452,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 参数:
   - task_ids: [task_id]
   - target_info: [{"target_type": "character", "target_id": character_id}]
-  - timeout: 1000
+  - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询任务状态，直到任务完成或超时
 
@@ -481,7 +481,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 参数:
   - task_ids: [task_id]
   - target_info: [{"target_type": "scene", "target_id": scene_id}]
-  - timeout: 1000
+  - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询任务状态，直到任务完成或超时
 
@@ -567,7 +567,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 参数:
   - task_ids: [task_id]
   - target_info: [{"target_type": "scene", "target_id": scene_id}]
-  - timeout: 1000
+  - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询任务状态，直到任务完成或超时
 
@@ -597,7 +597,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 参数:
   - task_ids: [task_id]
   - target_info: [{"target_type": "shot", "target_id": shot_id}]
-  - timeout: 1000
+  - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询任务状态，直到任务完成或超时
 
@@ -631,7 +631,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 参数:
   - task_ids: [task_id]
   - target_info: [{"target_type": "shot", "target_id": shot_id}]
-  - timeout: 1000
+  - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询任务状态，直到任务完成或超时
 
