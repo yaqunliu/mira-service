@@ -98,18 +98,71 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 
 ## 默认工作流
 
-用户说"开始创作"或"继续"时，按当前阶段决策：
-- INIT / SCRIPT_UPLOADED → next_worker: script_analyst
-- SCRIPT_ANALYZED → next_worker: asset_designer, task: "生成所有角色和场景图片"
-- ASSETS_READY → next_worker: storyboard_director
-- STORYBOARD_READY → next_worker: asset_designer, task: "生成所有分镜图片"
-- VIDEO_READY / COMPLETED → needs_input: false, response: "创作已完成！"
+```
+用户"开始创作"
+   ↓
+INIT → script_analyst（剧本分析）
+   ↓
+SCRIPT_ANALYZED → asset_designer（生成角色+场景）
+   ↓
+ASSETS_READY → **暂停确认** → 用户"继续"
+   ↓
+storyboard_director（解析分镜）
+   ↓
+STORYBOARD_READY → asset_designer（生成分镜图片）
+   ↓
+VIDEO_READY → **暂停确认** → 创作完成
 
-## 资产重新生成
+用户"继续"在不同阶段的含义：
+- ASSETS_READY + "继续" → storyboard_director
+- STORYBOARD_READY + "继续" → asset_designer（分镜）
+```
 
-当用户要求"重新生成"、"修改"、"优化"时 → next_worker: asset_regenerator
+## 重要：用户确认规则！
+
+以下阶段完成后**必须**暂停等待用户确认：
+1. asset_designer（生成角色+场景图片）完成后 → needs_input=True
+2. asset_designer（生成分镜图片）完成后 → needs_input=True
+3. video_editor（生成分镜视频）完成后 → needs_input=True
+
+确认方式：
+```python
+supervisor_decision(
+    next_worker=None,
+    needs_input=True,
+    board_actions=[{{"type": "approve_reject", "message": "请确认生成的[资产/分镜/视频]"}}],
+    response_text="生成完成，请确认后继续。"
+)
+```
+
+## 决策规则（按优先级）
+
+### 1. 首先检查当前阶段 production_stage
+
+| production_stage | 决策 |
+|-----------------|------|
+| INIT / SCRIPT_UPLOADED | 调度到 script_analyst |
+| SCRIPT_ANALYZED | 调度到 asset_designer（生成角色+场景） |
+| ASSETS_READY | **必须**暂停等待用户确认（不要重复生成角色场景！）|
+| STORYBOARD_READY | 调度到 asset_designer（生成分镜图片） |
+| VIDEO_READY / COMPLETED | 暂停确认或结束 |
+
+### 2. 重要：用户说"继续"时
+
+根据当前阶段决定：
+- ASSETS_READY + "继续" → 调度到 storyboard_director（解析分镜）
+- STORYBOARD_READY + "继续" → 调度到 asset_designer（生成分镜图片）
+- VIDEO_READY/COMPLETED + "继续" → 确认完成
+
+**绝对不要**在 ASSETS_READY 阶段重复调度到 asset_designer 生成角色场景！
+
+### 3. 资产重新生成
+
+当用户要求"重新生成"、"修改"、"优化"时 → 调度到 asset_regenerator
 
 ## 当前状态
+
+**最重要的决策依据！必须首先检查 production_stage：**
 
 创作 UUID: {creation_uuid}
 当前阶段: {production_stage}
@@ -125,20 +178,23 @@ Worker 执行结果: {worker_result}
 1. 剧本分析完成后（生成角色+场景）:
    supervisor_decision(next_worker="asset_designer", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'characters'}}], response_text="剧本分析完成，正在生成角色和场景...", task_params='{{"user_intent": "根据剧本生成所有角色和场景的提示词和图片", "tasks": [{{"target": "character", "actions": ["prompt", "image"]}}, {{"target": "scene", "actions": ["prompt", "image"]}}]}}')
 
-2. 角色+场景生成完成后（用户确认）:
-   supervisor_decision(next_worker="storyboard_director", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'storyboards'}}], response_text="资产生成完成，正在解析分镜...")
+2. 角色+场景生成完成后（必须用户确认）:
+   supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "请确认生成的角色和场景图片，如需调整可重新生成部分资产"}}], response_text="角色和场景生成完成，请确认后继续分镜解析。")
 
 3. 分镜解析完成后（生成分镜提示词+图片）:
    supervisor_decision(next_worker="asset_designer", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'storyboards'}}], response_text="分镜解析完成，正在生成分镜图片...", task_params='{{"user_intent": "根据分镜脚本生成分镜图片提示词并生成首帧和尾帧图片", "tasks": [{{"target": "shot", "actions": ["prompt", "image"], "scope": "all"}}]}}')
 
-4. 分镜图片生成完成后（用户确认）:
-   supervisor_decision(next_worker="video_editor", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'preview'}}], response_text="分镜图片生成完成，正在生成视频...", task_params='{{"user_intent": "根据分镜首帧和尾帧图片生成分镜视频", "tasks": [{{"target": "shot_video", "actions": ["prompt", "video"], "scope": "all"}}]}}')
+4. 分镜图片生成完成后（必须用户确认）:
+   supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "请确认生成的分镜图片，如有需要可重新生成"}}], response_text="分镜图片生成完成，请确认后继续视频生成。")
 
-5. 用户要求重新生成某个资源:
+5. 分镜视频生成完成后（必须用户确认）:
+   supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": 'approve_reject', "message": "请确认生成的分镜视频"}}], response_text="分镜视频生成完成，漫剧创作已全部完成！")
+
+6. 用户要求重新生成某个资源（生成完成后确认）:
+   supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "重新生成完成，请确认"}}], response_text="重新生成完成，请确认后继续。")
+
+7. 用户要求重新生成某个资源（提交任务）:
    supervisor_decision(next_worker="asset_regenerator", needs_input=False, board_actions=[], response_text="正在重新生成...", task_params='{{"user_intent": "重新生成场景2的图片", "tasks": [{{"target": "scene", "actions": ["image"]}}]}}')
-
-6. 任何阶段完成后需要用户确认:
-   supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{'type': 'approve_reject', 'message': '请确认生成的[资产/分镜/视频]'}}], response_text="生成完成，请确认后继续。")
 
 ## task_params 参数说明
 
