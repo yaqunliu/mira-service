@@ -241,6 +241,11 @@ class Settings(BaseSettings):
     
     ENABLE_TEST_EXCEPTION: str = "false"
     
+    # Debug 生成配置
+    DEBUG_GENERATE: bool = True  # 调试生成模式，为 True 时不调用真实 API，返回固定地址
+    DEBUG_GENERATE_IMAGE_URL: str = "https://novel-agent.cn-sh2.ufileos.com/dev/20260205/10a34369-16b7-4cb9-ab19-4be8b84adb5a/characters/characters/78/image_41b33d9a-19b5-471c-8d6c-80ff72323446.png"
+    DEBUG_GENERATE_VIDEO_URL: str = "https://novel-agent.cn-sh2.ufileos.com/test/testvideo/0001.mp4"
+    
     model_config = ConfigDict(
         env_file=[".env.local", ".env"],  # 先读取 .env.local（本地开发），再读取 .env（Docker/生产）
         case_sensitive=True,

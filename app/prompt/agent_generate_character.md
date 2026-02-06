@@ -81,9 +81,10 @@
   - 参数: template_type="regenerate"
   - 返回: 提示词生成模板
 
-- **get_visual_style_guide**: 获取视觉风格指南
-  - 参数: visual_style_key
-  - 返回: 风格描述
+### 视觉风格
+当前创作使用的视觉风格：**{{VISUAL_STYLE}}**
+
+无需查询风格指南，直接使用上述风格描述生成提示词。
 
 ### 保存工具
 - **save_character_prompt**: 保存角色提示词
@@ -124,17 +125,13 @@
 
 ### Step 3: 执行操作
 
-#### 全部角色提示词生成
-1. 调用 query_characters 获取所有角色
-2. 遍历每个角色：
-   - 调用 get_character_prompt_template 获取模板
-   - **Node 自身生成提示词**
-   - 调用 save_character_prompt 保存
-3. 统计成功数量，汇报结果
+#### ⚠️ 全部角色提示词生成（强制使用批量工具）
 
-#### 全部角色提示词生成（使用批量工具）
-**【优化】使用批量工具减少迭代次数！**
+**【重要】必须使用 batch_save_character_prompts 批量保存！**
 
+禁止逐个调用 save_character_prompt，这会导致 ReAct 迭代次数超限！
+
+**正确流程**：
 1. 调用 query_characters 获取所有角色
 2. **检测已有提示词的角色**：检查 `image_prompt` 字段
 3. **批量生成并保存提示词**：
@@ -187,8 +184,8 @@
 
 | 用户说法 | 操作类型 | 处理方式 |
 |---------|---------|---------|
-| "生成提示词"、"生成生图提示词"、"生成图片提示词"、"生成prompt" | 生成提示词 | Node 生成 → save_character_prompt |
-| "生成图片"、"生成图像"、"生图"、"生成角色图" | 生成图片 | submit → query_status → 汇报结果 |
+| "生成提示词"、"生成生图提示词"、"生成图片提示词"、"生成prompt" | 生成提示词 | 全部：batch_save_character_prompts；单个：save_character_prompt |
+| "生成图片"、"生成图像"、"生图"、"生成角色图" | 生成图片 | 全部：batch_submit_character_images；单个：submit_character_image_regeneration |
 
 ### 范围判断
 
@@ -202,7 +199,7 @@
 生成角色提示词时，遵循以下要求：
 
 1. **四视图布局**：提示词必须包含横版构图、四视图布局（面部正面特写、正面全身、侧面全身、背面全身）
-2. **视觉风格**：根据 creation_extra_data 中的 visual_style 确定风格
+2. **视觉风格**：使用 **{{VISUAL_STYLE}}** 作为风格描述
 3. **纯白色背景**：背景必须是纯白色，严禁出现任何背景装饰
 4. **无文字**：严禁画面中出现任何文字、字母、数字、水印或签名
 5. **语言**：输出英文提示词

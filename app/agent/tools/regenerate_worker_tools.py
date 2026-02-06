@@ -212,7 +212,7 @@ def _get_old_prompt(shot: Dict, prompt_type: str, frame_type: str) -> str:
     if prompt_type == "video":
         return extra_data.get("video_prompt", "")
     elif frame_type == "end":
-        return extra_data.get("end_frame_prompt", "")
+        return extra_data.get("end_frame_image_prompt", "")
     else:
         return shot.get("image_prompt", "")
 
@@ -292,7 +292,7 @@ async def _save_shot_prompt(shot_id: int, new_prompt: str, prompt_type: str, fra
                         prompt_json = json.loads(json_str)
                         if "start_frame_prompt" in prompt_json:
                             shot.image_prompt = prompt_json["start_frame_prompt"]
-                        if "end_frame_prompt" in prompt_json:
+                        if "end_frame_image_prompt" in prompt_json:
                             shot.extra_data["end_frame_image_prompt"] = prompt_json["end_frame_prompt"]
                         logger.info(f"[Save] 解析JSON成功: start_frame长度={len(prompt_json.get('start_frame_prompt', ''))}, end_frame长度={len(prompt_json.get('end_frame_prompt', ''))}")
                         prompt_to_save = None
@@ -312,7 +312,7 @@ async def _save_shot_prompt(shot_id: int, new_prompt: str, prompt_type: str, fra
             
             if prompt_to_save:
                 if frame_type == "end":
-                    shot.extra_data["end_frame_prompt"] = prompt_to_save
+                    shot.extra_data["end_frame_image_prompt"] = prompt_to_save
                 else:
                     shot.image_prompt = prompt_to_save
         
@@ -530,13 +530,12 @@ async def query_single_shot(shot_id: int) -> Dict[str, Any]:
 
 
 async def _get_all_shots_from_db(creation_uuid: str) -> Dict[str, Any]:
-    """从数据库获取指定创作项目的所有分镜、角色和场景（去重）"""
+    """从数据库获取指定创作项目的所有分镜、角色和场景"""
     from app.agent.tools.async_db import get_async_db_session
-    from app.models.shot import Shot
+    from app.models.shot import Shot, shot_characters
     from app.models.scene import Scene
     from app.models.creation import Creation
     from app.models.character import Character
-    from app.models.shot_characters import shot_characters
     from sqlalchemy import select
 
     try:
@@ -551,6 +550,25 @@ async def _get_all_shots_from_db(creation_uuid: str) -> Dict[str, Any]:
                     "error": f"创作项目不存在: {creation_uuid}",
                 }
 
+            # 1. 获取所有角色（通过 creation.character_ids）
+            character_ids = creation.character_ids or []
+            if character_ids:
+                char_stmt = select(Character).where(Character.character_id.in_(character_ids))
+                chars_result = await db.execute(char_stmt)
+                all_characters = {c.character_id: c for c in chars_result.scalars().all()}
+            else:
+                all_characters = {}
+
+            # 2. 获取所有场景（通过 creation.scene_ids）
+            scene_ids = creation.scene_ids or []
+            if scene_ids:
+                scene_stmt = select(Scene).where(Scene.scene_id.in_(scene_ids))
+                scenes_result = await db.execute(scene_stmt)
+                all_scenes = {s.scene_id: s for s in scenes_result.scalars().all()}
+            else:
+                all_scenes = {}
+
+            # 3. 获取所有分镜
             shot_stmt = (
                 select(Shot)
                 .join(Scene, Shot.scene_id == Scene.scene_id)
@@ -560,21 +578,7 @@ async def _get_all_shots_from_db(creation_uuid: str) -> Dict[str, Any]:
             result = await db.execute(shot_stmt)
             shots = result.scalars().all()
 
-            scene_ids = list(set(shot.scene_id for shot in shots if shot.scene_id))
-            scene_stmt = select(Scene).where(Scene.scene_id.in_(scene_ids))
-            scenes_result = await db.execute(scene_stmt)
-            scenes = {s.scene_id: s for s in scenes_result.scalars().all()}
-
-            all_character_ids = set()
-            for shot in shots:
-                query = select(shot_characters.c.character_id).where(shot_characters.c.shot_id == shot.shot_id)
-                chars_result = await db.execute(query)
-                all_character_ids.update(row[0] for row in chars_result.fetchall())
-
-            char_stmt = select(Character).where(Character.character_id.in_(all_character_ids))
-            chars_result = await db.execute(char_stmt)
-            characters = {c.character_id: c for c in chars_result.scalars().all()}
-
+            # 4. 构建分镜列表（包含关联的角色ID）
             shot_list = []
             for shot in shots:
                 query = (
@@ -591,14 +595,15 @@ async def _get_all_shots_from_db(creation_uuid: str) -> Dict[str, Any]:
                     "description": shot.description,
                     "image_prompt": shot.image_prompt,
                     "image_url": shot.image_url,
+                    "end_image_prompt": shot.extra_data.get("end_frame_image_prompt", "") if shot.extra_data else "",
+                    "end_image_url": shot.extra_data.get("end_frame_image_url", "") if shot.extra_data else "", 
                     "status": shot.status,
-                    "status_detail": shot.status_detail,
-                    "extra_data": shot.extra_data or {},
                     "scene_id": shot.scene_id,
                     "character_ids": shot_character_ids,
                 }
                 shot_list.append(shot_dict)
 
+            # 5. 构建场景列表（所有场景）
             scene_list = [
                 {
                     "scene_id": s.scene_id,
@@ -607,18 +612,23 @@ async def _get_all_shots_from_db(creation_uuid: str) -> Dict[str, Any]:
                     "time_setting": s.time_setting,
                     "atmosphere": s.atmosphere,
                     "space_type": s.space_type,
+                    "image_url": s.image_url,
+                    "image_prompt": s.extra_data.get("image_prompt", "") if s.extra_data else "",
                 }
-                for s in scenes.values()
+                for s in all_scenes.values()
             ]
 
+            # 6. 构建角色列表（所有角色）
             character_list = [
                 {
                     "character_id": c.character_id,
                     "name": c.name,
                     "basic_info": c.basic_info,
                     "appearance": c.appearance,
+                    "image_url": c.image_url,
+                    "image_prompt": c.image_prompt,
                 }
-                for c in characters.values()
+                for c in all_characters.values()
             ]
 
             return {
@@ -626,7 +636,9 @@ async def _get_all_shots_from_db(creation_uuid: str) -> Dict[str, Any]:
                 "shots": shot_list,
                 "scenes": scene_list,
                 "characters": character_list,
-                "total": len(shot_list),
+                "shot_total": len(shot_list),
+                "scene_total": len(scene_list),
+                "character_total": len(character_list),
             }
     except Exception as e:
         logger.error(f"[_get_all_shots_from_db] 获取数据失败: {e}")
@@ -1622,7 +1634,7 @@ async def update_resource_status(
                 old_status = resource.status
                 resource.status = status
                 
-            elif target_type in ["shot_start", "shot_end"]:
+            elif target_type in ["shot_start", "shot_end", "shot_image"]:
                 stmt = select(Shot).where(Shot.shot_id == target_id)
                 result = await db.execute(stmt)
                 resource = result.scalar_one_or_none()
@@ -2432,7 +2444,7 @@ async def batch_submit_shot_images(
     for shot_id in shot_ids:
         try:
             result = await _execute_regeneration(
-                target_type="shot",
+                target_type="shot_image",
                 target_id=shot_id,
                 creation_uuid=creation_uuid,
                 save_version=True,

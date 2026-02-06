@@ -150,6 +150,30 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
             target_id = self._extract_target_id(user_message)
             logger.info(f"[AssetRegenerator] 使用关键词检测: target={target_type}, op={operation_type}, frame={frame_type}, id={target_id}")
 
+        # 构建系统提示词
+        tool_guide = self._get_tool_usage_guide(target_type, operation_type, frame_type, target_id, creation_uuid)
+
+        base_prompt = f"""# 资产重新生成任务
+
+你是资产重新生成专家，负责帮助用户重新生成或修改角色、场景、分镜的提示词和图片/视频。
+
+## 当前任务
+
+- 目标类型: {target_type}
+- 操作类型: {operation_type}
+- 帧类型: {frame_type}
+- 目标 ID: {target_id or "未指定"}
+
+{tool_guide}
+
+## 用户消息
+
+{user_message}
+
+请按照上述指南，调用相应工具完成任务。
+"""
+        return base_prompt
+
     async def _parse_intent_with_llm(self, user_message: str) -> Dict[str, str]:
         """
         使用 LLM 解析用户意图（替代硬编码关键词匹配）
@@ -249,11 +273,41 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
         }
         return mapping.get(op_type, "image")
 
-    def _get_tool_usage_guide(self, target_type: str, operation_type: str, frame_type: str = "both", target_id: Optional[int] = None) -> str:
+    def _get_visual_style_for_creation(self, creation_uuid: str) -> str:
+        """
+        获取创作的视觉风格描述
+        
+        Args:
+            creation_uuid: 创作 UUID
+            
+        Returns:
+            风格描述字符串
+        """
+        from app.agent.config import get_visual_style_description
+        from app.db.session import get_sync_session
+        from app.models.creation import Creation
+        
+        try:
+            # 使用同步数据库查询
+            with get_sync_session() as db:
+                creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+                if creation and creation.extra_data:
+                    visual_style_key = creation.extra_data.get("visual_style", "anime")
+                    return get_visual_style_description(visual_style_key)
+        except Exception as e:
+            logger.warning(f"[AssetRegenerator] 获取风格失败: {e}")
+        
+        # 默认返回 anime 风格
+        return get_visual_style_description("anime")
+
+    def _get_tool_usage_guide(self, target_type: str, operation_type: str, frame_type: str = "both", target_id: Optional[int] = None, creation_uuid: str = "") -> str:
         """获取工具使用指南"""
 
         mapped_op_type = self._map_operation_type(operation_type)
         target_id_info = f"\n目标 ID: {target_id}" if target_id else "\n目标 ID: 未指定（需要从列表中匹配）"
+        
+        # 获取视觉风格
+        visual_style = self._get_visual_style_for_creation(creation_uuid) if creation_uuid else "anime style"
 
         base_guide = f"""
 
@@ -261,6 +315,8 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 
 用户操作类型: {mapped_op_type} ({operation_type})
 检测到的帧类型: {frame_type}{target_id_info}
+视觉风格: {visual_style}
+
 你作为中央协调器，需要按顺序调用以下工具完成任务：
 
 """
@@ -323,7 +379,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 **Step 3: 生成提示词（Node 自身完成）**
 - 不需要调用工具！
 - 基于 character_info 和 template_content，使用你的 LLM 能力生成提示词
-- 参考 visual_style 确定风格
+- 使用视觉风格: {visual_style}
 
 **Step 4: 保存提示词**
 - 工具: `save_character_prompt`
@@ -454,7 +510,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 **Step 3: 生成提示词（Node 自身完成）**
 - 不需要调用工具！
 - 基于 scene_info 和 template_content，使用你的 LLM 能力生成提示词
-- 参考 visual_style 确定风格
+- 使用视觉风格: {visual_style}
 
 **Step 4: 保存提示词**
 - 工具: `save_scene_prompt`
@@ -622,7 +678,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 不需要调用工具！
 - 基于 shot_info、scene_info、template_content 和知识库结果
 - 使用你的 LLM 能力生成提示词
-- 参考 visual_style 确定风格
+- 使用视觉风格: {visual_style}
 
 **Step 6: 保存提示词**
 - 图片提示词：工具 `save_shot_image_prompt`，参数 frame_type="{frame_type}"
@@ -807,7 +863,6 @@ frame_type 自动检测规则：
             get_scene_prompt_template,
             get_shot_image_prompt_template,
             get_shot_video_prompt_template,
-            get_visual_style_guide,
         )
         # 注意：提示词生成由 Node 自身的 LLM 完成，不需要调用外部工具
         from app.agent.tools.save_tools import (
@@ -843,7 +898,6 @@ frame_type 自动检测规则：
             get_scene_prompt_template,
             get_shot_image_prompt_template,
             get_shot_video_prompt_template,
-            get_visual_style_guide,
 
             # === 保存提示词 ===
             save_character_prompt,

@@ -313,10 +313,10 @@ async def save_shot_image_prompt(
                 # 假设 prompt 是一个字典，包含 start 和 end
                 if isinstance(prompt, dict):
                     shot.image_prompt = prompt
-                    shot.extra_data["start_frame_prompt"] = prompt.get("start", "")
-                    shot.extra_data["end_frame_prompt"] = prompt.get("end", "")
+                    shot.extra_data["start_frame_image_prompt"] = prompt.get("start", "")
+                    shot.extra_data["end_frame_image_prompt"] = prompt.get("end", "")
                 else:
-                    shot.extra_data["start_frame_prompt"] = prompt
+                    shot.extra_data["start_frame_image_prompt"] = prompt
             
             flag_modified(shot, "extra_data")
             shot.updated_at = datetime.now()

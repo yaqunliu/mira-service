@@ -1159,6 +1159,11 @@ class AIClient:
             AITimeoutError: 调用超时
             Exception: 其他错误
         """
+        # Debug 模式：直接返回固定视频地址
+        if settings.DEBUG_GENERATE:
+            logger.info(f"[DEBUG] 视频生成模式，直接返回固定地址: {settings.DEBUG_GENERATE_VIDEO_URL}")
+            return settings.DEBUG_GENERATE_VIDEO_URL
+        
         # 检查火山云AI配置
         if not self.ark_api_key or not self.ark_base_url:
             raise ValueError("火山云AI API配置未设置")
@@ -1264,6 +1269,11 @@ class AIClient:
             AITimeoutError: 调用超时
             Exception: 其他错误
         """
+        # Debug 模式：直接返回固定视频地址
+        if settings.DEBUG_GENERATE:
+            logger.info(f"[DEBUG] 图生视频模式，直接返回固定地址: {settings.DEBUG_GENERATE_VIDEO_URL}")
+            return settings.DEBUG_GENERATE_VIDEO_URL
+        
         # 检查火山云AI配置
         if not self.ark_api_key or not self.ark_base_url:
             raise ValueError("火山云AI API配置未设置")
@@ -1734,6 +1744,8 @@ class AIClient:
         """
         通用的 Modelverse 视频生成调用（包含提交和轮询）
         """
+        if settings.DEBUG_GENERATE:
+            return settings.DEBUG_GENERATE_VIDEO_URL
         # 统一使用 Bearer Token
         auth_token = self.sora2_api_key
         if not auth_token.startswith("Bearer "):
@@ -1872,6 +1884,11 @@ class AIClient:
             AITimeoutError: 调用超时
             AIRetryExhaustedError: 重试次数耗尽
         """
+        # Debug 模式：直接返回固定图片地址
+        if settings.DEBUG_GENERATE:
+            logger.info(f"[DEBUG] 图片生成模式，直接返回固定地址: {settings.DEBUG_GENERATE_IMAGE_URL}")
+            return settings.DEBUG_GENERATE_IMAGE_URL
+        
         # 文生图使用 text_to_image_model
         model = model or self.text_to_image_model
         
@@ -2068,6 +2085,9 @@ class AIClient:
         """
         执行图生图调用的内部方法（不包含重试逻辑）
         """
+        if settings.DEBUG_GENERATE:
+            return settings.DEBUG_GENERATE_IMAGE_URL
+
         # 检查是否为 Gemini 模型
         if "gemini" in model.lower():
             return self._call_gemini_image_api(

@@ -21,7 +21,7 @@ Asset Generation Worker Node - 资产生成 Worker (ReAct 版本)
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-from app.agent.state.schemas import ComicDramaState
+from app.agent.state.schemas import ComicDramaState, ProductionStage
 from app.agent.graph.nodes.teams.react_worker_base import ReActWorkerNode
 from app.core.logger import logger
 
@@ -125,6 +125,33 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
         logger.info(f"[AssetGeneration] 使用简单模式，任务数: {len(tasks)}")
         return tasks
 
+    def _get_visual_style_for_creation(self, creation_uuid: str) -> str:
+        """
+        获取创作的视觉风格描述
+
+        Args:
+            creation_uuid: 创作 UUID
+
+        Returns:
+            风格描述字符串
+        """
+        from app.agent.config import get_visual_style_description
+        from app.db.session import get_sync_session
+        from app.models.creation import Creation
+
+        try:
+            # 使用同步数据库查询
+            with get_sync_session() as db:
+                creation = db.query(Creation).filter(Creation.uuid == creation_uuid).first()
+                if creation and creation.extra_data:
+                    visual_style_key = creation.extra_data.get("visual_style", "anime")
+                    return get_visual_style_description(visual_style_key)
+        except Exception as e:
+            logger.warning(f"[AssetGeneration] 获取风格失败: {e}")
+
+        # 默认返回 anime 风格
+        return get_visual_style_description("anime")
+
     def _build_prompt_from_tasks(self, tasks: List[Dict[str, Any]], creation_uuid: str, user_intent: str = "") -> str:
         """
         根据任务列表构建系统提示词
@@ -135,6 +162,10 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
             user_intent: 用户意图总结
         """
         from app.utils.file_utils import read_prompt_file
+
+        # 获取视觉风格
+        visual_style = self._get_visual_style_for_creation(creation_uuid)
+        logger.info(f"[AssetGeneration] 使用视觉风格: {visual_style[:50]}...")
 
         # 添加用户意图（如果有）
         prompt_parts = []
@@ -176,6 +207,7 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
             if template:
                 template = template.replace("{{CREATION_UUID}}", creation_uuid)
                 template = template.replace("{{SCOPE}}", scope)
+                template = template.replace("{{VISUAL_STYLE}}", visual_style)
                 if "frame_type" in task:
                     template = template.replace("{{FRAME_TYPE}}", frame_type)
                 prompt_parts.append(f"\n## 任务 {i+1}：{target_name}（{action_str}）\n{template}")
@@ -243,6 +275,10 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
         """构建简单模式的提示词（向后兼容）"""
         from app.utils.file_utils import read_prompt_file
 
+        # 获取视觉风格
+        visual_style = self._get_visual_style_for_creation(creation_uuid)
+        logger.info(f"[AssetGeneration] 使用视觉风格: {visual_style[:50]}...")
+
         # 添加用户意图（如果有）
         intent_prefix = ""
         if user_intent:
@@ -294,6 +330,7 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
             prompt_template = prompt_template.replace("{{CREATION_UUID}}", creation_uuid)
             prompt_template = prompt_template.replace("{{FRAME_TYPE}}", frame_type)
             prompt_template = prompt_template.replace("{{SCOPE}}", scope)
+            prompt_template = prompt_template.replace("{{VISUAL_STYLE}}", visual_style)
 
         # 添加细粒度工具使用指南（非 all 模式）
         if target_type != "all":
@@ -1017,118 +1054,70 @@ frame_type 自动检测规则：
 
     def get_tools(self) -> List:
         """
-        获取可用工具列表
+        获取可用工具列表 - 精简版
 
-        复用 AssetRegeneratorWorker 的工具
+        只保留 agent_generate_shot 提示词中提及的必要工具：
+        1. query_all_shots - 一次性返回所有分镜、角色、场景信息
+        2. get_prompt_template - 统一提示词模板接口
+        3. batch_save_*_prompts - 批量保存提示词
+        4. query_knowledge_for_video - 知识库查询
+        5. query_generation_tasks_status - 批量查询任务状态
+        6. batch_submit_* - 批量提交生成任务
         """
-        # 批量查询工具 (在 db_tools 中)
-        from app.agent.tools.db_tools import (
-            query_characters,
-            query_scenes,
-            query_shots,
-            query_creation_info,
-        )
-
-        # 单个查询工具 (在 regenerate_worker_tools 中)
+        # 1. 统一批量查询工具 - 返回所有角色、场景、分镜信息
         from app.agent.tools.regenerate_worker_tools import (
-            query_single_character,
-            query_single_scene,
-            query_single_shot,
             query_all_shots,
             query_generation_tasks_status,
         )
 
-        # 提交生成工具
-        from app.agent.tools.regenerate_worker_tools import (
-            submit_character_image_regeneration,
-            submit_scene_image_regeneration,
-            submit_shot_image_regeneration,
-            submit_shot_video_regeneration,
+        # 2. 统一提示词模板工具
+        from app.agent.tools.template_tools import (
+            get_prompt_template,
         )
 
-        # 批量生成工具（AssetGenerationWorkerNode 专用）
+        # 3. 批量保存提示词工具
         from app.agent.tools.regenerate_worker_tools import (
-            batch_submit_character_images,
-            batch_submit_scene_images,
-            batch_submit_shot_images,
-            batch_submit_shot_videos,
             batch_save_character_prompts,
             batch_save_scene_prompts,
             batch_save_shot_image_prompts,
             batch_save_shot_video_prompts,
         )
 
-        # 模板工具
-        from app.agent.tools.template_tools import (
-            get_character_prompt_template,
-            get_scene_prompt_template,
-            get_shot_image_prompt_template,
-            get_shot_video_prompt_template,
-            get_visual_style_guide,
-        )
-
-        # 保存工具
-        from app.agent.tools.save_tools import (
-            save_character_prompt,
-            save_scene_prompt,
-            save_shot_image_prompt,
-            save_shot_video_prompt,
-        )
-
-        # 知识库工具
+        # 4. 知识库工具（仅视频提示词需要）
         from app.agent.tools.video_knowledge_tools import (
             query_knowledge_for_video,
-            query_camera_techniques,
-            query_composition_rules,
+        )
+
+        # 5. 批量提交生成任务工具
+        from app.agent.tools.regenerate_worker_tools import (
+            batch_submit_character_images,
+            batch_submit_scene_images,
+            batch_submit_shot_images,
+            batch_submit_shot_videos,
         )
 
         return [
-            # === 查询类 ===
-            query_characters,
-            query_scenes,
-            query_shots,
+            # === 1. 查询类 ===
             query_all_shots,
-            query_single_character,
-            query_single_scene,
-            query_single_shot,
-            query_creation_info,
-
-            # === 图片/视频生成（直接提交）===
-            submit_character_image_regeneration,
-            submit_scene_image_regeneration,
-            submit_shot_image_regeneration,
-            submit_shot_video_regeneration,
-
-            # === 提示词模板 ===
-            get_character_prompt_template,
-            get_scene_prompt_template,
-            get_shot_image_prompt_template,
-            get_shot_video_prompt_template,
-            get_visual_style_guide,
-
-            # === 保存提示词 ===
-            save_character_prompt,
-            save_scene_prompt,
-            save_shot_image_prompt,
-            save_shot_video_prompt,
-
-            # === 知识库（仅视频提示词需要）===
-            query_knowledge_for_video,
-            query_camera_techniques,
-            query_composition_rules,
-
-            # === 任务状态查询 ===
             query_generation_tasks_status,
 
-            # === 批量生成工具 ===
-            batch_submit_character_images,
-            batch_submit_scene_images,
-            batch_submit_shot_images,
-            batch_submit_shot_videos,
+            # === 2. 提示词模板 ===
+            get_prompt_template,
+
+            # === 3. 批量保存提示词 ===
             batch_save_character_prompts,
             batch_save_scene_prompts,
             batch_save_shot_image_prompts,
             batch_save_shot_video_prompts,
+
+            # === 4. 知识库 ===
+            query_knowledge_for_video,
+
+            # === 5. 批量提交生成任务 ===
+            batch_submit_character_images,
+            batch_submit_scene_images,
+            batch_submit_shot_images,
+            batch_submit_shot_videos,
         ]
 
     async def process_result(self, state: ComicDramaState, final_response: str, tool_results: List[Dict]) -> Dict[str, Any]:
@@ -1201,9 +1190,42 @@ frame_type 自动检测规则：
                 "status_query_count": status_query_count,
             }
 
+        # 根据任务类型确定新的 production_stage
+        new_production_stage = None
+        task_params = state.get("task_params", {})
+        tasks = task_params.get("tasks", [])
+        
+        # 分析任务类型
+        has_character_or_scene = False
+        has_shot = False
+        has_shot_video = False
+        
+        for task in tasks:
+            target = task.get("target", "")
+            if target in ["character", "scene"]:
+                has_character_or_scene = True
+            elif target == "shot":
+                has_shot = True
+            elif target == "shot_video":
+                has_shot_video = True
+        
+        # 根据任务类型设置 production_stage
+        if has_shot_video:
+            # 视频生成完成
+            new_production_stage = ProductionStage.COMPLETED
+            logger.info(f"[{self.node_name}] 视频生成完成，设置 production_stage=COMPLETED")
+        elif has_shot:
+            # 分镜图片生成完成，进入 VIDEO_READY 阶段
+            new_production_stage = ProductionStage.VIDEO_READY
+            logger.info(f"[{self.node_name}] 分镜图片生成完成，设置 production_stage=VIDEO_READY")
+        elif has_character_or_scene:
+            # 角色/场景生成完成，进入 ASSETS_READY 阶段
+            new_production_stage = ProductionStage.ASSETS_READY
+            logger.info(f"[{self.node_name}] 角色/场景生成完成，设置 production_stage=ASSETS_READY")
+        
         logger.info(f"[{self.node_name}] 结果统计: 成功={success_count}, 失败={failed_count}")
 
-        return {
+        result = {
             "response_text": final_response,
             "production_progress": production_progress,
             "tool_usage_summary": {
@@ -1217,6 +1239,12 @@ frame_type 自动检测规则：
                 "failed_count": failed_count,
             }
         }
+        
+        # 如果有新的 production_stage，添加到结果中
+        if new_production_stage:
+            result["production_stage"] = new_production_stage
+        
+        return result
 
 
 # 便捷函数，用于直接调用

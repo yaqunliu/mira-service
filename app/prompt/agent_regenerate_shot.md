@@ -138,10 +138,6 @@
   - 参数: template_type="regenerate" 或 "modify"
   - 返回: 提示词生成模板
 
-- **get_visual_style_guide**: 获取视觉风格指南
-  - 参数: visual_style_key
-  - 返回: 风格描述
-
 ### 知识库工具（仅视频提示词需要）
 - **query_knowledge_for_video**: 查询视频知识库
   - 参数:

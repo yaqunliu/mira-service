@@ -91,40 +91,38 @@
 | "生成分镜5的..."、"给第3个分镜..." | 单个 | 使用 query_single_shot |
 | "生成全部..."、"生成所有..."、"批量..." | 全部 | 使用 query_shots 获取列表，遍历处理 |
 
-## 帧类型判断（仅图片生成时）
+## 帧类型（图片生成时）
+
+**首次生成默认使用 "both"（生成首尾帧）**
 
 | 用户说法 | frame_type | 说明 |
 |---------|-----------|------|
 | "首帧"、"第一帧"、"开始帧" | start | 只生成首帧 |
 | "尾帧"、"最后一帧"、"结束帧" | end | 只生成尾帧 |
-| 无明确指定 | both | 生成首尾帧 |
+| 无明确指定 / 首次生成 | both | 生成首尾帧（默认） |
 
 ## 可用工具
 
 ### 查询工具
-- **query_shots**: 查询所有分镜列表
-  - 参数: creation_uuid, include_details=true
-  - 返回: 分镜列表（包含 shot_id, shot_number, image_url, video_url, extra_data）
-
-- **query_single_shot**: 查询单个分镜详情
-  - 参数: shot_id
-  - 返回: 分镜完整信息，包含：
-    - 当前分镜的所有字段（description, narration, image_prompt, extra_data 等）
-    - 关联场景的完整信息（time_setting, location, atmosphere, space_type）
-    - 上一个分镜的信息（如果 shot_number > 1，用于处理连贯性）
+- **query_all_shots**: 查询所有分镜、角色、场景信息
+  - 参数: creation_uuid
+  - 返回: 包含所有资源信息：
+    - shots: 分镜列表（包含 shot_id, shot_number, description, image_prompt, extra_data, scene_id, character_ids）
+    - characters: 角色列表（包含 character_id, name, basic_info, appearance）
+    - scenes: 场景列表（包含 scene_id, title, location, time_setting, atmosphere）
+  - **重要**: 使用此工具一次性获取所有信息！
 
 ### 提示词模板工具
-- **get_shot_image_prompt_template**: 获取图片提示词模板
-  - 参数: template_type="regenerate", frame_type="start"/"end"/"both"
+- **get_prompt_template**: 获取提示词模板（统一接口）
+  - 参数:
+    - template_type: "character"/"scene"/"shot"
+    - operation: "regenerate"/"modify"（可选，默认 regenerate）
+    - frame_type: "start"/"end"/"both"（仅 shot 类型需要）
   - 返回: 提示词生成模板
+    - 当 frame_type="both" 时，返回包含两个模板：{"start": "首帧模板", "end": "尾帧模板"}
+    - 需要分别使用这两个模板生成首尾帧提示词
+  - **说明**: 使用统一接口获取不同类型资源的提示词模板
 
-- **get_shot_video_prompt_template**: 获取视频提示词模板
-  - 参数: template_type="regenerate"
-  - 返回: 提示词生成模板
-
-- **get_visual_style_guide**: 获取视觉风格指南
-  - 参数: visual_style_key
-  - 返回: 风格描述
 
 ### 知识库工具（仅视频提示词需要）
 - **query_knowledge_for_video**: 查询视频知识库
@@ -189,22 +187,49 @@
 - 生成图片前确保有提示词（没有的话要先生成）
 - 生成视频前确保有视频提示词和首帧图片（没有的话要先生成）
 
-### Step 2: 获取分镜信息
-- **全部分镜**：调用 query_shots 获取所有分镜列表
-- **单个分镜**：调用 query_shots 获取列表，找到匹配的分镜，再调用 query_single_shot 获取详情
+### Step 2: 获取分镜信息（使用 query_all_shots）
+- **统一调用 query_all_shots**：一次性获取所有分镜、角色、场景信息
+- 从返回结果中提取需要的信息：
+  - shots: 分镜列表
+  - characters: 角色信息（通过 character_ids 关联）
+  - scenes: 场景信息（通过 scene_id 关联）
+- **禁止**逐个调用 query_single_shot 或 query_single_character，这会导致迭代次数超限！
 
 ### Step 3: 执行操作
 
-#### 全部分镜提示词生成
-1. 调用 query_shots 获取所有分镜
-2. 遍历每个分镜：
-   - 调用 query_single_shot 获取详情
-   - 判断提示词类型（图片/视频）
-   - 调用 get_shot_image_prompt_template 或 get_shot_video_prompt_template 获取模板
-   - 查询知识库（仅视频提示词）
-   - **Node 自身生成提示词**
-   - 调用 save_shot_image_prompt 或 save_shot_video_prompt 保存
-3. 统计成功数量，汇报结果
+#### ⚠️ 全部分镜图片提示词生成（强制使用批量工具）
+
+**【重要】必须使用 batch_save_shot_image_prompts 批量保存！**
+
+禁止逐个调用 save_shot_image_prompt，这会导致 ReAct 迭代次数超限！
+
+**正确流程**：
+1. 调用 **query_all_shots** 一次性获取所有分镜、角色、场景信息
+2. **检测已有提示词的分镜**：检查 `image_prompt` 和 `extra_data.start_frame_image_prompt` 字段
+3. **批量生成并保存提示词**（默认 frame_type="both"）：
+   - 调用 **get_prompt_template** 获取模板（template_type="shot", frame_type="both"）
+   - 返回的模板包含两个部分：`template_content.start` 和 `template_content.end`
+   - 使用 `template_content.start` 生成首帧提示词
+   - 使用 `template_content.end` 生成尾帧提示词
+   - 调用 **batch_save_shot_image_prompts** 批量保存所有提示词
+   - 参数: `prompts_data=[{"shot_id": id1, "prompt": "首帧提示词内容", "frame_type": "start"}, {"shot_id": id1, "prompt": "尾帧提示词内容", "frame_type": "end"}, ...]`
+   - **注意**：首次生成默认使用 "both"，同时生成首尾帧提示词
+4. 统计结果："生成了 X 个，跳过了 Y 个（已有提示词）"
+
+---
+
+#### ⚠️ 全部分镜视频提示词生成（强制使用批量工具）
+
+**【重要】必须使用 batch_save_shot_video_prompts 批量保存！**
+
+**正确流程**：
+1. 调用 **query_all_shots** 一次性获取所有分镜、角色、场景信息
+2. **检测已有视频提示词的分镜**：检查 `extra_data.video_prompt` 字段
+3. **批量生成并保存提示词**：
+   - 对于没有视频提示词的分镜，使用模板生成提示词（使用 query_all_shots 返回的信息）
+   - 调用 **batch_save_shot_video_prompts** 批量保存所有提示词
+   - 参数: `prompts_data=[{"shot_id": id1, "prompt": prompt1}, ...]`
+4. 统计结果："生成了 X 个，跳过了 Y 个（已有提示词）"
 
 #### 单个分镜提示词生成
 1. 调用 query_single_shot 获取分镜详情
@@ -215,25 +240,32 @@
 6. 调用 save_shot_image_prompt 或 save_shot_video_prompt 保存
 7. 汇报结果
 
-#### 全部分镜图片生成（重要：必须先有提示词，跳过已存在的图片）
-**【重要】全部生成图片时，必须先有提示词，且跳过已有图片的分镜！**
+#### ⚠️ 全部分镜图片生成（强制使用批量工具，必须先有提示词）
 
-1. 调用 query_shots 获取所有分镜，**检查提示词和图片状态**
+**【重要】必须使用 batch_submit_shot_images 批量提交！**
+
+禁止逐个调用 submit_shot_image_regeneration，这会导致 ReAct 迭代次数超限！
+
+**正确流程**：
+1. 调用 **query_all_shots** 一次性获取所有分镜、角色、场景信息，**检查提示词和图片状态**
    - 检查 `image_prompt` / `extra_data.start_frame_image_prompt`：是否有提示词
    - 检查 `image_url` 字段：是否已有图片
 2. **分类处理**：
    - **已有图片的分镜** → 跳过，记录到 "skipped_image_exists"
    - **没有提示词的分镜** → 记录到 "missing_prompt"
-   - **有提示词但没有图片的分镜** → 进入下一步生成
+   - **有提示词但没有图片的分镜** → 收集到 need_generate 列表
 3. **如果有分镜没有提示词**：
    - **停止图片生成**
    - 告知用户："部分分镜还没有提示词，需要先生成提示词"
-   - 建议用户先执行："生成全部分镜提示词"
-4. **批量提交图片生成任务（仅针对有提示词且无图片的分镜）**：
-   - 批量调用 submit_shot_image_regeneration 提交任务，收集 task_ids
-   - 调用 query_generation_tasks_status 等待所有任务完成
-   - 统计成功/失败数量，汇报结果
-   - **告知用户："生成了 X 个，跳过了 Y 个（已有图片），Z 个缺少提示词"**
+4. **批量提交图片生成任务（关键步骤）**（默认 frame_type="both"）：
+   - 调用 **batch_submit_shot_images** 一次性提交所有任务
+   - 参数: `shot_ids=[id1, id2, ...]`, `creation_uuid`, `frame_type="both"`
+   - 返回: `task_ids` 列表
+   - **注意**：首次生成默认使用 "both"，同时生成首尾帧图片
+5. **查询任务状态（阻塞等待完成）**：
+   - 调用 **query_generation_tasks_status**
+   - 参数: `task_ids`, `timeout=1000`, `poll_interval=2.0`
+6. 汇报结果："生成了 X 个，跳过了 Y 个（已有图片），Z 个缺少提示词"
 
 #### 全部分镜视频生成（不支持）
 **【重要】不支持 "生成全部分镜视频" 操作！**
@@ -271,13 +303,29 @@
 4. 调用 query_generation_tasks_status 等待任务完成
 5. 汇报结果
 
-#### 全部分镜视频生成
-1. 调用 query_shots 获取所有分镜
-2. 检查每个分镜的视频提示词，没有的先生成
-3. 检查每个分镜的首帧图片，没有的先生成
-4. 批量调用 submit_shot_video_regeneration 提交所有任务，收集 task_ids
-5. 调用 query_generation_tasks_status 等待所有任务完成
-6. 统计成功/失败数量，汇报结果
+#### ⚠️ 全部分镜视频生成（强制使用批量工具）
+
+**【重要】必须使用 batch_submit_shot_videos 批量提交！**
+
+禁止逐个调用 submit_shot_video_regeneration，这会导致 ReAct 迭代次数超限！
+
+**正确流程**：
+1. 调用 **query_all_shots** 一次性获取所有分镜、角色、场景信息
+2. **检查每个分镜的视频提示词和首帧图片**：
+   - 检查 `extra_data.video_prompt`：是否有视频提示词
+   - 检查 `image_url`：是否有首帧图片
+3. **分类处理**：
+   - **已有视频的分镜** → 跳过
+   - **缺少提示词或首帧的分镜** → 记录到 "missing_prerequisites"
+   - **准备就绪的分镜** → 收集到 need_generate 列表
+4. **批量提交视频生成任务（关键步骤）**：
+   - 调用 **batch_submit_shot_videos** 一次性提交所有任务
+   - 参数: `shot_ids=[id1, id2, ...]`, `creation_uuid`, `generation_mode`
+   - 返回: `task_ids` 列表
+5. **查询任务状态（阻塞等待完成）**：
+   - 调用 **query_generation_tasks_status**
+   - 参数: `task_ids`, `timeout=1000`, `poll_interval=2.0`
+6. 汇报结果："生成了 X 个，跳过了 Y 个（已有视频），Z 个缺少前置条件"
 
 #### 单个分镜视频生成
 1. 调用 query_single_shot 获取分镜详情
@@ -350,20 +398,14 @@
 ❌ 错误：用户说"生成图片"，却直接返回而不等待任务完成  
 ✅ 正确：用户说"生成图片"时，必须调用 query_generation_tasks_status 等待任务完成
 
-❌ 错误：全部生成时，一个一个地查询任务状态  
-✅ 正确：全部生成时，收集所有 task_id，调用一次 query_generation_tasks_status 查询所有任务
+N查d  生成 → 部集所有 task_id，调用一次 query_generation_tasks_status 查询所有任务
 
-❌ 错误：生成视频前不检查首帧是否存在  
-✅ 正确：生成视频前，必须先确保首帧图片已生成
-
-❌ 错误：查询知识库时传整个 shot_description  
+❌ 错误：生成视频前不检查首N频先确 生成 → 
+：查询知识库时传整个 shot_description  
 ✅ 正确：自己分析提取 3-5 个关键词，用关键词查询
 
-## 重要约束
-
-1. **必须提供 creation_uuid**: 所有工具都需要 creation_uuid，从 state 中获取
-2. **Node 生成提示词**: 生成提示词时，**使用你自己的 LLM 能力**，不要调用外部生成工具
-3. **等待任务完成**: 生成图片/视频时，必须调用 query_generation_tasks_status 阻塞等待任务完成
+## **必须提供 → q ery都需c sus → 汇报结果e 中获取
+2. **Node 生成提示词**: 生成提示词时，**使用能力**，部 → q任ery*:成erus → 汇报结果eneration_tasks_status 阻塞等待任务完成
 4. **批量查询**: 全部生成时，收集所有 task_id 后统一查询状态，不要逐个查询
 5. **视频前置条件**: 生成视频前，必须确保视频提示词和首帧图片已存在
 6. **关键词查询**: 查询知识库时，自己提取关键词，不要传整个描述

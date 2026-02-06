@@ -86,9 +86,6 @@
   - 参数: template_type="regenerate" 或 "modify"
   - 返回: 提示词生成模板
 
-- **get_visual_style_guide**: 获取视觉风格指南
-  - 参数: visual_style_key
-  - 返回: 风格描述
 
 ### 保存工具
 - **save_scene_prompt**: 保存场景提示词

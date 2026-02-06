@@ -144,19 +144,81 @@ supervisor_decision(
 | INIT / SCRIPT_UPLOADED | 调度到 script_analyst |
 | SCRIPT_ANALYZED | 调度到 asset_designer（生成角色+场景） |
 | ASSETS_READY | **必须**暂停等待用户确认（不要重复生成角色场景！）|
-| STORYBOARD_READY | 调度到 asset_designer（生成分镜图片） |
-| VIDEO_READY / COMPLETED | 暂停确认或结束 |
+    | STORYBOARD_READY | 调度到 asset_designer（生成分镜图片） |
+| VIDEO_READY | **必须**暂停等待用户确认（分镜图片刚完成，需确认后再生成视频）|
+| COMPLETED | 结束或根据用户指令处理 |
 
 ### 2. 重要：用户说"继续"时
 
 根据当前阶段决定：
 - ASSETS_READY + "继续" → 调度到 storyboard_director（解析分镜）
 - STORYBOARD_READY + "继续" → 调度到 asset_designer（生成分镜图片）
-- VIDEO_READY/COMPLETED + "继续" → 确认完成
+- VIDEO_READY + "继续" → 调度到 video_editor（生成分镜视频）⚠️ **这是关键！**
+- COMPLETED + "继续" → 确认完成
 
 **绝对不要**在 ASSETS_READY 阶段重复调度到 asset_designer 生成角色场景！
 
-### 3. 资产重新生成
+### 4. VIDEO_READY 阶段的正确处理（关键！）
+
+当 production_stage=VIDEO_READY 时，分两种情况：
+
+**情况A：刚完成分镜图片生成，需要用户确认（worker_result 显示 asset_designer 刚完成）**
+```python
+supervisor_decision(
+    next_worker=None,
+    needs_input=True,
+    board_actions=[{{"type": "approve_reject", "message": "分镜图片生成完成，请确认后继续视频生成"}}],
+    response_text="分镜图片生成完成，请确认生成的分镜图片是否符合预期，确认后将继续生成分镜视频。"
+)
+```
+
+**情况B：用户确认后说"继续"、"确认"、"下一步"**
+```python
+if production_stage == "VIDEO_READY" and "继续" in user_message:
+    supervisor_decision(
+        next_worker="video_editor",
+        needs_input=False,
+        board_actions=[{{"type": "switch_view", "target": "preview"}}],
+        response_text="开始生成分镜视频...",
+        task_params='{{"user_intent": "生成分镜视频", "tasks": [{{"target": "shot_video", "actions": ["prompt", "video"], "scope": "all"}}]}}'
+    )
+```
+
+**重要区分规则**：
+- 如果 worker_result 显示 asset_designer 刚完成分镜图片生成 → **必须暂停确认**（情况A）
+- 如果用户主动说"继续"且没有 worker_result → 调度到 video_editor（情况B）
+
+### 5. 基于 worker_result 的智能决策（关键！）
+
+当 worker_result 有值时，说明某个 Worker 刚刚完成任务，你需要根据 Worker 类型决定下一步：
+
+| Worker 完成 | 你的决策 |
+|------------|---------|
+| script_analyst | 自动继续 → 调度 asset_designer 生成角色+场景 |
+| asset_designer（生成角色+场景） | **暂停确认** → needs_input=True, next_worker=None |
+| asset_designer（生成分镜图片） | **暂停确认** → needs_input=True, next_worker=None |
+| storyboard_director | 自动继续 → 调度 asset_designer 生成分镜图片 |
+| video_editor | **暂停确认** → needs_input=True, next_worker=None |
+| asset_regenerator | **暂停确认** → needs_input=True, next_worker=None |
+
+**判断 asset_designer 任务类型的方法**：
+- 查看 worker_result.production_stage：
+  - ASSETS_READY → 刚完成角色+场景生成
+  - VIDEO_READY → 刚完成**分镜图片**生成（需要暂停确认！）
+
+**重要区分：用户消息 vs Worker 结果**
+- `[Worker 刚完成: asset_designer]` 标记表示 Worker 刚刚执行完毕
+- `[用户消息]` 是用户之前发送的消息（如"确认"角色和场景）
+- **不要混淆**：用户说"确认"可能是确认之前的资产，不是确认 Worker 刚完成的分镜图片！
+
+**决策原则**：
+1. 如果看到 `[Worker 刚完成: asset_designer]` + production_stage=VIDEO_READY → **必须暂停确认**（needs_input=True）
+2. 即使用户消息是"确认"，只要 Worker 刚完成分镜图片生成，就要暂停等待用户**明确确认分镜图片**
+3. 只有当用户明确说"确认分镜"、"继续生成视频"等，才调度到 video_editor
+
+**重要：只要 worker_result.worker="asset_designer" 且 production_stage 变为 VIDEO_READY，就必须暂停确认，不要自动调度到 video_editor！**
+
+### 6. 资产重新生成
 
 当用户要求"重新生成"、"修改"、"优化"时 → 调度到 asset_regenerator
 
@@ -187,13 +249,29 @@ Worker 执行结果: {worker_result}
 4. 分镜图片生成完成后（必须用户确认）:
    supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "请确认生成的分镜图片，如有需要可重新生成"}}], response_text="分镜图片生成完成，请确认后继续视频生成。")
 
-5. 分镜视频生成完成后（必须用户确认）:
+5. **特殊情况：用户消息是"确认"但 Worker 刚完成分镜图片（最易出错！）**:
+   上下文示例：
+   ```
+   [Worker 刚完成: asset_designer]
+   所有分镜的首帧和尾帧图片都已成功生成！...
+   
+   [用户消息]
+   确认
+   ```
+   分析：用户说"确认"是在确认之前的角色和场景，不是确认刚完成的分镜图片！
+   正确决策：
+   supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "分镜图片已生成，请确认分镜图片是否符合预期"}}], response_text="分镜图片生成完成，请确认生成的分镜图片，确认后将继续生成分镜视频。")
+
+6. 用户确认分镜图片后继续生成视频（关键！）:
+   supervisor_decision(next_worker="video_editor", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'preview'}}], response_text="开始生成分镜视频...", task_params='{{"user_intent": "根据分镜首帧和尾帧图片生成分镜视频", "tasks": [{{"target": "shot_video", "actions": ["prompt", "video"], "scope": "all"}}]}}')
+
+7. 分镜视频生成完成后（必须用户确认）:
    supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": 'approve_reject', "message": "请确认生成的分镜视频"}}], response_text="分镜视频生成完成，漫剧创作已全部完成！")
 
-6. 用户要求重新生成某个资源（生成完成后确认）:
+8. 用户要求重新生成某个资源（生成完成后确认）:
    supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "重新生成完成，请确认"}}], response_text="重新生成完成，请确认后继续。")
 
-7. 用户要求重新生成某个资源（提交任务）:
+9. 用户要求重新生成某个资源（提交任务）:
    supervisor_decision(next_worker="asset_regenerator", needs_input=False, board_actions=[], response_text="正在重新生成...", task_params='{{"user_intent": "重新生成场景2的图片", "tasks": [{{"target": "scene", "actions": ["image"]}}]}}')
 
 ## task_params 参数说明
@@ -484,14 +562,21 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
         )
         
         # 构建上下文消息
+        # 重要：当 worker_result 存在时，说明 Worker 刚完成任务，需要 Supervisor 决策下一步
+        # 此时用户消息可能是之前的确认消息（如"确认"角色和场景），不应该和 Worker 结果混淆
         context_message = user_message
+        
+        # 格式化 worker_result 给 LLM（用于系统提示词中的 {worker_result} 占位符）
         if worker_result:
             worker_name = worker_result.get("worker", "unknown")
             worker_response = worker_result.get("response_text", "完成")
-            context_message = f"[Worker 执行结果]\nWorker: {worker_name}\n结果: {worker_response}\n\n[用户消息]\n{user_message}"
-        
-        # 格式化 worker_result 给 LLM
-        worker_result_str = "无" if not worker_result else f"{worker_result.get('worker')}: {worker_result.get('response_text', '完成')}"
+            worker_result_str = f"{worker_name}: {worker_response}"
+            
+            # 在 context_message 前面添加标记，帮助 LLM 理解上下文
+            # 但不要让用户消息看起来像是在确认 Worker 的结果
+            context_message = f"[Worker 刚完成: {worker_name}]\n{worker_response[:200]}...\n\n[用户消息]\n{user_message}"
+        else:
+            worker_result_str = "无"
         
         system_prompt = SUPERVISOR_SYSTEM_PROMPT.format(
             creation_uuid=creation_uuid or "未指定",
@@ -576,7 +661,8 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
 
         logger.info(f"[Node] supervisor: 完成，next_worker={next_worker}, task_params={task_params}")
         
-        return {
+        # 构建返回结果
+        result = {
             "messages": state_messages,
             "response_text": final_response,
             "production_cache": updated_cache,
@@ -587,6 +673,14 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
             "worker_result": None,  # 清空 worker 结果
             "updated_at": datetime.now().isoformat(),
         }
+        
+        # 如果 Worker 返回了新的 production_stage，更新到 state
+        if worker_result and "production_stage" in worker_result:
+            new_stage = worker_result["production_stage"]
+            result["production_stage"] = new_stage
+            logger.info(f"[Node] supervisor: 更新 production_stage -> {new_stage}")
+        
+        return result
         
     except Exception as e:
         logger.error(f"[Node] supervisor 错误: {e}")

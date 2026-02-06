@@ -248,6 +248,146 @@ async def get_shot_video_prompt_template() -> Dict[str, Any]:
 
 
 @tool
+async def get_prompt_template(
+    template_type: str,
+    operation: str = "regenerate",
+    frame_type: str = "both"
+) -> Dict[str, Any]:
+    """
+    获取提示词模板（统一接口）
+    
+    根据资源类型返回相应的提示词生成模板。
+    
+    Args:
+        template_type: 模板类型
+            - "character": 角色提示词模板
+            - "scene": 场景提示词模板
+            - "shot": 分镜提示词模板
+        operation: 操作类型
+            - "regenerate": 重新生成（默认）
+            - "modify": 修改提示词
+        frame_type: 帧类型（仅 shot 类型需要）
+            - "start": 首帧
+            - "end": 尾帧
+            - "both": 首帧和尾帧（默认）
+            
+    Returns:
+        {
+            "success": bool,
+            "template_type": str,
+            "operation": str,
+            "frame_type": str,  # 仅 shot 类型返回
+            "template_content": str,  # 或 Dict[str, str]
+            "description": str
+        }
+    """
+    logger.info(f"[Template Tool] 获取统一提示词模板: type={template_type}, operation={operation}, frame_type={frame_type}")
+    
+    try:
+        if template_type == "character":
+            if operation == "modify":
+                template_content = read_prompt_file("modify_prompt.md")
+                description = "角色提示词修改模板"
+            else:
+                template_content = read_prompt_file("regenerate_character.md")
+                description = "角色提示词生成模板（四视图）"
+                
+            return {
+                "success": True,
+                "template_type": template_type,
+                "operation": operation,
+                "template_content": template_content,
+                "description": description
+            }
+            
+        elif template_type == "scene":
+            if operation == "modify":
+                template_content = read_prompt_file("modify_prompt.md")
+                description = "场景提示词修改模板"
+            else:
+                template_content = read_prompt_file("regenerate_scene.md")
+                description = "场景提示词生成模板"
+                
+            return {
+                "success": True,
+                "template_type": template_type,
+                "operation": operation,
+                "template_content": template_content,
+                "description": description
+            }
+            
+        elif template_type == "shot":
+            if operation == "modify":
+                template_content = read_prompt_file("modify_prompt.md")
+                description = "分镜提示词修改模板"
+                return {
+                    "success": True,
+                    "template_type": template_type,
+                    "operation": operation,
+                    "frame_type": frame_type,
+                    "template_content": template_content,
+                    "description": description
+                }
+            else:
+                # 根据 frame_type 返回不同的模板
+                if frame_type == "start":
+                    template_content = read_prompt_file("regenerate_shot_start.md")
+                    description = "分镜首帧提示词模板"
+                elif frame_type == "end":
+                    template_content = read_prompt_file("regenerate_shot_end.md")
+                    description = "分镜尾帧提示词模板"
+                elif frame_type == "both":
+                    start_template = read_prompt_file("regenerate_shot_start.md")
+                    end_template = read_prompt_file("regenerate_shot_end.md")
+                    template_content = {
+                        "start": start_template,
+                        "end": end_template
+                    }
+                    description = "分镜首帧和尾帧提示词模板"
+                else:
+                    return {
+                        "success": False,
+                        "template_type": template_type,
+                        "operation": operation,
+                        "frame_type": frame_type,
+                        "template_content": "",
+                        "description": "",
+                        "error": f"不支持的帧类型: {frame_type}"
+                    }
+                    
+                return {
+                    "success": True,
+                    "template_type": template_type,
+                    "operation": operation,
+                    "frame_type": frame_type,
+                    "template_content": template_content,
+                    "description": description
+                }
+        else:
+            return {
+                "success": False,
+                "template_type": template_type,
+                "operation": operation,
+                "frame_type": frame_type,
+                "template_content": "",
+                "description": "",
+                "error": f"不支持的模板类型: {template_type}"
+            }
+            
+    except Exception as e:
+        logger.error(f"[Template Tool] 获取模板失败: {e}")
+        return {
+            "success": False,
+            "template_type": template_type,
+            "operation": operation,
+            "frame_type": frame_type,
+            "template_content": "",
+            "description": "",
+            "error": str(e)
+        }
+
+
+@tool
 async def get_visual_style_guide() -> Dict[str, Any]:
     """
     获取视觉风格指南
@@ -306,5 +446,5 @@ TEMPLATE_TOOLS = [
     get_scene_prompt_template,
     get_shot_image_prompt_template,
     get_shot_video_prompt_template,
-    get_visual_style_guide,
+    get_prompt_template,
 ]
