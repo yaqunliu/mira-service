@@ -220,7 +220,22 @@ class AssetGenerationWorkerNode(ReActWorkerNode):
 
         main_prompt += "\n" + "\n".join(task_descriptions)
 
-        if len(tasks) > 1:
+        # 检查是否有连续生成需求（prompt + image）
+        has_continuous_generation = False
+        for task in tasks:
+            actions = task.get("actions", [])
+            if "prompt" in actions and "image" in actions:
+                has_continuous_generation = True
+                break
+        
+        if has_continuous_generation:
+            main_prompt += "\n\n## ⚠️ 连续生成模式（关键！）\n"
+            main_prompt += "检测到需要同时生成提示词和图片，你必须：\n"
+            main_prompt += "1. **首先完成所有提示词的生成和保存**（使用 batch_save_shot_image_prompts）\n"
+            main_prompt += "2. **然后立即继续生成所有图片**（使用 batch_submit_shot_images）\n"
+            main_prompt += "3. **不要中途停止或返回**，必须连续完成两个步骤！\n"
+            main_prompt += "4. 最后汇报完整的生成结果（提示词生成情况 + 图片生成情况）"
+        elif len(tasks) > 1:
             main_prompt += "\n\n## 执行顺序（重要）\n必须按顺序执行：先完成所有提示词生成，再进行所有图片/视频生成。"
 
         main_prompt += "\n".join(prompt_parts)

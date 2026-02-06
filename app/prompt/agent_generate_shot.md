@@ -240,6 +240,37 @@
 6. 调用 save_shot_image_prompt 或 save_shot_video_prompt 保存
 7. 汇报结果
 
+#### ⚠️ 全部分镜提示词+图片连续生成（强制使用批量工具）
+
+**【重要】当需要同时生成提示词和图片时，必须连续执行以下两个步骤！**
+
+**步骤1：批量生成并保存提示词**
+1. 调用 **query_all_shots** 一次性获取所有分镜、角色、场景信息
+2. **检测已有提示词的分镜**：检查 `image_prompt` 和 `extra_data.start_frame_image_prompt` 字段
+3. **批量生成并保存提示词**（默认 frame_type="both"）：
+   - 调用 **get_prompt_template** 获取模板（template_type="shot", frame_type="both"）
+   - 使用 `template_content.start` 生成首帧提示词
+   - 使用 `template_content.end` 生成尾帧提示词
+   - 调用 **batch_save_shot_image_prompts** 批量保存所有提示词
+4. 统计提示词生成结果
+
+**步骤2：批量生成图片（必须在提示词保存完成后执行）**
+1. 再次调用 **query_all_shots** 获取最新状态（确认提示词已保存）
+2. **检查提示词和图片状态**：
+   - 检查 `image_prompt` / `extra_data.start_frame_image_prompt`：是否有提示词
+   - 检查 `image_url` 字段：是否已有图片
+3. **分类处理**：
+   - **已有图片的分镜** → 跳过
+   - **有提示词但没有图片的分镜** → 收集到 need_generate 列表
+4. **批量提交图片生成任务**：
+   - 调用 **batch_submit_shot_images** 一次性提交所有任务
+   - 参数: `shot_ids=[id1, id2, ...]`, `creation_uuid`, `frame_type="both"`
+5. **查询任务状态（阻塞等待完成）**：
+   - 调用 **query_generation_tasks_status** 等待所有图片生成完成
+6. 汇报最终结果："生成了 X 个分镜的图片（包含首尾帧）"
+
+---
+
 #### ⚠️ 全部分镜图片生成（强制使用批量工具，必须先有提示词）
 
 **【重要】必须使用 batch_submit_shot_images 批量提交！**
@@ -353,6 +384,7 @@
 | "生成视频提示词"、"生成生视频提示词"、"生成运镜提示词" | 生成视频提示词 | Node 生成 → save_shot_video_prompt |
 | "生成图片"、"生成图像"、"生图"、"生成分镜图" | 生成图片 | submit → query_status → 汇报结果 |
 | "生成视频"、"生视频"、"生成动态视频" | 生成视频 | submit → query_status → 汇报结果 |
+| "生成提示词和图片"、"生成提示词+图片"、"提示词和图片一起生成" | **连续生成** | **先执行"全部分镜图片提示词生成"流程，完成后立即执行"全部分镜图片生成"流程** |
 
 ### 范围判断
 
