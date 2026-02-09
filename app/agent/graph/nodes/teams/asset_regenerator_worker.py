@@ -125,30 +125,74 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
         """
         user_message = state.get("user_message", "")
         creation_uuid = state.get("creation_uuid", "")
+        
+        logger.info("=" * 80)
+        logger.info("[ASSET_REGENERATOR] ========== 开始构建系统提示词 ==========")
+        logger.info(f"[ASSET_REGENERATOR] 输入状态:")
+        logger.info(f"  - user_message: {user_message}")
+        logger.info(f"  - creation_uuid: {creation_uuid}")
 
         supervisor_params = self._get_supervisor_params(state)
         if supervisor_params:
             tasks = self._parse_tasks_from_params(supervisor_params)
             task = tasks[0] if tasks else {}
+            
+            logger.info(f"[ASSET_REGENERATOR] Supervisor 参数:")
+            logger.info(f"  - supervisor_params: {supervisor_params}")
+            logger.info(f"  - parsed_task: {task}")
 
             target_type = task.get("target", "shot")
             target_id = task.get("target_id")
             action = task.get("action", "regenerate")
             frame_type = task.get("frame_type", "both")
+            
+            # 【关键】检查 actions 字段来确定操作类型
+            actions = task.get("actions", [])
+            logger.info(f"[ASSET_REGENERATOR] Actions 分析:")
+            logger.info(f"  - raw_actions: {actions}")
+            logger.info(f"  - 'prompt' in actions: {'prompt' in actions}")
+            logger.info(f"  - 'image' in actions: {'image' in actions}")
+            logger.info(f"  - 'video' in actions: {'video' in actions}")
+            
+            if "prompt" in actions and "image" not in actions:
+                # 只生成提示词
+                operation_type = "generate_prompt"
+                logger.info(f"[ASSET_REGENERATOR] 决策: 只生成提示词 (operation_type=generate_prompt)")
+            elif "image" in actions and "prompt" not in actions:
+                # 只生成图片
+                operation_type = "generate_image"
+                logger.info(f"[ASSET_REGENERATOR] 决策: 只生成图片 (operation_type=generate_image)")
+            elif "prompt" in actions and "image" in actions:
+                # 同时生成提示词和图片
+                operation_type = "generate_image"  # 以图片为主，但会连续生成
+                logger.info(f"[ASSET_REGENERATOR] 决策: 同时生成提示词和图片 (operation_type=generate_image)")
+            elif "video" in actions:
+                operation_type = "generate_video"
+                logger.info(f"[ASSET_REGENERATOR] 决策: 生成视频 (operation_type=generate_video)")
+            else:
+                # 默认根据 action 判断
+                operation_type = {
+                    "regenerate": "generate_image",
+                    "modify_prompt": "modify_prompt",
+                }.get(action, "generate_image")
+                logger.info(f"[ASSET_REGENERATOR] 决策: 根据 action 判断 (action={action}, operation_type={operation_type})")
 
-            logger.info(f"[AssetRegenerator] 使用 Supervisor 参数: target={target_type}, id={target_id}, action={action}, frame={frame_type}")
-
-            # 获取操作类型描述
-            operation_type = {
-                "regenerate": "generate_image",
-                "modify_prompt": "modify_prompt",
-            }.get(action, "generate_image")
+            logger.info(f"[ASSET_REGENERATOR] 最终参数:")
+            logger.info(f"  - target_type: {target_type}")
+            logger.info(f"  - target_id: {target_id}")
+            logger.info(f"  - operation_type: {operation_type}")
+            logger.info(f"  - frame_type: {frame_type}")
         else:
+            logger.info(f"[ASSET_REGENERATOR] 无 Supervisor 参数，使用关键词检测")
             target_type = self._detect_target_type(user_message)
             operation_type = self._detect_operation_type(user_message)
             frame_type = self._detect_frame_type(user_message) if target_type == "shot" else "both"
             target_id = self._extract_target_id(user_message)
-            logger.info(f"[AssetRegenerator] 使用关键词检测: target={target_type}, op={operation_type}, frame={frame_type}, id={target_id}")
+            logger.info(f"[ASSET_REGENERATOR] 关键词检测结果:")
+            logger.info(f"  - target_type: {target_type}")
+            logger.info(f"  - operation_type: {operation_type}")
+            logger.info(f"  - frame_type: {frame_type}")
+            logger.info(f"  - target_id: {target_id}")
 
         # 构建系统提示词
         tool_guide = self._get_tool_usage_guide(target_type, operation_type, frame_type, target_id, creation_uuid)
@@ -316,21 +360,27 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 用户操作类型: {mapped_op_type} ({operation_type})
 检测到的帧类型: {frame_type}{target_id_info}
 视觉风格: {visual_style}
+创作 UUID: {creation_uuid or "未指定"}
 
 你作为中央协调器，需要按顺序调用以下工具完成任务：
+
+【重要】所有查询工具都需要 creation_uuid 参数，必须使用: {creation_uuid}
 
 """
         
         if target_type == "character":
             if operation_type == "image":
                 # 用户明确要求生成图片 - 使用旧的直接提交工具
-                guide = base_guide + """
+                guide = base_guide + f"""
 ### 角色图片生成流程（直接提交并等待完成）
 
 **Step 1: 获取角色信息**
 - 工具: `query_characters`
-- 参数: creation_uuid
+- 参数: 
+  - creation_uuid: "{creation_uuid}"  【必须使用这个值！】
+  - include_images: true
 - 说明: 获取角色列表，找到匹配的角色名
+- 【重要】creation_uuid 必须使用系统提供的值: {creation_uuid}
 
 **Step 2: 提交图片生成任务**
 - 工具: `submit_character_image_regeneration`
@@ -366,11 +416,31 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
                 guide = base_guide + """
 ### 角色提示词生成流程（Node 生成）
 
-**Step 1: 获取角色信息**
+**Step 1: 获取角色信息（关键！）**
+"""
+                if target_id:
+                    guide += """
 - 工具: `query_single_character`
-- 参数: character_id
+- 参数: character_id={target_id}
+- 说明: 获取角色的完整信息
+"""
+                else:
+                    guide += f"""
+- **从用户消息中提取角色名**（如"张磊"、"阿九"）
+- 工具: `query_characters`
+- 参数: 
+  - creation_uuid: "{creation_uuid}"  【必须使用这个值！】
+  - include_images: true
+- 说明: 获取角色列表
+- **关键：在返回的列表中找到匹配的角色名，获取 character_id**
+- 工具: `query_single_character`
+- 参数: character_id（从上一步获取）
 - 说明: 获取角色的完整信息
 
+**重要**：target_id 未指定时，必须先提取角色名，查询列表，找到匹配项，然后继续！
+**【关键】creation_uuid 必须使用系统提供的值: {creation_uuid}**
+"""
+                guide += """
 **Step 2: 获取提示词模板**
 - 工具: `get_character_prompt_template`
 - 参数: template_type="regenerate"
@@ -920,7 +990,16 @@ frame_type 自动检测规则：
         
         统计各步骤执行情况，构建响应
         """
-        logger.info(f"[{self.node_name}] 处理结果，工具调用次数: {len(tool_results)}")
+        logger.info("=" * 80)
+        logger.info(f"[ASSET_REGENERATOR] ========== 处理结果 ==========")
+        logger.info(f"[ASSET_REGENERATOR] 工具调用次数: {len(tool_results)}")
+        
+        # 详细记录每个工具调用
+        for i, result in enumerate(tool_results, 1):
+            tool_name = result.get("tool", "unknown")
+            tool_result = result.get("result", {})
+            logger.info(f"[ASSET_REGENERATOR] 工具调用 {i}: {tool_name}")
+            logger.info(f"  - 结果: {tool_result}")
         
         # 分类统计
         query_count = 0
@@ -998,7 +1077,7 @@ frame_type 自动检测规则：
                 
                 response_text += f"{i}. {status} {tool_name}{detail}\n"
         
-        return {
+        result = {
             "success": success_count > 0 and failed_count == 0,
             "response_text": response_text,
             "success_count": success_count,
@@ -1012,6 +1091,17 @@ frame_type 自动检测规则：
                 "response_text": response_text,
             },
         }
+        
+        logger.info(f"[ASSET_REGENERATOR] ========== 完成处理 ==========")
+        logger.info(f"[ASSET_REGENERATOR] 返回结果:")
+        logger.info(f"  - success: {result['success']}")
+        logger.info(f"  - success_count: {success_count}")
+        logger.info(f"  - failed_count: {failed_count}")
+        logger.info(f"  - response_text: {response_text[:100]}...")
+        logger.info(f"  - worker: {result['worker_result']['worker']}")
+        logger.info("=" * 80)
+        
+        return result
 
 
 # 便捷函数

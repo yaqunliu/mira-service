@@ -154,7 +154,7 @@ supervisor_decision(
 - ASSETS_READY + "继续" → 调度到 storyboard_director（解析分镜）
 - STORYBOARD_READY + "继续" → 调度到 asset_designer（生成分镜图片）
 - VIDEO_READY + "继续" → 调度到 video_editor（生成分镜视频）⚠️ **这是关键！**
-- COMPLETED + "继续"/"确认" → **创作已完成**，不要调度任何 Worker，等待用户指令
+- COMPLETED + "继续"/"确认" → **创作已完成**，设置 needs_input=False，结束对话
 
 **绝对不要**在 ASSETS_READY 阶段重复调度到 asset_designer 生成角色场景！
 
@@ -207,9 +207,10 @@ if production_stage == "VIDEO_READY" and "继续" in user_message:
   - VIDEO_READY → 刚完成**分镜图片**生成（需要暂停确认！）
 
 **重要区分：用户消息 vs Worker 结果**
-- `[Worker 刚完成: asset_designer]` 标记表示 Worker 刚刚执行完毕
-- `[用户消息]` 是用户之前发送的消息（如"确认"角色和场景）
-- **不要混淆**：用户说"确认"可能是确认之前的资产，不是确认 Worker 刚完成的分镜图片！
+- `[Worker 刚完成: XXX]` 标记表示 Worker 刚刚执行完毕
+- `[用户消息]` 是用户之前发送的消息
+- **关键判断**：如果看到 `[Worker 刚完成: asset_regenerator]`，说明重新生成已完成，**必须暂停确认**，不要再次调度到 asset_regenerator！
+- **不要混淆**：用户说"重新生成..."是发起新任务，但 `[Worker 刚完成: asset_regenerator]` 表示任务已完成，需要确认结果
 
 **决策原则**：
 1. 如果看到 `[Worker 刚完成: asset_designer]` + production_stage=VIDEO_READY → **必须暂停确认**（needs_input=True）
@@ -268,14 +269,22 @@ Worker 执行结果: {worker_result}
 7. 分镜视频生成完成后（必须用户确认）:
    supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": 'approve_reject', "message": "请确认生成的分镜视频"}}], response_text="分镜视频生成完成，漫剧创作已全部完成！")
 
-8. **COMPLETED 阶段用户确认后（结束流程）**:
-   当 production_stage="COMPLETED" 且用户说"确认"、"完成"、"结束"时，表示创作已完成：
-   supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "漫剧创作已全部完成！是否导出最终视频？"}}], response_text="恭喜！您的漫剧创作已全部完成。您可以导出最终视频或继续调整。")
+8. **COMPLETED 阶段用户确认后（真正结束！）**:
+   当 production_stage="COMPLETED" 且用户说"确认"、"完成"、"结束"时，创作已真正完成：
+   supervisor_decision(next_worker=None, needs_input=False, board_actions=[{{"type": "complete", "message": "创作已完成"}}], response_text="恭喜！您的漫剧创作已全部完成。您可以随时导出最终视频。")
+   
+   **关键**：COMPLETED 阶段用户确认后，应该设置 needs_input=False，表示流程已结束，不要再询问用户！
 
-9. 用户要求重新生成某个资源（生成完成后确认）:
-   supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "重新生成完成，请确认"}}], response_text="重新生成完成，请确认后继续。")
+9. **worker_result 显示 asset_regenerator 刚完成重新生成（关键！）**:
+   当 worker_result.worker="asset_regenerator" 时，说明重新生成已完成，**必须暂停确认**：
+   supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "重新生成完成，请确认结果"}}], response_text="重新生成完成，请确认生成的结果是否符合预期。")
 
-9. 用户要求重新生成某个资源（提交任务）:
+   **具体场景示例**：
+   - 上下文消息: `[Worker 刚完成: asset_regenerator]\n执行完成！...\n\n[用户消息]\n重新生成角色张磊的提示词`
+   - 你的决策: supervisor_decision(next_worker=None, needs_input=True, ...)  【暂停确认，不要调度到 asset_regenerator！】
+   - **关键**：虽然用户消息说"重新生成"，但 `[Worker 刚完成: asset_regenerator]` 表示任务已完成，需要等待用户确认结果
+
+10. 用户要求重新生成某个资源（提交任务）:
    supervisor_decision(next_worker="asset_regenerator", needs_input=False, board_actions=[], response_text="正在重新生成...", task_params='{{"user_intent": "重新生成场景2的图片", "tasks": [{{"target": "scene", "actions": ["image"]}}]}}')
 
 ## task_params 参数说明
@@ -535,7 +544,8 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
     Returns:
         更新后的状态
     """
-    logger.info("[Node] supervisor: 开始处理（单次决策模式）")
+    logger.info("=" * 80)
+    logger.info("[SUPERVISOR] ========== 开始处理 ==========")
     
     creation_uuid = state.get("creation_uuid")
     user_message = state.get("user_message", "")
@@ -544,10 +554,22 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
     detected_intent = state.get("detected_intent", "")
     intent_details = state.get("intent_details", {})
     
+    logger.info(f"[SUPERVISOR] 输入状态:")
+    logger.info(f"  - creation_uuid: {creation_uuid}")
+    logger.info(f"  - user_message: {user_message}")
+    logger.info(f"  - production_stage: {production_stage}")
+    logger.info(f"  - detected_intent: {detected_intent}")
+    logger.info(f"  - intent_details: {intent_details}")
+    
     # Worker 返回的结果（用于决定下一步）
     worker_result = state.get("worker_result")
     if worker_result:
-        logger.info(f"[Node] supervisor: 收到 Worker 返回: {worker_result.get('worker')}")
+        logger.info(f"[SUPERVISOR] 收到 Worker 返回:")
+        logger.info(f"  - worker: {worker_result.get('worker')}")
+        logger.info(f"  - response_text: {worker_result.get('response_text', '完成')[:100]}...")
+        logger.info(f"  - production_stage: {worker_result.get('production_stage')}")
+    else:
+        logger.info(f"[SUPERVISOR] 无 Worker 返回（用户新消息）")
     
     try:
         # ===== LLM 智能决策：分析 worker_result 并决定下一步 =====
@@ -619,21 +641,32 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
                     board_actions = tool_args.get("board_actions", [])
                     final_response = tool_args.get("response_text", "")
                     task_params = tool_args.get("task_params")
+                    
+                    logger.info(f"[SUPERVISOR] LLM 决策结果:")
+                    logger.info(f"  - next_worker: {next_worker}")
+                    logger.info(f"  - needs_input: {needs_input}")
+                    logger.info(f"  - response_text: {final_response[:100]}...")
+                    logger.info(f"  - board_actions: {board_actions}")
+                    
                     if task_params:
                         import json
                         if isinstance(task_params, str):
                             try:
                                 task_params = json.loads(task_params)
                             except json.JSONDecodeError as e:
+                                logger.error(f"[SUPERVISOR] task_params JSON 解析失败: {e}")
                                 task_params = None
-                            
+                        
                         # 保存解析后的 task_params
                         state["task_params"] = task_params
-                    # 调试日志
-                    logger.info(f"[Node] supervisor: 工具返回的原始 args_keys: {list(tool_args.keys())}")
-                    logger.info(f"[Node] supervisor: task_params 类型: {type(task_params)}, 值: {repr(task_params)[:300]}")
-
-                    logger.info(f"[Node] supervisor: 智能决策 -> next_worker={next_worker}, needs_input={needs_input}, board_actions={board_actions}, task_params={task_params}")
+                        logger.info(f"[SUPERVISOR] task_params: {task_params}")
+                    else:
+                        logger.info(f"[SUPERVISOR] 无 task_params")
+                    
+                    # 关键决策检查
+                    if worker_result and worker_result.get('worker') == 'asset_regenerator' and next_worker == 'asset_regenerator':
+                        logger.warning(f"[SUPERVISOR] ⚠️ 警告: asset_regenerator 完成后又调度到 asset_regenerator，可能导致循环！")
+                    
                     break
                     
                 elif tool_name == "query_production_status":
@@ -663,8 +696,6 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
         state_messages = list(state.get("messages", []))
         state_messages.append(assistant_message)
 
-        logger.info(f"[Node] supervisor: 完成，next_worker={next_worker}, task_params={task_params}")
-        
         # 构建返回结果
         result = {
             "messages": state_messages,
@@ -682,7 +713,16 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
         if worker_result and "production_stage" in worker_result:
             new_stage = worker_result["production_stage"]
             result["production_stage"] = new_stage
-            logger.info(f"[Node] supervisor: 更新 production_stage -> {new_stage}")
+        
+        logger.info(f"[SUPERVISOR] ========== 完成处理 ==========")
+        logger.info(f"[SUPERVISOR] 输出结果:")
+        logger.info(f"  - next_worker: {next_worker}")
+        logger.info(f"  - needs_input: {needs_input}")
+        logger.info(f"  - response_text: {final_response[:100]}...")
+        logger.info(f"  - task_params: {task_params}")
+        if worker_result and "production_stage" in worker_result:
+            logger.info(f"  - production_stage 更新: {worker_result['production_stage']}")
+        logger.info("=" * 80)
         
         return result
         

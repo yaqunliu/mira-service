@@ -107,17 +107,23 @@ class ReActWorkerNode(ABC):
                 if not response.tool_calls:
                     final_response = response.content
                     logger.info(f"[{self.node_name}] LLM 直接回答，无工具调用")
+                    logger.info(f"[{self.node_name}] 回答内容: {final_response[:200]}...")
                     break
                 
                 # 执行工具调用
+                logger.info(f"[{self.node_name}] LLM 请求调用 {len(response.tool_calls)} 个工具")
                 for tool_call in response.tool_calls:
                     tool_name = tool_call["name"]
                     tool_args = tool_call["args"]
                     tool_id = tool_call["id"]
                     
                     logger.info(f"[{self.node_name}] 调用工具 {tool_name}")
+                    logger.info(f"[{self.node_name}] 工具参数: {tool_args}")
                     
                     tool_result = await self._execute_tool(tools, tool_name, tool_args)
+                    logger.info(f"[{self.node_name}] 工具 {tool_name} 执行完成")
+                    logger.info(f"[{self.node_name}] 工具结果: {str(tool_result)[:200]}...")
+                    
                     tool_results.append({
                         "tool": tool_name,
                         "args": tool_args,

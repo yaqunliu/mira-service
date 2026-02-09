@@ -89,12 +89,12 @@ def read_prompt_file(filename: str) -> str:
     
     if not prompt_file.exists():
         error_msg = f"Prompt 文件不存在: {filename} (searched in {prompt_file})"
-        logger.error(error_msg)
+        # logger.error(error_msg)
         raise FileNotFoundError(error_msg)
     try:
         with open(prompt_file, 'r', encoding='utf-8') as f:
             content = f.read()
-        logger.debug(f"成功读取 prompt 文件: {prompt_file.name}")
+        # logger.debug(f"成功读取 prompt 文件: {prompt_file.name}")
         return content
     except Exception as e:
         error_msg = f"读取 prompt 文件失败: {prompt_file.name}, 错误: {str(e)}"

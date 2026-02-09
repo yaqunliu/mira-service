@@ -1,5 +1,5 @@
 """
-Regenerate Worker Tools - 资产重新生成 Worker 专用工具
+Regenerate Worker Tools - 资产生成 Worker 专用工具
 
 提供原子化的查询和提交工具，供 AssetRegeneratorWorkerNode 使用。
 所有提示词生成均使用模板文件，不硬编码在代码中。
@@ -683,7 +683,7 @@ async def query_all_shots(creation_uuid: str) -> Dict[str, Any]:
     return await _get_all_shots_from_db(creation_uuid)
 
 
-# ==================== 提交重新生成 Tools ====================
+# ==================== 提交生成 Tools ====================
 
 @tool
 async def submit_character_image_regeneration(
@@ -692,9 +692,9 @@ async def submit_character_image_regeneration(
     mode: str = "auto",
 ) -> Dict[str, Any]:
     """
-    提交角色图片重新生成任务
+    提交角色图片生成任务
     
-    当用户要求重新生成角色图片时调用此工具。
+    当用户要求生成角色图片时调用此工具。
     
     Args:
         character_id: 角色ID
@@ -704,7 +704,7 @@ async def submit_character_image_regeneration(
     Returns:
         提交结果
     """
-    logger.info(f"[Submit Tool] 提交角色图片重新生成: character_id={character_id}")
+    logger.info(f"[Submit Tool] 提交角色图片生成: character_id={character_id}")
     
     result = await _execute_regeneration(
         target_type="character",
@@ -730,20 +730,20 @@ async def submit_character_prompt_regeneration(
     feedback: str = "",
 ) -> Dict[str, Any]:
     """
-    提交角色提示词重新生成/修改任务
+    提交角色提示词生成/修改任务
     
     使用模板文件生成提示词，不硬编码在代码中。
     
     Args:
         character_id: 角色ID
         creation_uuid: 创作项目UUID
-        operation_type: 操作类型 (regenerate-重新生成/modify-修改)
+        operation_type: 操作类型 (regenerate-生成/modify-修改)
         feedback: 修改意见（operation_type="modify"时必填）
         
     Returns:
         提交结果
     """
-    logger.info(f"[Submit Tool] 提交角色提示词重新生成: character_id={character_id}, operation={operation_type}")
+    logger.info(f"[Submit Tool] 提交角色提示词生成: character_id={character_id}, operation={operation_type}")
     
     # 查询角色信息
     char_result = await _get_character_from_db(character_id)
@@ -839,7 +839,7 @@ async def submit_scene_image_regeneration(
     creation_uuid: str,
 ) -> Dict[str, Any]:
     """
-    提交场景图片重新生成任务
+    提交场景图片生成任务
     
     Args:
         scene_id: 场景ID
@@ -848,7 +848,7 @@ async def submit_scene_image_regeneration(
     Returns:
         提交结果
     """
-    logger.info(f"[Submit Tool] 提交场景图片重新生成: scene_id={scene_id}")
+    logger.info(f"[Submit Tool] 提交场景图片生成: scene_id={scene_id}")
     
     result = await _execute_regeneration(
         target_type="scene",
@@ -874,14 +874,14 @@ async def submit_scene_prompt_regeneration(
     feedback: str = "",
 ) -> Dict[str, Any]:
     """
-    提交场景提示词重新生成/修改任务
+    提交场景提示词生成/修改任务
 
     使用模板文件生成提示词，不硬编码在代码中。
 
     Args:
         scene_id: 场景ID
         creation_uuid: 创作项目UUID
-        operation_type: 操作类型 (regenerate-重新生成/modify-修改)
+        operation_type: 操作类型 (regenerate-生成/modify-修改)
         feedback: 修改意见（operation_type="modify"时必填）
 
     Returns:
@@ -889,7 +889,7 @@ async def submit_scene_prompt_regeneration(
     """
     # 添加入口日志
     logger.info(f"[submit_scene_prompt_regeneration] 被调用: scene_id={scene_id}, operation_type={operation_type}, feedback={feedback}")
-    logger.info(f"[Submit Tool] 提交场景提示词重新生成: scene_id={scene_id}, operation={operation_type}")
+    logger.info(f"[Submit Tool] 提交场景提示词生成: scene_id={scene_id}, operation={operation_type}")
     
     # 查询场景信息
     scene_result = await _get_scene_from_db(scene_id)
@@ -1004,7 +1004,7 @@ async def submit_shot_image_regeneration(
     frame_type: str = "both",
 ) -> Dict[str, Any]:
     """
-    提交分镜图片重新生成任务
+    提交分镜图片生成任务
     
     Args:
         shot_id: 分镜ID
@@ -1014,7 +1014,7 @@ async def submit_shot_image_regeneration(
     Returns:
         提交结果
     """
-    logger.info(f"[Submit Tool] 提交分镜图片重新生成: shot_id={shot_id}, frame_type={frame_type}")
+    logger.info(f"[Submit Tool] 提交分镜图片生成: shot_id={shot_id}, frame_type={frame_type}")
     
     results = []
     
@@ -1058,7 +1058,7 @@ async def submit_shot_prompt_regeneration(
     feedback: str = "",
 ) -> Dict[str, Any]:
     """
-    提交分镜提示词重新生成/修改任务
+    提交分镜提示词生成/修改任务
     
     使用模板文件生成提示词。
     
@@ -1067,13 +1067,13 @@ async def submit_shot_prompt_regeneration(
         creation_uuid: 创作项目UUID
         prompt_type: 提示词类型 "image"(图片) 或 "video"(视频)
         frame_type: 帧类型 "start"(首帧)/"end"(尾帧)/"both"(全部)
-        operation_type: 操作类型 "regenerate"(重新生成)/"modify"(修改)
+        operation_type: 操作类型 "regenerate"(生成)/"modify"(修改)
         feedback: 修改意见（operation_type="modify"时必填）
         
     Returns:
         提交结果
     """
-    logger.info(f"[Submit Tool] 提交分镜提示词重新生成: shot_id={shot_id}, prompt_type={prompt_type}, operation={operation_type}")
+    logger.info(f"[Submit Tool] 提交分镜提示词生成: shot_id={shot_id}, prompt_type={prompt_type}, operation={operation_type}")
 
     # 查询分镜信息（包含场景和上一个分镜信息）
     shot_result = await _get_shot_from_db(shot_id)
@@ -1225,7 +1225,7 @@ async def submit_shot_video_regeneration(
     generation_mode: str = "first_last_frame",
 ) -> Dict[str, Any]:
     """
-    提交分镜视频重新生成任务
+    提交分镜视频生成任务
     
     Args:
         shot_id: 分镜ID
@@ -1235,7 +1235,7 @@ async def submit_shot_video_regeneration(
     Returns:
         提交结果
     """
-    logger.info(f"[Submit Tool] 提交分镜视频重新生成: shot_id={shot_id}, mode={generation_mode}")
+    logger.info(f"[Submit Tool] 提交分镜视频生成: shot_id={shot_id}, mode={generation_mode}")
     
     # 先更新 generation_mode 到数据库
     from app.agent.tools.async_db import get_async_session
@@ -1281,7 +1281,7 @@ REGENERATE_WORKER_TOOLS = [
     query_single_character,
     query_single_scene,
     query_single_shot,
-    # 提交重新生成类
+    # 提交生成类
     submit_character_image_regeneration,
     submit_scene_image_regeneration,
     submit_shot_image_regeneration,
@@ -1308,7 +1308,7 @@ async def clear_asset(
     Returns:
         操作结果
     """
-    logger.info(f"[Regenerate Tool] 清空资源: type={target_type}, id={target_id}, save_version={save_version}")
+    logger.info(f"[Generate Tool] 清空资源: type={target_type}, id={target_id}, save_version={save_version}")
     
     from app.agent.tools.async_db import get_async_session
     from app.models.character import Character
@@ -1400,7 +1400,7 @@ async def clear_asset(
             }
             
         except Exception as e:
-            logger.error(f"[Regenerate Tool] 清空资源失败: {e}")
+            logger.error(f"[Generate Tool] 清空资源失败: {e}")
             return {"success": False, "error": str(e)}
 
 
@@ -1424,8 +1424,8 @@ async def submit_generation(
     Returns:
         任务提交结果
     """
-    logger.info(f"[Regenerate Tool] 提交生成任务: type={target_type}, id={target_id}, mode={mode}")
-    logger.info(f"[Regenerate Tool] DEBUG: target_type={target_type}, 将决定 frame_type")
+    logger.info(f"[Generate Tool] 提交生成任务: type={target_type}, id={target_id}, mode={mode}")
+    logger.info(f"[Generate Tool] DEBUG: target_type={target_type}, 将决定 frame_type")
     
     from app.agent.tools.async_db import get_async_session
     from app.models.character import Character
@@ -1459,7 +1459,7 @@ async def submit_generation(
                 else:
                     visual_style = "anime"
                 
-                logger.info(f"[Regenerate Tool] 调用 generate_character_image_task: character_ids=[{target_id}], creation_uuid={creation_uuid}")
+                logger.info(f"[Generate Tool] 调用 generate_character_image_task: character_ids=[{target_id}], creation_uuid={creation_uuid}")
                 task = generate_character_image_task.delay(
                     character_ids=[target_id],  # 注意：是列表
                     visual_style=visual_style,
@@ -1475,7 +1475,7 @@ async def submit_generation(
                 if not resource:
                     return {"success": False, "error": f"场景不存在: {target_id}"}
                 creation_id = resource.creation_id
-                logger.info(f"[Regenerate Tool] 调用 generate_single_scene_image_task: scene_id={target_id}, creation_id={creation_id}")
+                logger.info(f"[Generate Tool] 调用 generate_single_scene_image_task: scene_id={target_id}, creation_id={creation_id}")
                 task = generate_single_scene_image_task.delay(
                     scene_id=target_id,
                     creation_id=creation_id,
@@ -1496,7 +1496,7 @@ async def submit_generation(
                 creation_obj = creation_result.scalar_one_or_none()
                 creation_id = creation_obj.creation_id if creation_obj else resource.creation_id
                 
-                logger.info(f"[Regenerate Tool] 调用 generate_single_shot_image_task: shot_id={target_id}, frame_type=start")
+                logger.info(f"[Generate Tool] 调用 generate_single_shot_image_task: shot_id={target_id}, frame_type=start")
                 task = generate_single_shot_image_task.delay(
                     shot_id=target_id,
                     creation_id=creation_id,
@@ -1504,7 +1504,7 @@ async def submit_generation(
                 )
                 
             elif target_type == "shot_end":
-                logger.info(f"[Regenerate Tool] 进入 shot_end 分支: target_id={target_id}")
+                logger.info(f"[Generate Tool] 进入 shot_end 分支: target_id={target_id}")
                 stmt = select(Shot).where(Shot.shot_id == target_id)
                 result = await db.execute(stmt)
                 resource = result.scalar_one_or_none()
@@ -1518,7 +1518,7 @@ async def submit_generation(
                 creation_obj = creation_result.scalar_one_or_none()
                 creation_id = creation_obj.creation_id if creation_obj else resource.creation_id
                 
-                logger.info(f"[Regenerate Tool] 调用 generate_single_shot_image_task: shot_id={target_id}, frame_type=end")
+                logger.info(f"[Generate Tool] 调用 generate_single_shot_image_task: shot_id={target_id}, frame_type=end")
                 task = generate_single_shot_image_task.delay(
                     shot_id=target_id,
                     creation_id=creation_id,
@@ -1540,7 +1540,7 @@ async def submit_generation(
                 creation_obj = creation_result.scalar_one_or_none()
                 creation_id = creation_obj.creation_id if creation_obj else resource.creation_id
                 
-                logger.info(f"[Regenerate Tool] 调用 generate_single_shot_image_task: shot_id={target_id}, frame_type=both")
+                logger.info(f"[Generate Tool] 调用 generate_single_shot_image_task: shot_id={target_id}, frame_type=both")
                 task = generate_single_shot_image_task.delay(
                     shot_id=target_id,
                     creation_id=creation_id,
@@ -1564,7 +1564,7 @@ async def submit_generation(
                 flag_modified(resource, "extra_data")
                 await db.commit()
                 
-                logger.info(f"[Regenerate Tool] 调用 agent_generate_single_shot_video_task: shot_id={target_id}, generation_mode={generation_mode}")
+                logger.info(f"[Generate Tool] 调用 agent_generate_single_shot_video_task: shot_id={target_id}, generation_mode={generation_mode}")
                 
                 from app.agent.tasks.video_tasks import agent_generate_single_shot_video_task
                 task = agent_generate_single_shot_video_task.delay(
@@ -1583,7 +1583,7 @@ async def submit_generation(
             }
             
     except Exception as e:
-        logger.error(f"[Regenerate Tool] 提交生成任务失败: {e}")
+        logger.error(f"[Generate Tool] 提交生成任务失败: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -1594,7 +1594,7 @@ async def update_resource_status(
     save_version: bool = True,
 ) -> Dict[str, Any]:
     """
-    更新资源状态（重新生成时不清空历史，只修改状态）
+    更新资源状态（生成时不清空历史，只修改状态）
     
     Args:
         target_type: 资源类型 (character | scene | shot_start | shot_end | shot_video)
@@ -1605,7 +1605,7 @@ async def update_resource_status(
     Returns:
         操作结果
     """
-    logger.info(f"[Regenerate Tool] 更新状态: type={target_type}, id={target_id}, status={status}")
+    logger.info(f"[Generate Tool] 更新状态: type={target_type}, id={target_id}, status={status}")
     
     from app.agent.tools.async_db import get_async_session
     from app.models.character import Character
@@ -1668,7 +1668,7 @@ async def update_resource_status(
             }
             
         except Exception as e:
-            logger.error(f"[Regenerate Tool] 更新状态失败: {e}")
+            logger.error(f"[Generate Tool] 更新状态失败: {e}")
             return {"success": False, "error": str(e)}
 
 
@@ -1740,8 +1740,8 @@ async def _execute_regeneration(
     save_version: bool = True,
     mode: str = "auto",
 ) -> Dict[str, Any]:
-    """执行资源重新生成操作的核心函数"""
-    logger.info(f"[Regenerate Tool] 重新生成: type={target_type}, id={target_id}")
+    """执行资源生成操作的核心函数"""
+    logger.info(f"[Generate Tool] 生成: type={target_type}, id={target_id}")
     
     status_result = await update_resource_status(
         target_type=target_type,
@@ -1782,7 +1782,7 @@ async def regenerate(
     mode: str = "auto",
 ) -> Dict[str, Any]:
     """
-    重新生成资源（组合操作：更新状态为 generating + 提交生成任务）
+    生成资源（组合操作：更新状态为 generating + 提交生成任务）
     
     Args:
         target_type: 资源类型 (character | scene | shot_start | shot_end | shot_video | shot_image)
@@ -1807,7 +1807,7 @@ async def regenerate_with_poll(
     max_wait: int = 300,
 ) -> Dict[str, Any]:
     """
-    重新生成资源并轮询等待完成（带状态轮询的完整版本）
+    生成资源并轮询等待完成（带状态轮询的完整版本）
     
     Args:
         target_type: 资源类型
@@ -1820,9 +1820,9 @@ async def regenerate_with_poll(
     Returns:
         包含任务执行结果的字典
     """
-    logger.info(f"[Regenerate Tool] 重新生成并轮询: type={target_type}, id={target_id}")
+    logger.info(f"[Generate Tool] 生成并轮询: type={target_type}, id={target_id}")
     
-    # Step 1: 执行重新生成（更新状态 + 提交任务）
+    # Step 1: 执行生成（更新状态 + 提交任务）
     result = await _execute_regeneration(
         target_type=target_type,
         target_id=target_id,
@@ -1836,7 +1836,7 @@ async def regenerate_with_poll(
     
     # Step 2: 轮询等待任务完成
     task_id = result.get("task_id")
-    logger.info(f"[Regenerate Tool] 开始轮询任务: {task_id}")
+    logger.info(f"[Generate Tool] 开始轮询任务: {task_id}")
     
     poll_result = await _poll_task_status(task_id, max_wait=max_wait)
     
@@ -1863,7 +1863,7 @@ async def clear_all(
     Returns:
         清空结果汇总
     """
-    logger.info(f"[Regenerate Tool] 清空所有资源: creation_uuid={creation_uuid}, types={target_types}")
+    logger.info(f"[Generate Tool] 清空所有资源: creation_uuid={creation_uuid}, types={target_types}")
     
     from app.agent.tools.async_db import get_async_session
     from sqlalchemy import select
@@ -1934,7 +1934,7 @@ async def clear_all(
             }
             
         except Exception as e:
-            logger.error(f"[Regenerate Tool] 清空所有资源失败: {e}")
+            logger.error(f"[Generate Tool] 清空所有资源失败: {e}")
             return {
                 "success": False,
                 "error": str(e),
