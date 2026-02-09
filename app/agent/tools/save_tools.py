@@ -310,13 +310,11 @@ async def save_shot_image_prompt(
             elif frame_type == "end":
                 shot.extra_data["end_frame_image_prompt"] = prompt
             elif frame_type == "both":
-                # 假设 prompt 是一个字典，包含 start 和 end
-                if isinstance(prompt, dict):
-                    shot.image_prompt = prompt
-                    shot.extra_data["start_frame_image_prompt"] = prompt.get("start", "")
-                    shot.extra_data["end_frame_image_prompt"] = prompt.get("end", "")
-                else:
-                    shot.extra_data["start_frame_image_prompt"] = prompt
+                # both 模式：prompt 应分别保存首尾帧
+                # 但工具调用中 prompt 是字符串，无法传 dict
+                # 所以 both 模式下只保存为首帧，尾帧需要单独调用
+                shot.image_prompt = prompt
+                shot.extra_data["start_frame_image_prompt"] = prompt
             
             flag_modified(shot, "extra_data")
             shot.updated_at = datetime.now()

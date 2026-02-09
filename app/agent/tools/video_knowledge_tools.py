@@ -135,6 +135,91 @@ def _analyze_keywords(shot_description: str) -> List[str]:
 
 
 @tool
+async def batch_query_knowledge_for_video(
+    keywords_list: List[List[str]],
+    top_k: int = 3
+) -> Dict[str, Any]:
+    """
+    批量查询视频生成所需的专业知识（替代多次调用 query_knowledge_for_video）
+
+    一次性传入多组关键词，每组查询 top_k 条结果，最终去重合并返回。
+
+    Args:
+        keywords_list: 关键词列表的列表，如 [["运镜", "特写"], ["光线", "氛围"], ["构图", "三分"]]
+        top_k: 每组关键词返回的最大结果数（默认3）
+
+    Returns:
+        {
+            "success": bool,
+            "keywords_list": List[List[str]],
+            "knowledge_context": str,  # 合并去重的知识上下文
+            "sources": List[str]  # 知识来源（去重）
+        }
+    """
+    logger.info(f"[Knowledge Tool] 批量查询视频知识, {len(keywords_list)} 组关键词")
+
+    try:
+        all_keywords = set()
+        for kw_group in keywords_list:
+            if isinstance(kw_group, list):
+                all_keywords.update(kw_group)
+            elif isinstance(kw_group, str):
+                all_keywords.add(kw_group)
+
+        knowledge_parts = []
+        sources = []
+
+        # 镜头技巧
+        if any(kw in all_keywords for kw in ["镜头", "运镜", "拍摄", "角度", "景别", "特写", "近景", "中景", "全景", "远景", "推", "拉", "摇", "移", "跟", "升降", "环绕", "动作"]):
+            camera_tech = read_knowledge_file("director/camera_techniques.md")
+            if camera_tech:
+                knowledge_parts.append("## 镜头技巧\n" + camera_tech[:2000])
+                sources.append("camera_techniques")
+
+        # 构图法则
+        if any(kw in all_keywords for kw in ["构图", "画面", "布局", "位置", "对称", "三分", "黄金", "中心", "框架"]):
+            composition = read_knowledge_file("director/composition_rules.md")
+            if composition:
+                knowledge_parts.append("## 构图法则\n" + composition[:2000])
+                sources.append("composition_rules")
+
+        # 光线与氛围
+        if any(kw in all_keywords for kw in ["光线", "光影", "氛围", "色调", "明暗"]):
+            lighting = read_knowledge_file("director/lighting_mood.md")
+            if lighting:
+                knowledge_parts.append("## 光线与氛围\n" + lighting[:2000])
+                sources.append("lighting_mood")
+
+        # 分镜技巧
+        if any(kw in all_keywords for kw in ["分镜", "转场", "切换", "连贯", "过渡", "衔接"]):
+            storyboard = read_knowledge_file("director/storyboard_examples.md")
+            if storyboard:
+                knowledge_parts.append("## 分镜技巧\n" + storyboard[:2000])
+                sources.append("storyboard_examples")
+
+        knowledge_context = "\n\n".join(knowledge_parts) if knowledge_parts else ""
+
+        logger.info(f"[Knowledge Tool] 批量查询完成, 匹配 {len(sources)} 个知识源")
+
+        return {
+            "success": True,
+            "keywords_list": keywords_list,
+            "knowledge_context": knowledge_context,
+            "sources": sources
+        }
+
+    except Exception as e:
+        logger.error(f"[Knowledge Tool] 批量查询视频知识失败: {e}")
+        return {
+            "success": False,
+            "keywords_list": keywords_list,
+            "knowledge_context": "",
+            "sources": [],
+            "error": str(e)
+        }
+
+
+@tool
 async def query_camera_techniques(technique_type: Optional[str] = None) -> Dict[str, Any]:
     """
     查询镜头技巧知识
@@ -205,6 +290,7 @@ async def query_composition_rules() -> Dict[str, Any]:
 
 VIDEO_KNOWLEDGE_TOOLS = [
     query_knowledge_for_video,
+    batch_query_knowledge_for_video,
     query_camera_techniques,
     query_composition_rules,
 ]

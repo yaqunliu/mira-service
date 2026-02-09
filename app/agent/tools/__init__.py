@@ -183,7 +183,7 @@ __all__ = [
     "query_generation_tasks_status",
     "REGENERATE_WORKER_TOOLS",
 
-    # 批量生成工具（AssetGenerationWorkerNode 专用）
+    # 批量生成工具
     "batch_submit_character_images",
     "batch_submit_scene_images",
     "batch_save_character_prompts",

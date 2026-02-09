@@ -197,7 +197,7 @@ async def update_shot(
         shot.description = shot_data.description
     if shot_data.narration is not None:
         import json
-        shot.narration = json.dumps([item.model_dump() for item in shot_data.narration], ensure_ascii=False)
+        shot.narration = json.dumps([item.model_dump(by_alias=True) for item in shot_data.narration], ensure_ascii=False)
     if shot_data.associated_characters is not None:
         result = await db.execute(
             select(Character).where(
@@ -210,18 +210,9 @@ async def update_shot(
     if shot_data.video_duration is not None:
         shot.video_duration = shot_data.video_duration
 
-    # 如果更新了图片提示词，需要清空相关的视频提示词，以便重新生成
-    # if shot_data.image_prompt is not None:
-    #     shot.image_prompt = shot_data.image_prompt
-    #     # 清空视频提示词，因为图片提示词已变更
-    #     if shot.extra_data and "video_prompt" in shot.extra_data:
-    #         shot.extra_data["video_prompt"] = ""
-    #         shot.extra_data["cut_method"] = ""
-    #         shot.extra_data["cut_reason"] = ""
-    #         from sqlalchemy.orm.attributes import flag_modified
-    #         flag_modified(shot, "extra_data")
-    #         logger.info(f"分镜 {shot_identifier} 图片提示词已更新，清空关联的视频提示词")
-
+    if shot_data.image_prompt is not None:
+        shot.image_prompt = shot_data.image_prompt
+    
     # 直接更新图片URL
     if shot_data.image_url is not None:
         shot.image_url = shot_data.image_url

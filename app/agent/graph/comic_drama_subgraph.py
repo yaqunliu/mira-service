@@ -213,15 +213,15 @@ async def script_analysis_node(state: ComicDramaState) -> Dict[str, Any]:
     
     return result
 
-async def asset_generation_node(state: ComicDramaState) -> Dict[str, Any]:
+async def character_scene_generation_node(state: ComicDramaState) -> Dict[str, Any]:
     """
-    资产生成节点
-    
-    委托给 AssetGenerationWorkerNode 执行（ReAct 架构）
-    支持单个/全部生成，支持提示词/图片生成
+    角色场景生成节点
+
+    委托给 CharacterSceneGenerationWorkerNode 执行（ReAct 架构）
+    仅生成角色和场景的提示词+图片
     """
-    logger.info("[SubgraphNode] asset_generation: 委托给 AssetGenerationWorkerNode")
-    
+    logger.info("[SubgraphNode] character_scene_generation: 委托给 CharacterSceneGenerationWorkerNode")
+
     # 添加阶段开始消息到 messages
     from datetime import datetime
     messages = list(state.get("messages", []))
@@ -229,41 +229,95 @@ async def asset_generation_node(state: ComicDramaState) -> Dict[str, Any]:
         "role": "assistant",
         "content": "🎨 好的，开始为您生成角色和场景资源，请稍候...",
         "timestamp": datetime.now().isoformat(),
-        "node": "asset_generation",
-        "metadata": {"stage": "asset_generation", "action": "start"},
+        "node": "character_scene_generation",
+        "metadata": {"stage": "character_scene_generation", "action": "start"},
     })
-    
-    from app.agent.graph.nodes.teams.asset_generation_worker import AssetGenerationWorkerNode
-    worker = AssetGenerationWorkerNode()
-    
+
+    from app.agent.graph.nodes.teams.character_scene_generation_worker import CharacterSceneGenerationWorkerNode
+    worker = CharacterSceneGenerationWorkerNode()
+
     # 将更新后的 messages 传给 worker
     updated_state = dict(state)
     updated_state["messages"] = messages
-    
+
     result = await worker.run(updated_state)
-    
+
     # 确保 messages 被保留
     if "messages" not in result:
         result["messages"] = messages
-    
+
     # 从 tool_usage_summary 获取统计信息
     tool_summary = result.get("tool_usage_summary", {})
     submit_count = tool_summary.get("submit_count", 0)
     save_count = tool_summary.get("save_count", 0)
     success_count = tool_summary.get("success_count", 0)
-    
-    response_text = result.get("response_text", f"资产生成完成")
-    
+
+    response_text = result.get("response_text", f"角色场景生成完成")
+
     # 添加 worker_result 供 Supervisor 使用
     result["worker_result"] = {
-        "worker": "asset_designer",
-        "summary": f"资产生成完成：提交了 {submit_count} 个生成任务，保存了 {save_count} 个提示词",
+        "worker": "character_scene_generator",
+        "summary": f"角色场景生成完成：提交了 {submit_count} 个生成任务，保存了 {save_count} 个提示词",
         "success": success_count > 0,
         "completed": True,
         "response_text": response_text,
         "tool_summary": tool_summary,
     }
-    
+
+    return result
+
+
+async def shot_generation_node(state: ComicDramaState) -> Dict[str, Any]:
+    """
+    分镜图片生成节点
+
+    委托给 ShotGenerationWorkerNode 执行（ReAct 架构）
+    仅生成分镜的图片提示词+首尾帧图片
+    """
+    logger.info("[SubgraphNode] shot_generation: 委托给 ShotGenerationWorkerNode")
+
+    # 添加阶段开始消息到 messages
+    from datetime import datetime
+    messages = list(state.get("messages", []))
+    messages.append({
+        "role": "assistant",
+        "content": "📸 好的，开始为您生成分镜图片，请稍候...",
+        "timestamp": datetime.now().isoformat(),
+        "node": "shot_generation",
+        "metadata": {"stage": "shot_generation", "action": "start"},
+    })
+
+    from app.agent.graph.nodes.teams.shot_generation_worker import ShotGenerationWorkerNode
+    worker = ShotGenerationWorkerNode()
+
+    # 将更新后的 messages 传给 worker
+    updated_state = dict(state)
+    updated_state["messages"] = messages
+
+    result = await worker.run(updated_state)
+
+    # 确保 messages 被保留
+    if "messages" not in result:
+        result["messages"] = messages
+
+    # 从 tool_usage_summary 获取统计信息
+    tool_summary = result.get("tool_usage_summary", {})
+    submit_count = tool_summary.get("submit_count", 0)
+    save_count = tool_summary.get("save_count", 0)
+    success_count = tool_summary.get("success_count", 0)
+
+    response_text = result.get("response_text", f"分镜图片生成完成")
+
+    # 添加 worker_result 供 Supervisor 使用
+    result["worker_result"] = {
+        "worker": "shot_generator",
+        "summary": f"分镜图片生成完成：提交了 {submit_count} 个生成任务，保存了 {save_count} 个提示词",
+        "success": success_count > 0,
+        "completed": True,
+        "response_text": response_text,
+        "tool_summary": tool_summary,
+    }
+
     return result
 
 
@@ -437,8 +491,9 @@ def build_comic_drama_subgraph() -> StateGraph:
     
     # Workers
     workflow.add_node("script_analysis", script_analysis_node)
-    workflow.add_node("asset_generation", asset_generation_node)
+    workflow.add_node("character_scene_generation", character_scene_generation_node)
     workflow.add_node("storyboard_creation", storyboard_creation_node)
+    workflow.add_node("shot_generation", shot_generation_node)
     workflow.add_node("audio_processing", audio_processing_node)
     workflow.add_node("video_generation", video_generation_node)
     workflow.add_node("editing", editing_node)
@@ -458,8 +513,9 @@ def build_comic_drama_subgraph() -> StateGraph:
         route_from_supervisor,
         {
             "script_analysis": "script_analysis",
-            "asset_generation": "asset_generation",
+            "character_scene_generation": "character_scene_generation",
             "storyboard_creation": "storyboard_creation",
+            "shot_generation": "shot_generation",
             "audio_processing": "audio_processing",
             "video_generation": "video_generation",
             "editing": "editing",
@@ -471,8 +527,9 @@ def build_comic_drama_subgraph() -> StateGraph:
     # Workers 完成后直接回到 Supervisor（由 LangGraph 管理递归）
     for worker in [
         "script_analysis",
-        "asset_generation",
+        "character_scene_generation",
         "storyboard_creation",
+        "shot_generation",
         "audio_processing",
         "video_generation",
         "editing",

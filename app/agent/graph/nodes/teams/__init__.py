@@ -7,8 +7,9 @@ Supervisor Agent 模式:
 
 Workers:
 - script_analyst: 剧本分析师 - 分析剧本提取角色和场景
-- asset_designer: 资产设计师 - 生成角色/场景图片
-- storyboard_director: 分镜导演 - 生成分镜脚本
+- character_scene_generator: 角色场景生成器 - 生成角色和场景的提示词+图片
+- storyboard_director: 分镜导演 - 创建分镜脚本
+- shot_generator: 分镜图片生成器 - 生成分镜首尾帧图片
 - audio_engineer: 音频工程师 - 生成配音
 - video_editor: 视频编辑师 - 生成视频片段
 - asset_regenerator: 资产重新生成器 - 重新生成图片/提示词/视频
@@ -27,9 +28,15 @@ from app.agent.graph.nodes.teams.asset_regenerator_worker import (
     AssetRegeneratorWorkerNode,
     regenerate_assets_worker,
 )
-from app.agent.graph.nodes.teams.asset_generation_worker import (
-    AssetGenerationWorkerNode,
-    generate_assets_worker,
+# 角色场景生成 Worker
+from app.agent.graph.nodes.teams.character_scene_generation_worker import (
+    CharacterSceneGenerationWorkerNode,
+    generate_character_scene_worker,
+)
+# 新增：分镜图片生成 Worker
+from app.agent.graph.nodes.teams.shot_generation_worker import (
+    ShotGenerationWorkerNode,
+    generate_shot_worker,
 )
 
 __all__ = [
@@ -45,8 +52,11 @@ __all__ = [
     # Asset Regenerator
     "AssetRegeneratorWorkerNode",
     "regenerate_assets_worker",
-    # Asset Generation
-    "AssetGenerationWorkerNode",
-    "generate_assets_worker",
+    # Character & Scene Generation
+    "CharacterSceneGenerationWorkerNode",
+    "generate_character_scene_worker",
+    # Shot Generation (新版)
+    "ShotGenerationWorkerNode",
+    "generate_shot_worker",
 ]
 

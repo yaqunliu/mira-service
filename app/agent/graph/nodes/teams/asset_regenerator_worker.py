@@ -369,18 +369,15 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 """
         
         if target_type == "character":
-            if operation_type == "image":
+            if mapped_op_type == "image":
                 # 用户明确要求生成图片 - 使用旧的直接提交工具
                 guide = base_guide + f"""
 ### 角色图片生成流程（直接提交并等待完成）
 
-**Step 1: 获取角色信息**
-- 工具: `query_characters`
-- 参数: 
-  - creation_uuid: "{creation_uuid}"  【必须使用这个值！】
-  - include_images: true
-- 说明: 获取角色列表，找到匹配的角色名
-- 【重要】creation_uuid 必须使用系统提供的值: {creation_uuid}
+**Step 1: 获取所有资源信息**
+- 工具: `query_all_shots`
+- 参数: creation_uuid="{creation_uuid}"
+- 说明: 一次性获取所有分镜、角色、场景信息，从返回的 characters 列表中找到匹配的角色名
 
 **Step 2: 提交图片生成任务**
 - 工具: `submit_character_image_regeneration`
@@ -395,7 +392,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 工具: `query_generation_tasks_status`
 - 参数:
   - task_ids: [task_id] (从 Step 2 获取的 task_id 列表)
-  - target_info: [{"target_type": "character", "target_id": character_id}]
+  - target_info: [{{"target_type": "character", "target_id": character_id}}]
   - timeout: 1200 (最大等待1200秒)
   - poll_interval: 2.0 (每2秒查询一次)
 - 说明: 轮询查询任务状态，直到任务完成或超时
@@ -411,34 +408,25 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 2. 调用 query_generation_tasks_status 等待任务完成
 3. 汇报最终结果给用户
 """
-            elif operation_type == "prompt":
+            elif mapped_op_type == "prompt":
                 # 生成提示词 - Node 自身生成
                 guide = base_guide + """
 ### 角色提示词生成流程（Node 生成）
 
-**Step 1: 获取角色信息（关键！）**
+**Step 1: 获取所有资源信息（关键！）**
+- 工具: `query_all_shots`
+- 参数: creation_uuid="{creation_uuid}"
+- 说明: 一次性获取所有分镜、角色、场景信息
+- 从返回的 characters 列表中找到匹配的角色（通过角色名或 character_id）
 """
                 if target_id:
-                    guide += """
-- 工具: `query_single_character`
-- 参数: character_id={target_id}
-- 说明: 获取角色的完整信息
+                    guide += f"""
+- 目标角色 ID: {target_id}，在 characters 列表中找到对应角色
 """
                 else:
-                    guide += f"""
+                    guide += """
 - **从用户消息中提取角色名**（如"张磊"、"阿九"）
-- 工具: `query_characters`
-- 参数: 
-  - creation_uuid: "{creation_uuid}"  【必须使用这个值！】
-  - include_images: true
-- 说明: 获取角色列表
-- **关键：在返回的列表中找到匹配的角色名，获取 character_id**
-- 工具: `query_single_character`
-- 参数: character_id（从上一步获取）
-- 说明: 获取角色的完整信息
-
-**重要**：target_id 未指定时，必须先提取角色名，查询列表，找到匹配项，然后继续！
-**【关键】creation_uuid 必须使用系统提供的值: {creation_uuid}**
+- **在返回的 characters 列表中找到匹配的角色名，获取 character_id**
 """
                 guide += """
 **Step 2: 获取提示词模板**
@@ -462,15 +450,15 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 3. **你自己生成提示词**（使用你的 LLM，不是工具！）
 4. 保存提示词（工具）
 """
-            elif operation_type == "modify_prompt":
+            elif mapped_op_type == "modify_prompt":
                 # 修改提示词 - Node 自身生成
                 guide = base_guide + """
 ### 角色提示词修改流程（Node 生成）
 
-**Step 1: 获取角色信息**
-- 工具: `query_single_character`
-- 参数: character_id
-- 说明: 获取角色的完整信息
+**Step 1: 获取所有资源信息**
+- 工具: `query_all_shots`
+- 参数: creation_uuid
+- 说明: 一次性获取所有信息，从 characters 列表中找到目标角色
 
 **Step 2: 提取修改意见**
 从用户消息中提取修改要求：
@@ -504,10 +492,10 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
                 guide = base_guide + """
 ### 角色图片生成流程（直接提交并等待完成）
 
-**Step 1: 获取角色信息**
-- 工具: `query_characters`
+**Step 1: 获取所有资源信息**
+- 工具: `query_all_shots`
 - 参数: creation_uuid
-- 说明: 获取角色列表，找到匹配的角色名
+- 说明: 一次性获取所有信息，从 characters 列表中找到匹配的角色名
 
 **Step 2: 提交图片生成任务**
 - 工具: `submit_character_image_regeneration`
@@ -530,14 +518,14 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 根据查询结果，汇报生成成功或失败
 """
         elif target_type == "scene":
-            if operation_type == "image":
+            if mapped_op_type == "image":
                 guide = base_guide + """
 ### 场景图片生成流程（直接提交并等待完成）
 
-**Step 1: 获取场景信息**
-- 工具: `query_scenes`
+**Step 1: 获取所有资源信息**
+- 工具: `query_all_shots`
 - 参数: creation_uuid
-- 说明: 获取场景列表，找到匹配的场景名
+- 说明: 一次性获取所有信息，从 scenes 列表中找到匹配的场景名
 
 **Step 2: 提交图片生成任务**
 - 工具: `submit_scene_image_regeneration`
@@ -563,14 +551,14 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 2. 调用 query_generation_tasks_status 等待任务完成
 3. 汇报最终结果给用户
 """
-            elif operation_type == "prompt":
+            elif mapped_op_type == "prompt":
                 guide = base_guide + """
 ### 场景提示词生成流程（Node 生成）
 
-**Step 1: 获取场景信息**
-- 工具: `query_single_scene`
-- 参数: scene_id
-- 说明: 获取场景的完整信息
+**Step 1: 获取所有资源信息**
+- 工具: `query_all_shots`
+- 参数: creation_uuid
+- 说明: 一次性获取所有信息，从 scenes 列表中找到目标场景
 
 **Step 2: 获取提示词模板**
 - 工具: `get_scene_prompt_template`
@@ -587,14 +575,14 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 参数: scene_id, prompt (你生成的提示词)
 - 说明: 保存到数据库
 """
-            elif operation_type == "modify_prompt":
+            elif mapped_op_type == "modify_prompt":
                 guide = base_guide + """
 ### 场景提示词修改流程（Node 生成）
 
-**Step 1: 获取场景信息**
-- 工具: `query_single_scene`
-- 参数: scene_id
-- 说明: 获取场景的完整信息
+**Step 1: 获取所有资源信息**
+- 工具: `query_all_shots`
+- 参数: creation_uuid
+- 说明: 一次性获取所有信息，从 scenes 列表中找到目标场景
 
 **Step 2: 提取修改意见**
 从用户消息中提取修改要求：
@@ -620,10 +608,10 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
                 guide = base_guide + """
 ### 场景图片生成流程（直接提交并等待完成）
 
-**Step 1: 获取场景信息**
-- 工具: `query_scenes`
+**Step 1: 获取所有资源信息**
+- 工具: `query_all_shots`
 - 参数: creation_uuid
-- 说明: 获取场景列表，找到匹配的场景名
+- 说明: 一次性获取所有信息，从 scenes 列表中找到匹配的场景名
 
 **Step 2: 提交图片生成任务**
 - 工具: `submit_scene_image_regeneration`
@@ -645,14 +633,14 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 根据查询结果，汇报生成成功或失败
 """
         else:  # shot
-            if operation_type == "video":
+            if mapped_op_type == "video":
                 guide = base_guide + """
 ### 分镜视频生成流程（直接提交并等待完成）
 
-**Step 1: 获取分镜信息**
-- 工具: `query_shots`
+**Step 1: 获取所有资源信息**
+- 工具: `query_all_shots`
 - 参数: creation_uuid
-- 说明: 获取分镜列表，找到匹配的分镜编号
+- 说明: 一次性获取所有分镜、角色、场景信息，从 shots 列表中找到匹配的分镜编号
 
 **Step 2: 提交视频生成任务**
 - 工具: `submit_shot_video_regeneration`
@@ -679,14 +667,14 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 2. 调用 query_generation_tasks_status 等待任务完成
 3. 汇报最终结果给用户
 """
-            elif operation_type == "image":
+            elif mapped_op_type == "image":
                 guide = base_guide + f"""
 ### 分镜图片生成流程（直接提交并等待完成）
 
-**Step 1: 获取分镜信息**
-- 工具: `query_shots`
+**Step 1: 获取所有资源信息**
+- 工具: `query_all_shots`
 - 参数: creation_uuid
-- 说明: 获取分镜列表，找到匹配的分镜编号
+- 说明: 一次性获取所有分镜、角色、场景信息，从 shots 列表中找到匹配的分镜编号
 
 **Step 2: 提交图片生成任务**
 - 工具: `submit_shot_image_regeneration`
@@ -700,7 +688,7 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 工具: `query_generation_tasks_status`
 - 参数:
   - task_ids: [task_id]
-  - target_info: [{"target_type": "shot", "target_id": shot_id}]
+  - target_info: [{{"target_type": "shot", "target_id": shot_id}}]
   - timeout: 1200
   - poll_interval: 2.0
 - 说明: 轮询查询任务状态，直到任务完成或超时
@@ -718,14 +706,14 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - "尾帧"、"最后一帧" → frame_type="end"
 - 无明确指定 → frame_type="both"
 """
-            elif operation_type == "prompt":
+            elif mapped_op_type == "prompt":
                 guide = base_guide + f"""
 ### 分镜提示词生成流程（Node 生成）
 
-**Step 1: 获取分镜信息**
-- 工具: `query_single_shot`
-- 参数: shot_id
-- 说明: 获取分镜的完整信息，包含关联场景和上一个分镜
+**Step 1: 获取所有资源信息**
+- 工具: `query_all_shots`
+- 参数: creation_uuid
+- 说明: 一次性获取所有分镜、角色、场景信息，从 shots 列表中找到目标分镜及其关联的场景和角色
 
 **Step 2: 判断提示词类型**
 - 图片提示词：prompt_type="image"
@@ -749,10 +737,17 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 - 基于 shot_info、scene_info、template_content 和知识库结果
 - 使用你的 LLM 能力生成提示词
 - 使用视觉风格: {visual_style}
+- **当 frame_type="both" 时，必须分别生成首帧和尾帧两个不同的提示词！**
+  - 首帧提示词：侧重画面开始状态
+  - 尾帧提示词：侧重画面结束状态（景别、角度、表情可以有变化）
 
 **Step 6: 保存提示词**
-- 图片提示词：工具 `save_shot_image_prompt`，参数 frame_type="{frame_type}"
 - 视频提示词：工具 `save_shot_video_prompt`
+- 图片提示词：工具 `save_shot_image_prompt`
+  - **【关键】frame_type="both" 时，必须调用两次：**
+    1. `save_shot_image_prompt(shot_id, 首帧提示词, frame_type="start")`
+    2. `save_shot_image_prompt(shot_id, 尾帧提示词, frame_type="end")`
+  - frame_type="start" 或 "end" 时，只需调用一次
 - 说明: 保存到数据库
 
 frame_type 自动检测规则：
@@ -760,14 +755,14 @@ frame_type 自动检测规则：
 - "尾帧"、"最后一帧" → frame_type="end"
 - 无明确指定 → frame_type="both"
 """
-            elif operation_type == "modify_prompt":
+            elif mapped_op_type == "modify_prompt":
                 guide = base_guide + f"""
 ### 分镜提示词修改流程（Node 生成）
 
-**Step 1: 获取分镜信息**
-- 工具: `query_single_shot`
-- 参数: shot_id
-- 说明: 获取分镜的完整信息，包含关联场景和上一个分镜
+**Step 1: 获取所有资源信息**
+- 工具: `query_all_shots`
+- 参数: creation_uuid
+- 说明: 一次性获取所有分镜、角色、场景信息，从 shots 列表中找到目标分镜及其关联的场景和角色
 
 **Step 2: 判断提示词类型并提取修改意见**
 - 图片提示词：prompt_type="image"
@@ -794,8 +789,12 @@ frame_type 自动检测规则：
 - 使用你的 LLM 能力修改提示词
 
 **Step 6: 保存提示词**
-- 图片提示词：工具 `save_shot_image_prompt`，参数 frame_type="{frame_type}"
 - 视频提示词：工具 `save_shot_video_prompt`
+- 图片提示词：工具 `save_shot_image_prompt`
+  - **【关键】frame_type="both" 时，必须调用两次：**
+    1. `save_shot_image_prompt(shot_id, 首帧提示词, frame_type="start")`
+    2. `save_shot_image_prompt(shot_id, 尾帧提示词, frame_type="end")`
+  - frame_type="start" 或 "end" 时，只需调用一次
 - 说明: 保存到数据库
 
 frame_type 自动检测规则：
@@ -807,10 +806,10 @@ frame_type 自动检测规则：
                 guide = base_guide + f"""
 ### 分镜图片生成流程（直接提交）
 
-**Step 1: 获取分镜信息**
-- 工具: `query_shots`
+**Step 1: 获取所有资源信息**
+- 工具: `query_all_shots`
 - 参数: creation_uuid
-- 说明: 获取分镜列表，找到匹配的分镜编号
+- 说明: 一次性获取所有分镜、角色、场景信息，从 shots 列表中找到匹配的分镜编号
 
 **Step 2: 提交图片生成任务**
 - 工具: `submit_shot_image_regeneration`
@@ -907,19 +906,9 @@ frame_type 自动检测规则：
         # 注意：get_tools 在 run 方法中被调用，此时 state 还未设置
         # 我们需要通过其他方式获取 operation_type，或者在 run 中动态选择工具
         
-        # 查询类工具（所有操作都需要）
-        from app.agent.tools.db_tools import (
-            query_characters,
-            query_scenes,
-            query_shots,
-            query_single_character,
-            query_single_scene,
-            query_single_shot,
-            query_creation_info,
-        )
-        
-        # 旧的直接提交工具（用于生成图片/视频）和状态查询
+        # 查询类工具 - 使用 query_all_shots 一次性获取所有分镜、角色、场景
         from app.agent.tools.regenerate_worker_tools import (
+            query_all_shots,
             submit_character_image_regeneration,
             submit_scene_image_regeneration,
             submit_shot_image_regeneration,
@@ -942,20 +931,12 @@ frame_type 自动检测规则：
             save_shot_video_prompt,
         )
         from app.agent.tools.video_knowledge_tools import (
-            query_knowledge_for_video,
-            query_camera_techniques,
-            query_composition_rules,
+            batch_query_knowledge_for_video,
         )
 
         return [
-            # === 查询类 ===
-            query_characters,
-            query_scenes,
-            query_shots,
-            query_single_character,
-            query_single_scene,
-            query_single_shot,
-            query_creation_info,
+            # === 查询类（一次性获取所有分镜、角色、场景）===
+            query_all_shots,
 
             # === 图片/视频生成（直接提交）===
             submit_character_image_regeneration,
@@ -975,10 +956,8 @@ frame_type 自动检测规则：
             save_shot_image_prompt,
             save_shot_video_prompt,
 
-            # === 知识库（仅视频提示词需要）===
-            query_knowledge_for_video,
-            query_camera_techniques,
-            query_composition_rules,
+            # === 知识库（批量查询，一次调用替代多次）===
+            batch_query_knowledge_for_video,
 
             # === 任务状态查询（用于等待生成完成）===
             query_generation_tasks_status,

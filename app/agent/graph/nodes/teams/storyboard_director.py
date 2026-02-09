@@ -4,7 +4,7 @@
 职责：
 1. LLM 生成分镜脚本（描述、旁白、时长）→ save_shots Tool 保存
 
-注意：图片提示词生成和图片生成已移至 asset_generation_worker
+注意：图片提示词生成和图片生成已移至 character_scene_generation_worker 和 shot_generation_worker
 """
 
 import json
@@ -25,7 +25,7 @@ class StoryboardDirectorNode:
     职责:
     1. LLM 生成分镜脚本（调用 save_shots Tool 保存）
     
-    注意：图片提示词生成和图片生成已移至 asset_generation_worker
+    注意：图片提示词生成和图片生成已移至 character_scene_generation_worker 和 shot_generation_worker
     """
     
     # 生成分镜脚本的提示词

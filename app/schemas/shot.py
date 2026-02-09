@@ -8,8 +8,8 @@ from datetime import datetime
 
 class NarrationItem(BaseModel):
     """旁白/台词项"""
-    角色: str = Field(..., alias="角色")
-    内容: str = Field(..., alias="内容")
+    角色: str = ""
+    内容: str = ""
 
     class Config:
         populate_by_name = True
@@ -51,13 +51,13 @@ class ShotCreate(BaseModel):
             try:
                 data = json.loads(v)
                 if isinstance(data, list):
-                    # 处理旧格式 [ "xxx" ] 或新格式 [ {"角色": "xxx", "内容": "xxx"} ]
                     result = []
                     for item in data:
-                        if isinstance(item, dict) and "角色" in item and "内容" in item:
-                            result.append(NarrationItem(**item))
+                        if isinstance(item, dict):
+                            role = item.get("角色") or item.get("role", "旁白")
+                            content = item.get("内容") or item.get("content", "")
+                            result.append(NarrationItem(角色=role, 内容=content))
                         elif isinstance(item, str):
-                            # 兼容旧格式，默认为旁白
                             result.append(NarrationItem(角色="旁白", 内容=item))
                     return result
                 return [NarrationItem(角色="旁白", 内容=v)]
@@ -67,7 +67,9 @@ class ShotCreate(BaseModel):
             result = []
             for item in v:
                 if isinstance(item, dict):
-                    result.append(NarrationItem(**item))
+                    role = item.get("角色") or item.get("role", "旁白")
+                    content = item.get("内容") or item.get("content", "")
+                    result.append(NarrationItem(角色=role, 内容=content))
                 elif isinstance(item, NarrationItem):
                     result.append(item)
                 elif isinstance(item, str):
@@ -102,8 +104,10 @@ class ShotUpdate(BaseModel):
                 if isinstance(data, list):
                     result = []
                     for item in data:
-                        if isinstance(item, dict) and "角色" in item and "内容" in item:
-                            result.append(NarrationItem(**item))
+                        if isinstance(item, dict):
+                            role = item.get("角色") or item.get("role", "旁白")
+                            content = item.get("内容") or item.get("content", "")
+                            result.append(NarrationItem(角色=role, 内容=content))
                         elif isinstance(item, str):
                             result.append(NarrationItem(角色="旁白", 内容=item))
                     return result
@@ -114,7 +118,9 @@ class ShotUpdate(BaseModel):
             result = []
             for item in v:
                 if isinstance(item, dict):
-                    result.append(NarrationItem(**item))
+                    role = item.get("角色") or item.get("role", "旁白")
+                    content = item.get("内容") or item.get("content", "")
+                    result.append(NarrationItem(角色=role, 内容=content))
                 elif isinstance(item, NarrationItem):
                     result.append(item)
                 elif isinstance(item, str):
@@ -167,26 +173,26 @@ class ShotResponse(BaseModel):
     @field_validator('narration', mode='before')
     @classmethod
     def validate_narration_response(cls, v: Any) -> List[NarrationItem]:
-        """验证 narration 字段，支持从 JSON 字符串解析"""
+        """验证 narration 字段，支持从 JSON 字符串解析，兼容 role/content 和 角色/内容"""
         if v is None:
             return []
-        if isinstance(v, list):
-            return v
         if isinstance(v, str):
             try:
-                data = json.loads(v)
-                if isinstance(data, list):
-                    result = []
-                    for item in data:
-                        if isinstance(item, dict) and "角色" in item and "内容" in item:
-                            result.append(NarrationItem(**item))
-                        elif isinstance(item, str):
-                            result.append(NarrationItem(角色="旁白", 内容=item))
-                    return result
-                else:
-                    return [NarrationItem(角色="旁白", 内容=str(data))]
+                v = json.loads(v)
             except (json.JSONDecodeError, TypeError):
                 return [NarrationItem(角色="旁白", 内容=v)]
+        if isinstance(v, list):
+            result = []
+            for item in v:
+                if isinstance(item, NarrationItem):
+                    result.append(item)
+                elif isinstance(item, dict):
+                    role = item.get("角色") or item.get("role", "旁白")
+                    content = item.get("内容") or item.get("content", "")
+                    result.append(NarrationItem(角色=role, 内容=content))
+                elif isinstance(item, str):
+                    result.append(NarrationItem(角色="旁白", 内容=item))
+            return result
         return []
 
     class Config:
@@ -202,8 +208,11 @@ class ShotResponse(BaseModel):
                 data = json.loads(shot.narration)
                 if isinstance(data, list):
                     for item in data:
-                        if isinstance(item, dict) and "角色" in item and "内容" in item:
-                            narration_list.append(NarrationItem(**item))
+                        if isinstance(item, dict):
+                            # 兼容 角色/内容 和 role/content 两种格式
+                            role = item.get("角色") or item.get("role", "旁白")
+                            content = item.get("内容") or item.get("content", "")
+                            narration_list.append(NarrationItem(角色=role, 内容=content))
                         elif isinstance(item, str):
                             # 兼容旧格式
                             narration_list.append(NarrationItem(角色="旁白", 内容=item))

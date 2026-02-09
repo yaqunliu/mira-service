@@ -2090,7 +2090,7 @@ async def query_generation_tasks_status(
     }
 
 
-# ==================== 批量生成工具（AssetGenerationWorkerNode 专用） ====================
+# ==================== 批量生成工具 ====================
 
 @tool
 async def batch_submit_character_images(

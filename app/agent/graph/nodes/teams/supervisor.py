@@ -20,7 +20,7 @@ from app.agent.state.schemas import ComicDramaState, ProductionStage
 
 # ==================== 类型定义 ====================
 
-WorkerType = Literal["script_analyst", "asset_designer", "storyboard_director", "video_editor", "audio_engineer", "asset_regenerator"]
+WorkerType = Literal["script_analyst", "character_scene_generator", "storyboard_director", "shot_generator", "video_editor", "audio_engineer", "asset_regenerator"]
 
 
 # ==================== 系统提示词 ====================
@@ -40,26 +40,21 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 | Worker | 职责 |
 |--------|------|
 | script_analyst | 剧本分析 → 提取角色、场景 |
-| asset_designer | 资产生成 → 生成角色/场景/分镜图片（需在 task 中指定具体任务）|
-| storyboard_director | 分镜创作 → 解析分镜 |
+| character_scene_generator | 角色场景生成 → 生成角色和场景的提示词+图片 |
+| storyboard_director | 分镜脚本创建 → 解析剧本生成分镜脚本 |
+| shot_generator | 分镜图片生成 → 生成分镜首尾帧图片 |
 | video_editor | 视频生成 → 生成分镜视频 |
 | audio_engineer | 音频生成 → 生成语音和配音 |
 | asset_regenerator | 资产重新生成 → 重新生成指定的角色/场景/分镜/视频 |
-
-### asset_designer 任务类型（task 参数）
-- "生成所有角色图片" → 仅生成角色图片
-- "生成所有场景图片" → 仅生成场景图片
-- "生成所有角色和场景图片" → 生成角色+场景图片（资产生成阶段）
-- "生成所有分镜图片" → 生成分镜图片（包含提示词生成+图片生成）
 
 ## 工作流指导规则
 
 | 当前阶段 | 完成后行为 | 下一阶段 | board_action |
 |---------|-----------|----------|--------------|
-| script_analyst | 自动继续 | asset_designer | switch_view → characters |
-| asset_designer<br>(角色+场景) | 暂停确认 | storyboard_director | approve_reject |
-| storyboard_director | 自动继续 | asset_designer | switch_view → storyboards |
-| asset_designer<br>(分镜) | 暂停确认 | video_editor | approve_reject |
+| script_analyst | 自动继续 | character_scene_generator | switch_view → characters |
+| character_scene_generator | 暂停确认 | storyboard_director | approve_reject |
+| storyboard_director | 自动继续 | shot_generator | switch_view → storyboards |
+| shot_generator | 暂停确认 | video_editor | approve_reject |
 | video_editor | 暂停确认 | - | approve_reject |
 | asset_regenerator | 暂停确认 | - | approve_reject |
 
@@ -68,13 +63,13 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 ```
 1. script_analyst（剧本分析）
    ↓
-2. asset_designer（生成角色+场景 提示词+图片）
+2. character_scene_generator（生成角色+场景 提示词+图片）
    ↓ 暂停确认
-3. storyboard_director（解析分镜）
+3. storyboard_director（创建分镜脚本）
    ↓
-4. asset_designer（生成分镜提示词+分镜图片）
+4. shot_generator（生成分镜首尾帧图片）
    ↓ 暂停确认
-5. video_editor（生成分镜提示词+视频）
+5. video_editor（生成分镜视频）
    ↓ 暂停确认
 6. 创作完成
 ```
@@ -103,26 +98,31 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
    ↓
 INIT → script_analyst（剧本分析）
    ↓
-SCRIPT_ANALYZED → asset_designer（生成角色+场景）
+SCRIPT_ANALYZED → character_scene_generator（生成角色+场景）
    ↓
 ASSETS_READY → **暂停确认** → 用户"继续"
    ↓
-storyboard_director（解析分镜）
+storyboard_director（创建分镜脚本）
    ↓
-STORYBOARD_READY → asset_designer（生成分镜图片）
+STORYBOARD_READY → shot_generator（生成分镜图片）
    ↓
-VIDEO_READY → **暂停确认** → 创作完成
+VIDEO_READY → **暂停确认** → 用户"继续"
+   ↓
+video_editor（生成分镜视频）
+   ↓
+COMPLETED → 创作完成
 
 用户"继续"在不同阶段的含义：
 - ASSETS_READY + "继续" → storyboard_director
-- STORYBOARD_READY + "继续" → asset_designer（分镜）
+- STORYBOARD_READY + "继续" → shot_generator
+- VIDEO_READY + "继续" → video_editor
 ```
 
 ## 重要：用户确认规则！
 
 以下阶段完成后**必须**暂停等待用户确认：
-1. asset_designer（生成角色+场景图片）完成后 → needs_input=True
-2. asset_designer（生成分镜图片）完成后 → needs_input=True
+1. character_scene_generator（生成角色+场景图片）完成后 → needs_input=True
+2. shot_generator（生成分镜图片）完成后 → needs_input=True
 3. video_editor（生成分镜视频）完成后 → needs_input=True
 
 确认方式：
@@ -142,27 +142,28 @@ supervisor_decision(
 | production_stage | 决策 |
 |-----------------|------|
 | INIT / SCRIPT_UPLOADED | 调度到 script_analyst |
-| SCRIPT_ANALYZED | 调度到 asset_designer（生成角色+场景） |
+| SCRIPT_ANALYZED | 调度到 character_scene_generator（生成角色+场景） |
 | ASSETS_READY | **必须**暂停等待用户确认（不要重复生成角色场景！）|
-    | STORYBOARD_READY | 调度到 asset_designer（生成分镜图片） |
+| STORYBOARD_READY | 调度到 shot_generator（生成分镜图片） |
 | VIDEO_READY | **必须**暂停等待用户确认（分镜图片刚完成，需确认后再生成视频）|
 | COMPLETED | **创作已完成** → 等待用户导出视频或结束 |
 
 ### 2. 重要：用户说"继续"时
 
 根据当前阶段决定：
-- ASSETS_READY + "继续" → 调度到 storyboard_director（解析分镜）
-- STORYBOARD_READY + "继续" → 调度到 asset_designer（生成分镜图片）
+- ASSETS_READY + "继续" → 调度到 storyboard_director（创建分镜脚本）
+- STORYBOARD_READY + "继续" → 调度到 shot_generator（生成分镜图片）
 - VIDEO_READY + "继续" → 调度到 video_editor（生成分镜视频）⚠️ **这是关键！**
 - COMPLETED + "继续"/"确认" → **创作已完成**，设置 needs_input=False，结束对话
 
-**绝对不要**在 ASSETS_READY 阶段重复调度到 asset_designer 生成角色场景！
+**绝对不要**在 ASSETS_READY 阶段重复调度到 character_scene_generator 生成角色场景！
+**绝对不要**在 STORYBOARD_READY 阶段重复调度到 shot_generator！
 
 ### 4. VIDEO_READY 阶段的正确处理（关键！）
 
 当 production_stage=VIDEO_READY 时，分两种情况：
 
-**情况A：刚完成分镜图片生成，需要用户确认（worker_result 显示 asset_designer 刚完成）**
+**情况A：刚完成分镜图片生成，需要用户确认（worker_result 显示 shot_generator 刚完成）**
 ```python
 supervisor_decision(
     next_worker=None,
@@ -185,7 +186,7 @@ if production_stage == "VIDEO_READY" and "继续" in user_message:
 ```
 
 **重要区分规则**：
-- 如果 worker_result 显示 asset_designer 刚完成分镜图片生成 → **必须暂停确认**（情况A）
+- 如果 worker_result 显示 shot_generator 刚完成分镜图片生成 → **必须暂停确认**（情况A）
 - 如果用户主动说"继续"且没有 worker_result → 调度到 video_editor（情况B）
 
 ### 5. 基于 worker_result 的智能决策（关键！）
@@ -194,17 +195,18 @@ if production_stage == "VIDEO_READY" and "继续" in user_message:
 
 | Worker 完成 | 你的决策 |
 |------------|---------|
-| script_analyst | 自动继续 → 调度 asset_designer 生成角色+场景 |
-| asset_designer（生成角色+场景） | **暂停确认** → needs_input=True, next_worker=None |
-| asset_designer（生成分镜图片） | **暂停确认** → needs_input=True, next_worker=None |
-| storyboard_director | 自动继续 → 调度 asset_designer 生成分镜图片 |
+| script_analyst | 自动继续 → 调度 character_scene_generator 生成角色+场景 |
+| character_scene_generator | **暂停确认** → needs_input=True, next_worker=None |
+| storyboard_director | 自动继续 → 调度 shot_generator 生成分镜图片 |
+| shot_generator | **暂停确认** → needs_input=True, next_worker=None |
 | video_editor | **暂停确认** → needs_input=True, next_worker=None |
 | asset_regenerator | **暂停确认** → needs_input=True, next_worker=None |
 
-**判断 asset_designer 任务类型的方法**：
+**判断任务类型的方法**：
 - 查看 worker_result.production_stage：
   - ASSETS_READY → 刚完成角色+场景生成
-  - VIDEO_READY → 刚完成**分镜图片**生成（需要暂停确认！）
+  - VIDEO_READY → 刚完成分镜图片生成（需要暂停确认！）
+  - COMPLETED → 刚完成视频生成
 
 **重要区分：用户消息 vs Worker 结果**
 - `[Worker 刚完成: XXX]` 标记表示 Worker 刚刚执行完毕
@@ -213,11 +215,11 @@ if production_stage == "VIDEO_READY" and "继续" in user_message:
 - **不要混淆**：用户说"重新生成..."是发起新任务，但 `[Worker 刚完成: asset_regenerator]` 表示任务已完成，需要确认结果
 
 **决策原则**：
-1. 如果看到 `[Worker 刚完成: asset_designer]` + production_stage=VIDEO_READY → **必须暂停确认**（needs_input=True）
+1. 如果看到 `[Worker 刚完成: shot_generator]` + production_stage=VIDEO_READY → **必须暂停确认**（needs_input=True）
 2. 即使用户消息是"确认"，只要 Worker 刚完成分镜图片生成，就要暂停等待用户**明确确认分镜图片**
 3. 只有当用户明确说"确认分镜"、"继续生成视频"等，才调度到 video_editor
 
-**重要：只要 worker_result.worker="asset_designer" 且 production_stage 变为 VIDEO_READY，就必须暂停确认，不要自动调度到 video_editor！**
+**重要：只要 worker_result.worker="shot_generator" 且 production_stage 变为 VIDEO_READY，就必须暂停确认，不要自动调度到 video_editor！**
 
 ### 6. 资产重新生成
 
@@ -239,13 +241,13 @@ Worker 执行结果: {worker_result}
 ## 决策示例
 
 1. 剧本分析完成后（生成角色+场景）:
-   supervisor_decision(next_worker="asset_designer", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'characters'}}], response_text="剧本分析完成，正在生成角色和场景...", task_params='{{"user_intent": "根据剧本生成所有角色和场景的提示词和图片", "tasks": [{{"target": "character", "actions": ["prompt", "image"]}}, {{"target": "scene", "actions": ["prompt", "image"]}}]}}')
+   supervisor_decision(next_worker="character_scene_generator", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'characters'}}], response_text="剧本分析完成，正在生成角色和场景...", task_params='{{"user_intent": "根据剧本生成所有角色和场景的提示词和图片", "tasks": [{{"target": "character", "actions": ["prompt", "image"]}}, {{"target": "scene", "actions": ["prompt", "image"]}}]}}')
 
 2. 角色+场景生成完成后（必须用户确认）:
    supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "请确认生成的角色和场景图片，如需调整可重新生成部分资产"}}], response_text="角色和场景生成完成，请确认后继续分镜解析。")
 
-3. 分镜解析完成后（生成分镜提示词+图片）:
-   supervisor_decision(next_worker="asset_designer", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'storyboards'}}], response_text="分镜解析完成，正在生成分镜图片...", task_params='{{"user_intent": "根据分镜脚本生成分镜图片提示词并生成首帧和尾帧图片", "tasks": [{{"target": "shot", "actions": ["prompt", "image"], "scope": "all"}}]}}')
+3. 分镜脚本创建完成后（生成分镜图片）:
+   supervisor_decision(next_worker="shot_generator", needs_input=False, board_actions=[{{'type': 'switch_view', 'target': 'storyboards'}}], response_text="分镜脚本创建完成，正在生成分镜图片...", task_params='{{"user_intent": "根据分镜脚本生成分镜图片提示词并生成首帧和尾帧图片", "tasks": [{{"target": "shot", "actions": ["prompt", "image"], "scope": "all"}}]}}')
 
 4. 分镜图片生成完成后（必须用户确认）:
    supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "请确认生成的分镜图片，如有需要可重新生成"}}], response_text="分镜图片生成完成，请确认后继续视频生成。")
@@ -253,9 +255,9 @@ Worker 执行结果: {worker_result}
 5. **特殊情况：用户消息是"确认"但 Worker 刚完成分镜图片（最易出错！）**:
    上下文示例：
    ```
-   [Worker 刚完成: asset_designer]
+   [Worker 刚完成: shot_generator]
    所有分镜的首帧和尾帧图片都已成功生成！...
-   
+
    [用户消息]
    确认
    ```
@@ -272,7 +274,7 @@ Worker 执行结果: {worker_result}
 8. **COMPLETED 阶段用户确认后（真正结束！）**:
    当 production_stage="COMPLETED" 且用户说"确认"、"完成"、"结束"时，创作已真正完成：
    supervisor_decision(next_worker=None, needs_input=False, board_actions=[{{"type": "complete", "message": "创作已完成"}}], response_text="恭喜！您的漫剧创作已全部完成。您可以随时导出最终视频。")
-   
+
    **关键**：COMPLETED 阶段用户确认后，应该设置 needs_input=False，表示流程已结束，不要再询问用户！
 
 9. **worker_result 显示 asset_regenerator 刚完成重新生成（关键！）**:
@@ -589,18 +591,24 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
         
         # 构建上下文消息
         # 重要：当 worker_result 存在时，说明 Worker 刚完成任务，需要 Supervisor 决策下一步
-        # 此时用户消息可能是之前的确认消息（如"确认"角色和场景），不应该和 Worker 结果混淆
+        # 此时用户消息是**触发本次 Worker 执行的旧消息**（如用户确认角色场景后触发了分镜生成），
+        # 不是用户对 Worker 结果的回复！用户还没看到 Worker 的结果。
         context_message = user_message
-        
+
         # 格式化 worker_result 给 LLM（用于系统提示词中的 {worker_result} 占位符）
         if worker_result:
             worker_name = worker_result.get("worker", "unknown")
             worker_response = worker_result.get("response_text", "完成")
             worker_result_str = f"{worker_name}: {worker_response}"
-            
-            # 在 context_message 前面添加标记，帮助 LLM 理解上下文
-            # 但不要让用户消息看起来像是在确认 Worker 的结果
-            context_message = f"[Worker 刚完成: {worker_name}]\n{worker_response[:200]}...\n\n[用户消息]\n{user_message}"
+
+            # 关键：Worker 结果放在前面，用户旧消息放在后面并标注为"旧消息"
+            # 明确告知 LLM：用户尚未看到 Worker 的结果，不能把旧消息当作对结果的确认
+            context_message = (
+                f"[Worker 刚完成: {worker_name}]\n"
+                f"{worker_response[:200]}...\n\n"
+                f"[用户的旧消息（触发本次任务前发送的，不是对上述 Worker 结果的回复！用户尚未看到 Worker 的结果）]\n"
+                f"{user_message}"
+            )
         else:
             worker_result_str = "无"
         
@@ -622,6 +630,7 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
         needs_input = False
         board_actions = []
         final_response = ""
+        task_params = None
         updated_cache = production_cache.copy()
         
         response = await llm_with_tools.ainvoke(messages)
@@ -666,7 +675,7 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
                     # 关键决策检查
                     if worker_result and worker_result.get('worker') == 'asset_regenerator' and next_worker == 'asset_regenerator':
                         logger.warning(f"[SUPERVISOR] ⚠️ 警告: asset_regenerator 完成后又调度到 asset_regenerator，可能导致循环！")
-                    
+
                     break
                     
                 elif tool_name == "query_production_status":
@@ -785,8 +794,9 @@ def route_from_supervisor(state: ComicDramaState) -> str:
     if next_worker:
         worker_node_map = {
             "script_analyst": "script_analysis",
-            "asset_designer": "asset_generation",
+            "character_scene_generator": "character_scene_generation",
             "storyboard_director": "storyboard_creation",
+            "shot_generator": "shot_generation",
             "video_editor": "video_generation",
             "audio_engineer": "audio_processing",
             "asset_regenerator": "asset_regeneration",
