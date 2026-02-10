@@ -38,6 +38,11 @@ from app.agent.graph.nodes.teams.shot_generation_worker import (
     ShotGenerationWorkerNode,
     generate_shot_worker,
 )
+# 新增：视频提示词构建 Worker
+from app.agent.graph.nodes.teams.video_prompt_builder import (
+    VideoPromptBuilderNode,
+    video_prompt_builder_worker,
+)
 
 __all__ = [
     # Supervisor
@@ -58,5 +63,8 @@ __all__ = [
     # Shot Generation (新版)
     "ShotGenerationWorkerNode",
     "generate_shot_worker",
+    # Video Prompt Builder
+    "VideoPromptBuilderNode",
+    "video_prompt_builder_worker",
 ]
 

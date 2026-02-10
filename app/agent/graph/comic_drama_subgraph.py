@@ -428,6 +428,49 @@ async def editing_node(state: ComicDramaState) -> Dict[str, Any]:
     return result
 
 
+async def video_prompt_builder_node(state: ComicDramaState) -> Dict[str, Any]:
+    """
+    视频提示词构建节点
+
+    委托给 VideoPromptBuilderNode 执行（ReAct 架构）
+    为每个分镜构建带 @引用的视频提示词，分析相邻分镜连续性决定 extend/new 模式
+    """
+    logger.info("[SubgraphNode] video_prompt_builder: 委托给 VideoPromptBuilderNode")
+
+    from datetime import datetime
+    messages = list(state.get("messages", []))
+    messages.append({
+        "role": "assistant",
+        "content": "正在为分镜构建视频提示词，分析分镜连续性...",
+        "timestamp": datetime.now().isoformat(),
+        "node": "video_prompt_builder",
+        "metadata": {"stage": "video_prompt_builder", "action": "start"},
+    })
+
+    from app.agent.graph.nodes.teams.video_prompt_builder import VideoPromptBuilderNode
+    worker = VideoPromptBuilderNode()
+
+    updated_state = dict(state)
+    updated_state["messages"] = messages
+
+    result = await worker.run(updated_state)
+
+    if "messages" not in result:
+        result["messages"] = messages
+
+    # 确保返回结果包含 worker_result
+    if "worker_result" not in result:
+        result["worker_result"] = {
+            "worker": "video_prompt_builder",
+            "summary": result.get("response_text", "视频提示词构建完成"),
+            "success": result.get("success", False),
+            "completed": True,
+            "response_text": result.get("response_text", ""),
+        }
+
+    return result
+
+
 async def asset_regeneration_node(state: ComicDramaState) -> Dict[str, Any]:
     """
     资产重新生成节点
@@ -498,7 +541,7 @@ def build_comic_drama_subgraph() -> StateGraph:
     workflow.add_node("video_generation", video_generation_node)
     workflow.add_node("editing", editing_node)
     workflow.add_node("asset_regeneration", asset_regeneration_node)
-    
+
     # 辅助节点
     workflow.add_node("error_handler", error_handler_node)
     
