@@ -183,16 +183,8 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
             logger.info(f"  - operation_type: {operation_type}")
             logger.info(f"  - frame_type: {frame_type}")
         else:
-            logger.info(f"[ASSET_REGENERATOR] 无 Supervisor 参数，使用关键词检测")
-            target_type = self._detect_target_type(user_message)
-            operation_type = self._detect_operation_type(user_message)
-            frame_type = self._detect_frame_type(user_message) if target_type == "shot" else "both"
-            target_id = self._extract_target_id(user_message)
-            logger.info(f"[ASSET_REGENERATOR] 关键词检测结果:")
-            logger.info(f"  - target_type: {target_type}")
-            logger.info(f"  - operation_type: {operation_type}")
-            logger.info(f"  - frame_type: {frame_type}")
-            logger.info(f"  - target_id: {target_id}")
+            logger.warning(f"[ASSET_REGENERATOR] 无 Supervisor 参数（task_params 为空），无法执行")
+            return "错误：缺少 task_params 参数，无法确定操作意图。请通过 Supervisor 传递任务参数。"
 
         # 构建系统提示词
         tool_guide = self._get_tool_usage_guide(target_type, operation_type, frame_type, target_id, creation_uuid)
@@ -217,95 +209,6 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 请按照上述指南，调用相应工具完成任务。
 """
         return base_prompt
-
-    async def _parse_intent_with_llm(self, user_message: str) -> Dict[str, str]:
-        """
-        使用 LLM 解析用户意图（替代硬编码关键词匹配）
-
-        返回:
-            - target_type: "character" | "scene" | "shot"
-            - operation_type: "generate_prompt" | "generate_image" | "generate_video" | "modify_prompt"
-            - frame_type: "start" | "end" | "both"
-            - target_id: int (可选，LLM 从消息中提取)
-        """
-        prompt = f"""分析用户消息，提取以下参数：
-
-用户消息：{user_message}
-
-请以 JSON 格式返回分析结果（必须是合法的 JSON）：
-{{
-    "target_type": "character/scene/shot",
-    "operation_type": "generate_prompt/generate_image/generate_video/modify_prompt",
-    "frame_type": "start/end/both",
-    "target_id": null 或数字,
-    "reasoning": "简要说明判断理由"
-}}
-
-判断规则：
-1. target_type:
-   - "character": 明确提到角色相关（角色、人物、character）
-   - "scene": 明确提到场景相关（场景、背景、scene）
-   - "shot": 明确提到分镜相关（分镜、镜头、shot）或没有明确类型
-
-2. operation_type:
-   - "generate_video": 明确提到视频（视频、video、生视频）
-   - "generate_image": 明确提到图片（图、生图、图像）
-   - "modify_prompt": 提到"修改"、"优化"提示词
-   - "generate_prompt": 明确提到提示词（提示词、prompt）或没有明确指定
-
-3. frame_type:
-   - "start": 明确提到"首帧"、"第一帧"
-   - "end": 明确提到"尾帧"、"最后一帧"
-   - "both": 其他情况或默认
-
-4. target_id:
-   - 如果用户提到了具体的 ID（如"角色123"、"分镜5"），提取数字
-   - 否则为 null
-"""
-
-        try:
-            llm = self._get_llm()
-            response = await llm.ainvoke(prompt)
-            content = response.content.strip()
-
-            import json
-            import re
-
-            json_match = re.search(r'\{[\s\S]*\}', content)
-            if json_match:
-                json_str = json_match.group()
-                result = json.loads(json_str)
-
-                return {
-                    "target_type": result.get("target_type", "shot"),
-                    "operation_type": result.get("operation_type", "generate_image"),
-                    "frame_type": result.get("frame_type", "both"),
-                    "target_id": result.get("target_id"),
-                }
-        except Exception as e:
-            logger.warning(f"[AssetRegenerator] LLM 意图解析失败，使用关键词匹配: {e}")
-
-        return {
-            "target_type": self._detect_target_type(user_message),
-            "operation_type": self._detect_operation_type(user_message),
-            "frame_type": self._detect_frame_type(user_message),
-            "target_id": self._extract_target_id(user_message),
-        }
-
-    def _extract_target_id(self, user_message: str) -> Optional[int]:
-        """从用户消息中提取目标 ID"""
-        import re
-        patterns = [
-            r'[角色角色编号]\s*[:：]?\s*(\d+)',
-            r'[场景场景编号]\s*[:：]?\s*(\d+)',
-            r'[分镜分镜编号]\s*[:：]?\s*(\d+)',
-            r'[编号No\.#]\s*(\d+)',
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, user_message)
-            if match:
-                return int(match.group(1))
-        return None
 
     def _map_operation_type(self, op_type: str) -> str:
         """将 Supervisor 的 operation_type 映射为工具指南使用的格式"""
@@ -839,60 +742,6 @@ frame_type 自动检测规则：
 """
         
         return guide
-    
-    def _detect_target_type(self, user_message: str) -> str:
-        """
-        检测目标类型（角色/场景/分镜）
-        """
-        msg_lower = user_message.lower()
-        
-        if any(kw in msg_lower for kw in ["角色", "人物", "演员"]):
-            return "character"
-        
-        if any(kw in msg_lower for kw in ["场景", "背景", "环境"]):
-            return "scene"
-        
-        return "shot"
-    
-    def _detect_operation_type(self, user_message: str) -> str:
-        """
-        检测操作类型（图片/视频/提示词/修改提示词）
-        """
-        msg_lower = user_message.lower()
-        
-        if any(kw in msg_lower for kw in ["视频", "video", "motion"]):
-            return "video"
-        
-        # 修改提示词 - 使用 submit_*_prompt_regeneration (operation_type="modify")
-        if any(kw in msg_lower for kw in ["修改提示词", "改一下提示词", "优化提示词", "调整提示词", "更新提示词"]):
-            return "modify_prompt"
-        
-        # 生成提示词 - 使用 submit_*_prompt_regeneration (operation_type="regenerate")
-        if any(kw in msg_lower for kw in ["生成提示词", "重新生成提示词", "生图提示词", "生视频提示词", "提示词"]):
-            return "prompt"
-        
-        if any(kw in msg_lower for kw in ["图片", "图像", "image", "图", "生图"]):
-            return "image"
-        
-        return "image"  # 默认图片生成
-    
-    def _detect_frame_type(self, user_message: str) -> str:
-        """
-        检测分镜帧类型（首帧/尾帧/全部）
-        仅用于分镜图片生成
-        """
-        msg_lower = user_message.lower()
-        
-        # 只生成首帧
-        if any(kw in msg_lower for kw in ["首帧", "第一帧", "开始帧", "start"]):
-            return "start"
-        
-        # 只生成尾帧
-        if any(kw in msg_lower for kw in ["尾帧", "最后一帧", "结束帧", "end"]):
-            return "end"
-        
-        # 默认生成全部
-        return "both"
     
     def get_tools(self) -> List:
         """
