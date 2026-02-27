@@ -43,6 +43,11 @@ from app.agent.graph.nodes.teams.video_prompt_builder import (
     VideoPromptBuilderNode,
     video_prompt_builder_worker,
 )
+# 新增：视频生成 Worker
+from app.agent.graph.nodes.teams.video_generator import (
+    VideoGeneratorNode,
+    video_generator_worker,
+)
 
 __all__ = [
     # Supervisor
@@ -66,5 +71,8 @@ __all__ = [
     # Video Prompt Builder
     "VideoPromptBuilderNode",
     "video_prompt_builder_worker",
+    # Video Generator
+    "VideoGeneratorNode",
+    "video_generator_worker",
 ]
 

@@ -1160,7 +1160,7 @@ class AIClient:
             Exception: 其他错误
         """
         # Debug 模式：直接返回固定视频地址
-        if settings.DEBUG_GENERATE:
+        if settings.DEBUG_GENERATE_VIDEO:
             logger.info(f"[DEBUG] 视频生成模式，直接返回固定地址: {settings.DEBUG_GENERATE_VIDEO_URL}")
             return settings.DEBUG_GENERATE_VIDEO_URL
         
@@ -1270,7 +1270,7 @@ class AIClient:
             Exception: 其他错误
         """
         # Debug 模式：直接返回固定视频地址
-        if settings.DEBUG_GENERATE:
+        if settings.DEBUG_GENERATE_VIDEO:
             logger.info(f"[DEBUG] 图生视频模式，直接返回固定地址: {settings.DEBUG_GENERATE_VIDEO_URL}")
             return settings.DEBUG_GENERATE_VIDEO_URL
         
@@ -1744,7 +1744,7 @@ class AIClient:
         """
         通用的 Modelverse 视频生成调用（包含提交和轮询）
         """
-        if settings.DEBUG_GENERATE:
+        if settings.DEBUG_GENERATE_VIDEO:
             return settings.DEBUG_GENERATE_VIDEO_URL
         # 统一使用 Bearer Token
         auth_token = self.sora2_api_key
@@ -1885,7 +1885,7 @@ class AIClient:
             AIRetryExhaustedError: 重试次数耗尽
         """
         # Debug 模式：直接返回固定图片地址
-        if settings.DEBUG_GENERATE:
+        if settings.DEBUG_GENERATE_IMAGE:
             logger.info(f"[DEBUG] 图片生成模式，直接返回固定地址: {settings.DEBUG_GENERATE_IMAGE_URL}")
             return settings.DEBUG_GENERATE_IMAGE_URL
         
@@ -2085,7 +2085,7 @@ class AIClient:
         """
         执行图生图调用的内部方法（不包含重试逻辑）
         """
-        if settings.DEBUG_GENERATE:
+        if settings.DEBUG_GENERATE_IMAGE:
             return settings.DEBUG_GENERATE_IMAGE_URL
 
         # 检查是否为 Gemini 模型

@@ -378,27 +378,27 @@ async def audio_processing_node(state: ComicDramaState) -> Dict[str, Any]:
 async def video_generation_node(state: ComicDramaState) -> Dict[str, Any]:
     """
     视频生成节点
-    
-    委托给 VideoEditorNode 执行
+
+    委托给 VideoGeneratorNode 执行（读取 video_prompt + references，调用视频生成 API）
     """
-    logger.info("[SubgraphNode] video_generation: 委托给 VideoEditorNode")
-    
-    from app.agent.graph.nodes.teams.video_editor import VideoEditorNode
-    editor = VideoEditorNode()
-    result = await editor.run(state)
-    
+    logger.info("[SubgraphNode] video_generation: 委托给 VideoGeneratorNode")
+
+    from app.agent.graph.nodes.teams.video_generator import VideoGeneratorNode
+    generator = VideoGeneratorNode()
+    result = await generator.run(state)
+
     # 添加 worker_result 供 Supervisor 使用
     video_count = result.get("generated_videos", 0)
     response_text = result.get("response_text", f"视频生成完成：{video_count} 个视频")
-    
+
     result["worker_result"] = {
-        "worker": "video_editor",
+        "worker": "video_generator",
         "summary": f"生成了 {video_count} 个视频",
         "success": True,
         "completed": True,
         "response_text": response_text,
     }
-    
+
     return result
 
 
@@ -536,7 +536,7 @@ def build_comic_drama_subgraph() -> StateGraph:
     workflow.add_node("script_analysis", script_analysis_node)
     workflow.add_node("character_scene_generation", character_scene_generation_node)
     workflow.add_node("storyboard_creation", storyboard_creation_node)
-    workflow.add_node("shot_generation", shot_generation_node)
+    workflow.add_node("video_prompt_builder", video_prompt_builder_node)
     workflow.add_node("audio_processing", audio_processing_node)
     workflow.add_node("video_generation", video_generation_node)
     workflow.add_node("editing", editing_node)
@@ -558,7 +558,7 @@ def build_comic_drama_subgraph() -> StateGraph:
             "script_analysis": "script_analysis",
             "character_scene_generation": "character_scene_generation",
             "storyboard_creation": "storyboard_creation",
-            "shot_generation": "shot_generation",
+            "video_prompt_builder": "video_prompt_builder",
             "audio_processing": "audio_processing",
             "video_generation": "video_generation",
             "editing": "editing",
@@ -572,7 +572,7 @@ def build_comic_drama_subgraph() -> StateGraph:
         "script_analysis",
         "character_scene_generation",
         "storyboard_creation",
-        "shot_generation",
+        "video_prompt_builder",
         "audio_processing",
         "video_generation",
         "editing",

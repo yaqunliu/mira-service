@@ -570,162 +570,101 @@ class AssetRegeneratorWorkerNode(ReActWorkerNode):
 2. 调用 query_generation_tasks_status 等待任务完成
 3. 汇报最终结果给用户
 """
-            elif mapped_op_type == "image":
-                guide = base_guide + f"""
-### 分镜图片生成流程（直接提交并等待完成）
-
-**Step 1: 获取所有资源信息**
-- 工具: `query_all_shots`
-- 参数: creation_uuid
-- 说明: 一次性获取所有分镜、角色、场景信息，从 shots 列表中找到匹配的分镜编号
-
-**Step 2: 提交图片生成任务**
-- 工具: `submit_shot_image_regeneration`
-- 参数:
-  - shot_id (从 Step 1 获取)
-  - creation_uuid
-  - frame_type="{frame_type}"  # 检测到的帧类型
-- 说明: 提交图片生成任务，返回 task_id
-
-**Step 3: 查询任务状态（阻塞等待完成）**
-- 工具: `query_generation_tasks_status`
-- 参数:
-  - task_ids: [task_id]
-  - target_info: [{{"target_type": "shot", "target_id": shot_id}}]
-  - timeout: 1200
-  - poll_interval: 2.0
-- 说明: 轮询查询任务状态，直到任务完成或超时
-
-**Step 4: 汇报生成结果**
-- 根据查询结果，汇报生成成功或失败
-
-【重要】用户说"生成图片"时：
-1. 提交生成任务获取 task_id
-2. 调用 query_generation_tasks_status 等待任务完成
-3. 汇报最终结果给用户
-
-根据用户消息自动检测 frame_type：
-- "首帧"、"第一帧" → frame_type="start"
-- "尾帧"、"最后一帧" → frame_type="end"
-- 无明确指定 → frame_type="both"
-"""
             elif mapped_op_type == "prompt":
                 guide = base_guide + f"""
-### 分镜提示词生成流程（Node 生成）
+### 分镜视频提示词生成流程（三维度 + @引用格式）
 
 **Step 1: 获取所有资源信息**
 - 工具: `query_all_shots`
-- 参数: creation_uuid
-- 说明: 一次性获取所有分镜、角色、场景信息，从 shots 列表中找到目标分镜及其关联的场景和角色
+- 参数: creation_uuid="{creation_uuid}"
+- 说明: 获取所有分镜、角色、场景信息，找到目标分镜及其关联的场景和角色
+- **记住角色名和场景名**，后续提示词中要用 @引用
 
-**Step 2: 判断提示词类型**
-- 图片提示词：prompt_type="image"
-- 视频提示词：prompt_type="video"
-
-**Step 3: 获取提示词模板**
-- 图片提示词：工具 `get_shot_image_prompt_template`，参数 frame_type="{frame_type}"
-- 视频提示词：工具 `get_shot_video_prompt_template`
-
-**Step 4: 查询知识库（仅视频提示词需要）**
-- 工具: `query_knowledge_for_video`
-- 参数:
-  - shot_description: 分镜描述（从 shot_info 获取）
-  - query_keywords: **你提取的关键词列表**（如 ["运镜", "特写", "手持"]，不要传整个描述！）
-  - top_k: 5
+**Step 2: 查询知识库**
+- 工具: `batch_query_knowledge_for_video`
+- 参数: query_keywords（从分镜内容提取 3-5 个关键词）
 - 说明: 查询运镜技巧、构图法则等专业知识
-- **重要**: 自己分析分镜内容，提取 3-5 个关键词，不要直接传整个 shot_description！
 
-**Step 5: 生成提示词（Node 自身完成）**
+**Step 3: 生成提示词（Node 自身完成）**
 - 不需要调用工具！
-- 基于 shot_info、scene_info、template_content 和知识库结果
-- 使用你的 LLM 能力生成提示词
-- 使用视觉风格: {visual_style}
-- **当 frame_type="both" 时，必须分别生成首帧和尾帧两个不同的提示词！**
-  - 首帧提示词：侧重画面开始状态
-  - 尾帧提示词：侧重画面结束状态（景别、角度、表情可以有变化）
+- 使用你的 LLM 能力生成视频提示词
+- **必须使用三维度格式**：画面 + 对白 + 背景音
+- **必须使用 @引用**：`@角色名`、`@场景名`、`@分镜N`
+- 名称必须与数据库中的角色名/场景标题**完全匹配**
 
-**Step 6: 保存提示词**
-- 视频提示词：工具 `save_shot_video_prompt`
-- 图片提示词：工具 `save_shot_image_prompt`
-  - **【关键】frame_type="both" 时，必须调用两次：**
-    1. `save_shot_image_prompt(shot_id, 首帧提示词, frame_type="start")`
-    2. `save_shot_image_prompt(shot_id, 尾帧提示词, frame_type="end")`
-  - frame_type="start" 或 "end" 时，只需调用一次
+**提示词格式示例**：
+```
+把@阿九作为画面主体，场景参考@鱼市。
+画面：[0.1～2秒] 全景横镜头，阳光薄雾中的传统鱼市。cut [2～4秒] 中景平视，@阿九瘫坐泡沫箱堆。
+对白：[0.1～10秒] @老王："台词内容"
+背景音：[0.1～3秒] 远处鱼市嘈杂人声铺底。
+```
+
+**叙事原则**：
+- 叙事清晰，拒绝花哨（禁止比喻、文学修辞、情绪解释）
+- 只描述动作、位置、镜头运动
+- 镜头之间有叙事逻辑（整体→局部、远→近）
+- 单镜头时长不超过 3 秒，用 cut 连接多个镜头
+
+**Step 4: 保存提示词**
+- 工具: `save_video_prompt_result`
+- 参数:
+  - shot_id: 分镜 ID
+  - prompt: 你生成的视频提示词（三维度格式）
+  - prompt_params: {{"generation_mode": "new", "duration": 10}}
+  - references: [{{"type": "character", "target_id": 角色ID, "name": "角色名"}}, {{"type": "scene", "target_id": 场景ID, "name": "场景名"}}]
 - 说明: 保存到数据库
-
-frame_type 自动检测规则：
-- "首帧"、"第一帧" → frame_type="start"
-- "尾帧"、"最后一帧" → frame_type="end"
-- 无明确指定 → frame_type="both"
 """
             elif mapped_op_type == "modify_prompt":
                 guide = base_guide + f"""
-### 分镜提示词修改流程（Node 生成）
+### 分镜视频提示词修改流程（三维度 + @引用格式）
 
 **Step 1: 获取所有资源信息**
 - 工具: `query_all_shots`
-- 参数: creation_uuid
-- 说明: 一次性获取所有分镜、角色、场景信息，从 shots 列表中找到目标分镜及其关联的场景和角色
+- 参数: creation_uuid="{creation_uuid}"
+- 说明: 获取所有分镜、角色、场景信息，找到目标分镜及原有提示词
+- **记住角色名和场景名**，修改后的提示词中要用 @引用
 
-**Step 2: 判断提示词类型并提取修改意见**
-- 图片提示词：prompt_type="image"
-- 视频提示词：prompt_type="video"
+**Step 2: 提取修改意见**
 从用户消息中提取修改要求：
 - "修改分镜5的提示词，增加运镜细节" → feedback="增加运镜细节"
 
-**Step 3: 获取提示词模板**
-- 图片提示词：工具 `get_shot_image_prompt_template`，参数 frame_type="{frame_type}"
-- 视频提示词：工具 `get_shot_video_prompt_template`
-
-**Step 4: 查询知识库（仅视频提示词需要）**
-- 工具: `query_knowledge_for_video`
-- 参数:
-  - shot_description: 分镜描述（从 shot_info 获取）
-  - query_keywords: **你提取的关键词列表**（如 ["运镜", "特写", "手持"]，不要传整个描述！）
-  - top_k: 5
+**Step 3: 查询知识库**
+- 工具: `batch_query_knowledge_for_video`
+- 参数: query_keywords（从分镜内容和修改意见提取关键词）
 - 说明: 查询运镜技巧、构图法则等专业知识
-- **重要**: 自己分析分镜内容，提取 3-5 个关键词，不要直接传整个 shot_description！
 
-**Step 5: 生成提示词（Node 自身完成）**
+**Step 4: 修改提示词（Node 自身完成）**
 - 不需要调用工具！
-- 基于 shot_info、scene_info、原提示词、template_content、feedback 和知识库结果
-- 使用你的 LLM 能力修改提示词
+- 基于原提示词 + feedback + 知识库结果，使用你的 LLM 能力修改
+- **必须使用三维度格式**：画面 + 对白 + 背景音
+- **必须使用 @引用**：`@角色名`、`@场景名`、`@分镜N`
+- 叙事清晰，拒绝花哨
 
-**Step 6: 保存提示词**
-- 视频提示词：工具 `save_shot_video_prompt`
-- 图片提示词：工具 `save_shot_image_prompt`
-  - **【关键】frame_type="both" 时，必须调用两次：**
-    1. `save_shot_image_prompt(shot_id, 首帧提示词, frame_type="start")`
-    2. `save_shot_image_prompt(shot_id, 尾帧提示词, frame_type="end")`
-  - frame_type="start" 或 "end" 时，只需调用一次
+**Step 5: 保存提示词**
+- 工具: `save_video_prompt_result`
+- 参数:
+  - shot_id: 分镜 ID
+  - prompt: 修改后的视频提示词（三维度格式）
+  - prompt_params: {{"generation_mode": "new"或"extend", "duration": 时长}}
+  - references: [{{"type": "character", "target_id": 角色ID, "name": "角色名"}}, ...]
 - 说明: 保存到数据库
-
-frame_type 自动检测规则：
-- "首帧"、"第一帧" → frame_type="start"
-- "尾帧"、"最后一帧" → frame_type="end"
-- 无明确指定 → frame_type="both"
 """
             else:
-                guide = base_guide + f"""
-### 分镜图片生成流程（直接提交）
+                guide = base_guide + """
+### 分镜视频生成流程（直接提交）
 
 **Step 1: 获取所有资源信息**
 - 工具: `query_all_shots`
 - 参数: creation_uuid
 - 说明: 一次性获取所有分镜、角色、场景信息，从 shots 列表中找到匹配的分镜编号
 
-**Step 2: 提交图片生成任务**
-- 工具: `submit_shot_image_regeneration`
-- 参数: 
+**Step 2: 提交视频生成任务**
+- 工具: `submit_shot_video_regeneration`
+- 参数:
   - shot_id (从 Step 1 获取)
   - creation_uuid
-  - frame_type="{frame_type}"  # 检测到的帧类型
-- 说明: 提交图片生成任务
-
-frame_type 自动检测规则：
-- "首帧"、"第一帧" → frame_type="start"
-- "尾帧"、"最后一帧" → frame_type="end"
-- 无明确指定 → frame_type="both"
+- 说明: 提交视频生成任务
 """
         
         guide += """
@@ -760,7 +699,6 @@ frame_type 自动检测规则：
             query_all_shots,
             submit_character_image_regeneration,
             submit_scene_image_regeneration,
-            submit_shot_image_regeneration,
             submit_shot_video_regeneration,
             query_generation_tasks_status,
         )
@@ -769,15 +707,14 @@ frame_type 自动检测规则：
         from app.agent.tools.template_tools import (
             get_character_prompt_template,
             get_scene_prompt_template,
-            get_shot_image_prompt_template,
-            get_shot_video_prompt_template,
         )
         # 注意：提示词生成由 Node 自身的 LLM 完成，不需要调用外部工具
         from app.agent.tools.save_tools import (
             save_character_prompt,
             save_scene_prompt,
-            save_shot_image_prompt,
-            save_shot_video_prompt,
+        )
+        from app.agent.tools.video_prompt_builder_tools import (
+            save_video_prompt_result,
         )
         from app.agent.tools.video_knowledge_tools import (
             batch_query_knowledge_for_video,
@@ -790,20 +727,16 @@ frame_type 自动检测规则：
             # === 图片/视频生成（直接提交）===
             submit_character_image_regeneration,
             submit_scene_image_regeneration,
-            submit_shot_image_regeneration,
             submit_shot_video_regeneration,
 
             # === 提示词模板（用于指导 Node 生成提示词）===
             get_character_prompt_template,
             get_scene_prompt_template,
-            get_shot_image_prompt_template,
-            get_shot_video_prompt_template,
 
             # === 保存提示词 ===
             save_character_prompt,
             save_scene_prompt,
-            save_shot_image_prompt,
-            save_shot_video_prompt,
+            save_video_prompt_result,
 
             # === 知识库（批量查询，一次调用替代多次）===
             batch_query_knowledge_for_video,
