@@ -27,10 +27,12 @@ def export_vocab_video_task(self, creation_id: int, user_id: int, shot_ids: list
         creation_id: 创作ID
         user_id: 用户ID
         shot_ids: 分镜ID列表
-        task_uuid: VocabTask UUID（用于更新任务状态）
+        task_uuid: Vocab UUID（用于文件路径）
     """
     db: Session = _get_sync_session_factory()()
     temp_dir = None
+    
+    video_folder = task_uuid or f"creation_{creation_id}"
 
     try:
         self.update_state(state='PROGRESS', meta={'percent': 0, 'status': '开始导出'})
@@ -119,7 +121,7 @@ def export_vocab_video_task(self, creation_id: int, user_id: int, shot_ids: list
         result = us3.upload_file(
             local_file=final_video_path,
             bucket=settings.US3_BUCKET,
-            put_key=f"vocab/{user_id}/{os.path.basename(final_video_path)}"
+            put_key=f"vocab/{video_folder}/{os.path.basename(final_video_path)}"
         )
         
         if result.get("success"):

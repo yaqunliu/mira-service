@@ -72,7 +72,7 @@ async def export_final_video(
             creation_id = creation.creation_id
             owner_id = creation.owner_id
         
-        logger.info(f"[ExportVideo] 准备提交Celery任务: creation_id={creation_id}, owner_id={owner_id}")
+        logger.info(f"[ExportVideo] 准备提交Celery任务: creation_id={creation_id}, creation_uuid={creation_uuid}")
         
         # 提交 celery 任务
         from app.tasks.vocab_export import export_vocab_video_task
