@@ -96,32 +96,41 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 "duration_sec": total_sec,
             }
         
-        # 获取关联的角色及其图片URL
-        # 只处理出镜角色，跳过声音角色（声音角色 basic_info == "声音角色"）
+        # 获取参考图片 - 优先从 extra_data 获取，其次从角色获取
+        extra_data = shot.extra_data or {}
+        reference_images = extra_data.get("reference_images", [])
+        
         character_images = []
         character_profiles = []
-        for character in shot.characters:
-            # 跳过声音角色
-            if character.basic_info == "声音角色":
-                logger.info(f"跳过声音角色 {character.name}，不加入图片提示词生成")
-                continue
+        
+        # 如果 extra_data 中有参考图，使用它
+        if reference_images:
+            logger.info(f"[Shot {shot_id}] 使用 extra_data 中的参考图片: {reference_images}")
+            character_images = reference_images
+        else:
+            # 否则从角色表获取
+            for character in shot.characters:
+                # 跳过声音角色
+                if character.basic_info == "声音角色":
+                    logger.info(f"跳过声音角色 {character.name}，不加入图片提示词生成")
+                    continue
 
-            if character.image_url:
-                character_images.append(character.image_url)
-                # 构建角色档案描述
-                profile_parts = []
-                if character.name:
-                    profile_parts.append(f"姓名: {character.name}")
-                if character.appearance:
-                    profile_parts.append(f"外貌: {character.appearance}")
-                if character.body:
-                    profile_parts.append(f"身材: {character.body}")
-                if character.hair:
-                    profile_parts.append(f"发型: {character.hair}")
-                if character.clothing:
-                    profile_parts.append(f"服装: {character.clothing}")
-                if profile_parts:
-                    character_profiles.append("，".join(profile_parts))
+                if character.image_url:
+                    character_images.append(character.image_url)
+                    # 构建角色档案描述
+                    profile_parts = []
+                    if character.name:
+                        profile_parts.append(f"姓名: {character.name}")
+                    if character.appearance:
+                        profile_parts.append(f"外貌: {character.appearance}")
+                    if character.body:
+                        profile_parts.append(f"身材: {character.body}")
+                    if character.hair:
+                        profile_parts.append(f"发型: {character.hair}")
+                    if character.clothing:
+                        profile_parts.append(f"服装: {character.clothing}")
+                    if profile_parts:
+                        character_profiles.append("，".join(profile_parts))
         
         # 添加场景图片作为参考图（如果有）
         if shot.scene and shot.scene.image_url:

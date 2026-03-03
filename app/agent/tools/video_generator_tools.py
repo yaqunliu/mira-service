@@ -112,7 +112,12 @@ async def submit_video_generation(
                     })
 
             logger.info(f"[VideoGenerator] 解析引用完成: {len(resolved_refs)} 个资源")
-            logger.info(f"[VideoGenerator] prompt_params: {prompt_params}")
+            logger.info(f"[VideoGenerator] ====== VIDEO PROMPT ======")
+            logger.info(f"[VideoGenerator] {video_prompt}")
+            logger.info(f"[VideoGenerator] ====== PROMPT PARAMS ======")
+            logger.info(f"[VideoGenerator] {prompt_params}")
+            logger.info(f"[VideoGenerator] ====== REFERENCES ======")
+            logger.info(f"[VideoGenerator] {resolved_refs}")
 
             # TODO: 替换为真实的 Seedance 2.0 API 调用
             # 当前使用 DEBUG_GENERATE_VIDEO_URL 作为占位

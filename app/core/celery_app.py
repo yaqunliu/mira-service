@@ -27,6 +27,8 @@ app = Celery(
         "app.tasks.subscription_sync_task",
         "app.tasks.subscription_expire_task",
         "app.tasks.video_export",
+        "app.tasks.vocab_export",
+        "app.tasks.vocab_video_gen",
         # Agent 专用 Tasks
         "app.agent.tasks.image_tasks",
         "app.agent.tasks.video_tasks",

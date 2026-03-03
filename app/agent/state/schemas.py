@@ -95,6 +95,25 @@ class ProductionStage(StrEnum):
     ERROR = "error"
 
 
+class CreationType(StrEnum):
+    """创作类型枚举"""
+    COMIC_DRAMA = "comic_drama"
+    VOCAB = "vocab"
+
+
+class VocabConfig(TypedDict, total=False):
+    """英语单词视频配置"""
+    words: List[str]
+    word_count: int
+    word_repeat_count: int
+    translation_repeat_count: int
+    enable_sentence_video: bool
+    voice_gender: Literal["female", "male"]
+    voice_age: Literal["child", "adult"]
+    sentence_level: Literal["kindergarten", "primary", "middle"]
+    style: str
+
+
 class BoardActionType(StrEnum):
     """
     Board 交互类型 - 用于人工介入
@@ -189,6 +208,11 @@ class ComicDramaState(TypedDict, total=False):
 
     # ==================== 配置信息 ====================
     config: Dict[str, Any]  # 配置选项（模型选择、生成策略等）
+
+    # ==================== 创作类型 ====================
+    creation_type: Optional[CreationType]  # 创作类型
+    vocab_config: Optional[VocabConfig]  # 单词视频配置
+    task_id: Optional[str]  # 单词视频任务ID
 
     # ==================== 元数据 ====================
     created_at: Optional[str]  # 创建时间（ISO 格式）

@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     ARK_VIDEO_RETRY_DELAY: int = 5  # 视频生成重试间隔（秒）
 
     # Sora2 视频生成配置（使用 OPENAI_API_KEY 和 OPENAI_BASE_URL）
-    SORA2_MODEL: str = "openai/sora-2/image-to-video"  # Sora2 图生视频模型
+    SORA2_MODEL: str = "openai/sora-2/image-to-video-pro"  # Sora2 图生视频模型
     SORA2_TIMEOUT: int = 1800  # Sora2 视频生成超时时间（秒），默认30分钟
     SORA2_RETRY_DELAY: int = 5  # Sora2 视频生成重试间隔（秒）
     

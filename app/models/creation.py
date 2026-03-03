@@ -54,8 +54,8 @@ class Creation(Base):
 
     # 外键
     owner_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
-    novel_id = Column(Integer, ForeignKey("novels.novel_id"), default=0, nullable=False)
-    chapter_id = Column(Integer, ForeignKey("chapters.chapter_id"), default=0, nullable=False)
+    novel_id = Column(Integer, ForeignKey("novels.novel_id"), nullable=True)
+    chapter_id = Column(Integer, ForeignKey("chapters.chapter_id"), nullable=True)
 
     # 新增字段
     creation_type = Column(String(20), default="chapter", nullable=False)  # chapter: 章节创作, script: 文案创作

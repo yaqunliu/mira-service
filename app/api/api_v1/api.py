@@ -19,6 +19,7 @@ from app.api.api_v1.endpoints import (
     webhooks,
     video_generation,
     agent,
+    vocab,
 )
 
 api_router = APIRouter()
@@ -74,3 +75,6 @@ api_router.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"]
 
 # Agent 对话路由
 api_router.include_router(agent.router, prefix="/creations", tags=["Agent"])
+
+# Vocab 单词视频路由
+api_router.include_router(vocab.router, tags=["单词视频"])
