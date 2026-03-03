@@ -12,7 +12,7 @@ import time
 
 # ============== 配置参数 ==============
 TOKEN = """
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjU0MzIxL2F1dGgvdjEiLCJzdWIiOiJhODUxZmQyNy05OTU0LTQwZmItOWFmMS1mMjY0OWI0N2M3NGIiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzcyNTA2MzQyLCJpYXQiOjE3NzI1MDI3NDIsImVtYWlsIjoiZmxvd2VyYmxpbmdzQGdtYWlsLmNvbSIsInBob25lIjoiIiwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZ29vZ2xlIiwicHJvdmlkZXJzIjpbImdvb2dsZSJdfSwidXNlcl9tZXRhZGF0YSI6eyJhdmF0YXJfdXJsIjoiaHR0cHM6Ly9saDMuZ29vZ2xldXNlcmNvbnRlbnQuY29tL2EvQUNnOG9jSW9ndVdpZUZfQVFwOWl6b1dubnFSRTBVb1BsNmxES3luMWJ4bVdJVnZQZ20zcWgzYz1zOTYtYyIsImVtYWlsIjoiZmxvd2VyYmxpbmdzQGdtYWlsLmNvbSIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJmdWxsX25hbWUiOiJ3YW5oZW5nIHpoYW5nIiwiaXNzIjoiaHR0cHM6Ly9hY2NvdW50cy5nb29nbGUuY29tIiwibmFtZSI6IndhbmhlbmcgemhhbmciLCJwaG9uZV92ZXJpZmllZCI6ZmFsc2UsInBpY3R1cmUiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NJb2d1V2llRl9BUXA5aXpvV25ucVJFMFVvUGw2bERLeW4xYnhtV0lWdlBnbTNxaDNjPXM5Ni1jIiwicHJvdmlkZXJfaWQiOiIxMDk1MzQzNTg1OTU1MjgzMjA3NzMiLCJzdWIiOiIxMDk1MzQzNTg1OTU1MjgzMjA3NzMifSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJvYXV0aCIsInRpbWVzdGFtcCI6MTc3MjQxODU2NH1dLCJzZXNzaW9uX2lkIjoiMmFhYWFiZjctMDIyNS00OTg5LTg2OWMtY2RmOTUwZjdhNzE3IiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.SRW8U7qfkBKYbrgGDqvHyz8sEFpXpT6rWzK1sNV0Jfw
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjU0MzIxL2F1dGgvdjEiLCJzdWIiOiJhODUxZmQyNy05OTU0LTQwZmItOWFmMS1mMjY0OWI0N2M3NGIiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzcyNTA5OTc4LCJpYXQiOjE3NzI1MDYzNzgsImVtYWlsIjoiZmxvd2VyYmxpbmdzQGdtYWlsLmNvbSIsInBob25lIjoiIiwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZ29vZ2xlIiwicHJvdmlkZXJzIjpbImdvb2dsZSJdfSwidXNlcl9tZXRhZGF0YSI6eyJhdmF0YXJfdXJsIjoiaHR0cHM6Ly9saDMuZ29vZ2xldXNlcmNvbnRlbnQuY29tL2EvQUNnOG9jSW9ndVdpZUZfQVFwOWl6b1dubnFSRTBVb1BsNmxES3luMWJ4bVdJVnZQZ20zcWgzYz1zOTYtYyIsImVtYWlsIjoiZmxvd2VyYmxpbmdzQGdtYWlsLmNvbSIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJmdWxsX25hbWUiOiJ3YW5oZW5nIHpoYW5nIiwiaXNzIjoiaHR0cHM6Ly9hY2NvdW50cy5nb29nbGUuY29tIiwibmFtZSI6IndhbmhlbmcgemhhbmciLCJwaG9uZV92ZXJpZmllZCI6ZmFsc2UsInBpY3R1cmUiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NJb2d1V2llRl9BUXA5aXpvV25ucVJFMFVvUGw2bERLeW4xYnhtV0lWdlBnbTNxaDNjPXM5Ni1jIiwicHJvdmlkZXJfaWQiOiIxMDk1MzQzNTg1OTU1MjgzMjA3NzMiLCJzdWIiOiIxMDk1MzQzNTg1OTU1MjgzMjA3NzMifSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJvYXV0aCIsInRpbWVzdGFtcCI6MTc3MjQxODU2NH1dLCJzZXNzaW9uX2lkIjoiMmFhYWFiZjctMDIyNS00OTg5LTg2OWMtY2RmOTUwZjdhNzE3IiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.6SVFWawhL9mC1TOjimYxlh7JtEgS9v-D7ZAhAwt0Tdk
 """.strip()
 
 # 单词列表（支持格式：["apple"] 或 ["bus(公交车)"]）
@@ -151,14 +151,8 @@ def poll_status(task_uuid: str, token: str, base_url: str, interval: int, max_wa
                 print(f"✅ 任务完成!")
                 print(f"视频URL: {video_url}")
                 print(f"step_status: {step_status}")
-                return result
-            
-            if video_url:
-                print("-" * 50)
-                print(f"✅ 任务完成（有视频URL）!")
-                print(f"视频URL: {video_url}")
-                print(f"step_status: {step_status}")
-                return result
+                if video_url:
+                    return result
             
             if status == "failed":
                 print("-" * 50)
@@ -184,18 +178,18 @@ def main():
     # print(f"URL: {BASE_URL}")
     print("=" * 50)
     
-    task_uuid = create_task(
-        words=WORDS,
-        word_repeat_count=WORD_REPEAT_COUNT,
-        translation_repeat_count=TRANSLATION_REPEAT_COUNT,
-        voice_gender=VOICE_GENDER,
-        voice_age=VOICE_AGE,
-        sentence_level=SENTENCE_LEVEL,
-        video_model=VIDEO_MODEL,
-        token=TOKEN,
-        base_url=BASE_URL
-    )
-    
+    # task_uuid = create_task(
+    #     words=WORDS,
+    #     word_repeat_count=WORD_REPEAT_COUNT,
+    #     translation_repeat_count=TRANSLATION_REPEAT_COUNT,
+    #     voice_gender=VOICE_GENDER,
+    #     voice_age=VOICE_AGE,
+    #     sentence_level=SENTENCE_LEVEL,
+    #     video_model=VIDEO_MODEL,
+    #     token=TOKEN,
+    #     base_url=BASE_URL
+    # )
+    task_uuid="2cfb045a-81a4-41a1-9b5b-2402f99b4c0d"
     result = poll_status(task_uuid, TOKEN, BASE_URL, POLL_INTERVAL, MAX_WAIT)
     
     if result:

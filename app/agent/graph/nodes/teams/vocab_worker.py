@@ -433,11 +433,11 @@ class VocabWorkerNode(ReActWorkerNode):
                 from app.tasks.step8_video_gen_task import generate_single_shot_video_task
                 generate_single_shot_video_task.delay(
                     shot_id=shot_id,
-                    creation_id=None,
+                    creation_id=self.creation_id,
                     model_name=model,
                     separate_audio=False,
                 )
-                logger.info(f"[VocabWorker] 提交视频生成任务: shot_id={shot_id}, model={model}")
+                logger.info(f"[VocabWorker] 提交视频生成任务: shot_id={shot_id}, creation_id={self.creation_id}, model={model}")
             
             await self._wait_videos_generated(shot_ids)
             
