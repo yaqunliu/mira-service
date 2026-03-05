@@ -1,203 +1,222 @@
 """
-对话调度层 Graph
+对话调度层 Graph - 入口分发器
 
-双层架构的主图，处理用户对话并调度业务执行层
+职责：
+1. 接收用户消息
+2. 根据 creation_type 分发到对应子图
+3. 不负责具体业务逻辑
+
+两种类型完全解耦：
+- chat -> ChatGraph (使用 ChatState)
+- chapter -> ComicDramaGraph (使用 ComicDramaState)
 """
 
-from typing import Dict, Any, Literal
+from typing import Dict, Any
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.agent.state.schemas import ComicDramaState
-from app.agent.graph.nodes import (
-    entry_node,
-    intent_detection_node,
-    router_node,
-    status_query_node,
-    clarify_node,
-)
+from app.agent.state.chat_schemas import ChatState
 from app.agent.graph.comic_drama_subgraph import build_comic_drama_subgraph
+from app.agent.graph.chat_graph import build_chat_graph
 from app.core.logger import logger
 
 
-# 路由目标类型
-RouterTarget = Literal["status_query", "task_execution", "clarify", "response_formatter", "end"]
+async def _entry_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    入口节点
+    
+    确保关键字段被正确传递，防止被 checkpointer 覆盖
+    """
+    creation_type = state.get("creation_type", "chapter")
+    user_message = state.get("user_message", "")
+    video_type = state.get("video_type")
+    logger.info(f"[DialogueGraph] _chat_executor 原始 state: video_type={video_type}, should_generate={state.get('should_generate')}")
+    
+    vocab_config = state.get("vocab_config", {})
+    should_generate = state.get("should_generate", False)
+    messages = state.get("messages", [])
+    
+    logger.info(f"[DialogueGraph] 收到消息: {user_message[:50]}...")
+    logger.info(f"[DialogueGraph] entry_node: creation_type={creation_type}")
+    
+    # 显式返回所有关键字段
+    return {
+        "creation_type": creation_type,
+        "user_message": user_message,
+        "video_type": video_type,
+        "vocab_config": vocab_config,
+        "messages": messages,
+        "should_generate": should_generate,
+        "creation_uuid": state.get("creation_uuid", ""),
+        "thread_id": state.get("thread_id", ""),
+        "user_id": state.get("user_id", 0),
+    }
+
+
+def _route_by_type(state: Dict[str, Any]) -> str:
+    """
+    根据 creation_type 路由
+    
+    Returns:
+        "chat" 或 "chapter"
+    """
+    creation_type = state.get("creation_type", "chapter")
+    logger.info(f"[DialogueGraph] 路由: creation_type={creation_type}")
+    return creation_type if creation_type == "chat" else "chapter"
+
+
+async def _chat_executor(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Chat 类型执行器
+    
+    构建 ChatState 并调用 ChatGraph
+    """
+    logger.info("[DialogueGraph] 执行 ChatGraph")
+    
+    # 构建 ChatState
+    user_message = state.get("user_message", "")
+    creation_uuid = state.get("creation_uuid", "")
+    vocab_config = state.get("vocab_config", {})
+    should_generate = state.get("should_generate", False)
+    # 确保 vocab_config 包含 creation_uuid
+    if creation_uuid and "creation_uuid" not in vocab_config:
+        vocab_config["creation_uuid"] = creation_uuid
+    
+    logger.info(f"[DialogueGraph] 构建 ChatState: video_type={state.get('video_type')}, vocab_config={vocab_config}, messages_count={len(state.get('messages', []))}")
+    logger.info(f"[DialogueGraph] _chat_executor: should_generate={should_generate}, user_action={state.get('user_action')}")
+    
+    chat_state: ChatState = {
+        "creation_uuid": creation_uuid,
+        "thread_id": state.get("thread_id", ""),
+        "user_id": state.get("user_id", 0),
+        "user_message": user_message,
+        "messages": state.get("messages", []),
+        "video_type": state.get("video_type"),
+        "vocab_config": vocab_config,
+        "chat_stage": "init",
+        "should_generate": should_generate,
+        "next_node": state.get("next_worker"),  # 映射到 ChatState 的字段名
+    }
+    
+    # 调用 ChatGraph
+    chat_graph = build_chat_graph()
+    result = await chat_graph.ainvoke(chat_state)
+    
+    # 转换回通用格式
+    return {
+        "response_text": result.get("response_text", ""),
+        "vocab_config": result.get("vocab_config", {}),
+        "video_type": result.get("video_type"),
+        "should_generate": result.get("should_generate", False),
+        "errors": result.get("errors", []),
+        "creation_uuid": state.get("creation_uuid", ""),
+        "thread_id": state.get("thread_id", ""),
+        "user_id": state.get("user_id", 0),
+    }
+
+
+async def _chapter_executor(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Chapter 类型执行器
+    
+    构建 ComicDramaState 并调用 ComicDramaSubgraph
+    """
+    logger.info("[DialogueGraph] 执行 ComicDramaSubgraph")
+    
+    # 直接使用传入的 state（已经是 ComicDramaState 格式）
+    comic_drama_subgraph = build_comic_drama_subgraph()
+    result = await comic_drama_subgraph.ainvoke(state)
+    
+    return result
 
 
 def build_dialogue_graph() -> StateGraph:
     """
     构建对话调度层 Graph
     
-    简化流程：
-    entry → intent_detection → [status_query | task_execution | clarify] → END
-    
-    Returns:
-        编译后的 StateGraph
+    极简流程：
+    entry -> [chat_executor | chapter_executor] -> END
     """
     logger.info("[DialogueGraph] 构建对话调度层 Graph...")
     
-    # 创建状态图
-    workflow = StateGraph(ComicDramaState)
+    # 使用通用 Dict 类型，因为需要兼容两种 State
+    workflow = StateGraph(Dict[str, Any])
     
-    # ==================== 添加节点 ====================
+    # 添加节点
+    workflow.add_node("entry", _entry_node)
+    workflow.add_node("chat_executor", _chat_executor)
+    workflow.add_node("chapter_executor", _chapter_executor)
     
-    # 入口节点
-    workflow.add_node("entry", entry_node)
-    
-    # 意图识别节点
-    workflow.add_node("intent_detection", intent_detection_node)
-    
-    # 处理节点
-    workflow.add_node("status_query", status_query_node)
-    
-    # task_execution 使用子图
-    comic_drama_subgraph = build_comic_drama_subgraph()
-    workflow.add_node("task_execution", comic_drama_subgraph)
-    
-    workflow.add_node("clarify", clarify_node)
-    
-    # ==================== 设置边 ====================
-    
-    # 入口点
+    # 设置入口
     workflow.set_entry_point("entry")
     
-    # entry → intent_detection
-    workflow.add_edge("entry", "intent_detection")
-    
-    # intent_detection → router (条件边)
+    # 条件路由
     workflow.add_conditional_edges(
-        "intent_detection",
-        _route_by_intent,
+        "entry",
+        _route_by_type,
         {
-            "status_query": "status_query",
-            "task_execution": "task_execution",
-            "clarify": "clarify",
+            "chat": "chat_executor",
+            "chapter": "chapter_executor",
         }
     )
     
-    # 处理节点 → END
-    workflow.add_edge("status_query", END)
-    workflow.add_edge("task_execution", END)
-    workflow.add_edge("clarify", END)
+    # 结束边
+    workflow.add_edge("chat_executor", END)
+    workflow.add_edge("chapter_executor", END)
     
     logger.info("[DialogueGraph] Graph 构建完成")
     return workflow
 
 
-def _route_by_intent(state: ComicDramaState) -> str:
-    """
-    根据意图分类路由到对应节点
-    
-    使用 router_node 的逻辑
-    """
-    return router_node(state)
-
-
-
 class DialogueGraphRunner:
     """
     对话调度层 Graph 执行器
-    
-    封装 StateGraph 的编译和执行
     """
     
     def __init__(self, checkpointer=None):
-        """
-        初始化执行器
-        
-        Args:
-            checkpointer: LangGraph checkpointer（可选）
-        """
         self.checkpointer = checkpointer or MemorySaver()
         self.graph = None
         self._compile()
     
     def _compile(self):
-        """编译 Graph - 设置递归深度限制"""
+        """编译 Graph"""
         from app.core.config import settings
         workflow = build_dialogue_graph()
         self.graph = workflow.compile(checkpointer=self.checkpointer)
-        # 设置递归深度限制
         recursion_limit = getattr(settings, 'LANGGRAPH_RECURSION_LIMIT', 25)
         self.graph.recursion_limit = recursion_limit
         logger.info(f"[DialogueGraph] Graph 已编译，递归限制: {recursion_limit}")
     
-    async def invoke(
-        self,
-        state: Dict[str, Any],
-        thread_id: str,
-    ) -> Dict[str, Any]:
-        """
-        同步执行 Graph
-        
-        Args:
-            state: 初始状态
-            thread_id: 线程 ID（用于 checkpointer）
-            
-        Returns:
-            最终状态
-        """
+    async def invoke(self, state: Dict[str, Any], thread_id: str) -> Dict[str, Any]:
+        """同步执行"""
         config = {"configurable": {"thread_id": thread_id}}
         result = await self.graph.ainvoke(state, config)
         return result
     
-    async def stream(
-        self,
-        state: Dict[str, Any],
-        thread_id: str,
-    ):
-        """
-        流式执行 Graph
-        
-        Args:
-            state: 初始状态
-            thread_id: 线程 ID
-            
-        Yields:
-            每个节点的输出事件
-        """
+    async def stream_events(self, state: Dict[str, Any], thread_id: str):
+        """流式执行"""
         config = {"configurable": {"thread_id": thread_id}}
-        
-        async for event in self.graph.astream(state, config, stream_mode="updates"):
-            yield event
-    
-    async def stream_events(
-        self,
-        state: Dict[str, Any],
-        thread_id: str,
-    ):
-        """
-        流式输出事件（包含 LLM token 级别）
-        
-        Args:
-            state: 初始状态
-            thread_id: 线程 ID
-            
-        Yields:
-            详细事件流（适合前端 SSE）
-        """
-        config = {"configurable": {"thread_id": thread_id}}
-        
         async for event in self.graph.astream_events(state, config, version="v2"):
             yield event
     
     def get_state(self, thread_id: str) -> Dict[str, Any]:
-        """获取指定线程的当前状态"""
+        """获取状态"""
         config = {"configurable": {"thread_id": thread_id}}
         return self.graph.get_state(config)
     
     def update_state(self, thread_id: str, updates: Dict[str, Any]):
-        """更新指定线程的状态"""
+        """更新状态"""
         config = {"configurable": {"thread_id": thread_id}}
         self.graph.update_state(config, updates)
 
 
-# 全局实例（懒加载）
-_dialogue_runner: DialogueGraphRunner = None
+# 全局实例
+_dialogue_runner = None
 
 
 def get_dialogue_runner() -> DialogueGraphRunner:
-    """获取全局 DialogueGraphRunner 实例"""
+    """获取全局实例"""
     global _dialogue_runner
     if _dialogue_runner is None:
         _dialogue_runner = DialogueGraphRunner()

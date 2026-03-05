@@ -14,8 +14,8 @@ from app.core.logger import logger
 from app.core.config import settings
 
 
-# 系统提示词
-QUERY_AGENT_SYSTEM_PROMPT = """你是漫剧创作助手，负责回答用户的查询问题。
+# 系统提示词 - chapter 类型（动漫创作）
+CHAPTER_SYSTEM_PROMPT = """你是漫剧创作助手，负责回答用户的查询问题。
 
 ## 你的能力
 
@@ -39,6 +39,62 @@ QUERY_AGENT_SYSTEM_PROMPT = """你是漫剧创作助手，负责回答用户的�
 - 用友好的中文回答
 - 查询结果用清晰的格式展示
 - 如果查询不到数据，给出合理的解释
+"""
+
+# 系统提示词 - chat 类型（智能创作）
+CHAT_SYSTEM_PROMPT = """你是智能创作助手，可以通过对话帮助用户创作视频内容。
+
+## 当前支持的功能
+
+目前我支持以下创作类型:
+
+1. **英文单词视频创作** (已上线)
+   - 添加单词: 告诉我你想学习哪些单词
+     例如: "添加 apple, banana, cat"
+   - 设置难度: 简单/中等/困难
+   - 生成视频: 制作包含单词展示、发音、例句的教学视频
+
+2. **其他视频创作** (即将推出)
+   - 搞笑短视频
+   - 故事动画
+   - 敬请期待!
+
+## 当用户问"你能帮我做什么"或"你能做什么"时
+
+必须这样回复（使用 ASCII 字符）:
+
+你好! 我是你的智能创作助手
+
+**我目前可以帮你:**
+
+[英文单词视频创作]
+1. 添加单词 - 例如: "添加 apple, banana"
+2. 设置难度 - 简单/中等/困难
+3. 生成视频 - 制作精美的单词教学视频
+
+**未来还将支持:**
+- 搞笑短视频创作
+- 故事动画创作
+
+**现在想创作什么?** 告诉我你想学习哪些单词吧~
+
+## 工具使用指南
+
+- 用户问创作进度 → 调用 query_creation_status
+- 用户问能做什么/帮助 → 按上面的格式回复，不要调用工具
+- 简单问题 → 直接回答，不需要调用工具
+
+## 当前创作信息
+
+创作 UUID: {creation_uuid}
+创作类型: chat (智能创作模式)
+
+## 回复要求
+
+- 用友好、热情的中文回答
+- 强调"目前"支持的功能和"未来"将支持的功能
+- 不要提及剧本、角色、场景等动漫创作相关内容
+- 引导用户尝试当前支持的单词视频创作
 """
 
 
@@ -97,10 +153,16 @@ async def status_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
         )
         llm_with_tools = llm.bind_tools(tools)
         
-        # 3. 构建消息
-        system_prompt = QUERY_AGENT_SYSTEM_PROMPT.format(
-            creation_uuid=creation_uuid or "未指定"
-        )
+        # 3. 构建消息（根据 creation_type 选择提示词）
+        creation_type = state.get("creation_type", "chapter")
+        if creation_type == "chat":
+            system_prompt = CHAT_SYSTEM_PROMPT.format(
+                creation_uuid=creation_uuid or "未指定"
+            )
+        else:
+            system_prompt = CHAPTER_SYSTEM_PROMPT.format(
+                creation_uuid=creation_uuid or "未指定"
+            )
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_message),

@@ -9,7 +9,7 @@ class VocabConfig(TypedDict, total=False):
     word_repeat_count: int
     translation_repeat_count: int
     enable_sentence_video: bool
-    voice_gender: Literal["female", "male"]
+    voice_gender: Literal["female", "male", "random"]
     voice_age: Literal["child", "adult"]
     sentence_level: Literal["kindergarten", "primary", "middle"]
     style: str

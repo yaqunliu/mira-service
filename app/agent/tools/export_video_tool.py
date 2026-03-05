@@ -21,7 +21,7 @@ async def export_final_video(
     导出最终视频 - 将多个分镜视频拼接成一个视频（异步提交）
 
     Args:
-        creation_uuid: 创作项目UUID
+        creation_uuid: 创作项目UUID（支持完整UUID或数字ID）
         shot_ids: 分镜ID列表
         task_uuid: VocabTask UUID（用于更新任务状态）
 
@@ -31,6 +31,26 @@ async def export_final_video(
             "message": "导出任务已提交"
         }
     """
+    # 如果 creation_uuid 是数字，尝试从数据库查询
+    if creation_uuid and not creation_uuid.startswith("-"):
+        try:
+            int_val = int(creation_uuid)
+            from sqlalchemy import select
+            from app.models.creation import Creation
+            db = _get_async_session_factory()()
+            try:
+                result = await db.execute(
+                    select(Creation).where(Creation.creation_id == int_val)
+                )
+                creation = result.scalar_one_or_none()
+                if creation:
+                    creation_uuid = creation.uuid
+                    logger.info(f"[ExportVideo] 从ID获取到UUID: {creation_uuid}")
+            finally:
+                await db.close()
+        except:
+            pass
+    
     logger.info(f"[ExportVideo] 开始导出流程: creation_uuid={creation_uuid}, shot_ids={shot_ids}")
     
     try:
@@ -44,6 +64,9 @@ async def export_final_video(
                 select(Creation).where(Creation.uuid == creation_uuid)
             )
             creation = result.scalar_one_or_none()
+            if creation.video_url:
+                logger.info(f"[ExportVideo] 创作已导出视频: {creation.video_url}")
+                return {"success": True, "video_url": creation.video_url, "message": "创作已导出视频"}
             
             if not creation:
                 logger.error(f"[ExportVideo] 未找到创作: {creation_uuid}")

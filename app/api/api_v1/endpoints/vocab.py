@@ -89,7 +89,7 @@ async def create_vocab_video(
     creation = Creation(
         uuid=task_uuid,
         title=f"单词视频: {', '.join(request.words[:3])}",
-        creation_type="vocab",
+        creation_type="chat",
         status="processing",
         owner_id=current_user.user_id,
         extra_data={

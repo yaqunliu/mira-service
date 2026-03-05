@@ -56,6 +56,54 @@ class StoryboardState(TypedDict, total=False):
     error: Optional[str]
 
 
+class AudioSegmentState(TypedDict, total=False):
+    """音频片段状态"""
+    segment_id: str
+    start_time: float
+    end_time: float
+    text: str
+    audio_url: Optional[str]
+    status: Literal["pending", "generating", "completed", "failed"]
+    error: Optional[str]
+
+
+class VideoSegmentState(TypedDict, total=False):
+    """视频片段状态"""
+    segment_id: str
+    start_time: float
+    end_time: float
+    shot_id: Optional[int]
+    video_url: Optional[str]
+    status: Literal["pending", "generating", "completed", "failed"]
+    error: Optional[str]
+
+
+class CheckpointData(TypedDict, total=False):
+    """检查点数据"""
+    checkpoint_id: str
+    thread_id: str
+    state: Dict[str, Any]
+    created_at: str
+    updated_at: str
+
+
+class UserFeedback(TypedDict, total=False):
+    """用户反馈"""
+    feedback_id: str
+    user_id: int
+    creation_uuid: str
+    feedback_type: str
+    content: str
+    created_at: str
+
+
+class StateUpdateResult(TypedDict, total=False):
+    """状态更新结果"""
+    success: bool
+    message: str
+    updated_fields: List[str]
+    errors: List[str]
+
 
 class ProductionStage(StrEnum):
     """
@@ -99,6 +147,8 @@ class CreationType(StrEnum):
     """创作类型枚举"""
     COMIC_DRAMA = "comic_drama"
     VOCAB = "vocab"
+    CHAT = "chat"           # 智能创作模式
+    CHAPTER = "chapter"     # 章节创作模式
 
 
 class VocabConfig(TypedDict, total=False):

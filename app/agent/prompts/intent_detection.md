@@ -20,9 +20,17 @@ max_tokens: 800
 
 **知识问答：**
 - `query_knowledge` - 询问漫剧相关知识（构图、镜头、提示词技巧等）
+- `query_capabilities` - 询问"你能做什么"、"有什么功能"、"怎么使用"等问题
 
 ### 制作类 (production)
 用户想要执行创作任务：
+
+**Chat 类型创作（单词视频）：**
+- `add_vocab` - 添加单词（如：添加 apple、banana）
+- `remove_vocab` - 删除单词
+- `set_difficulty` - 设置难度（简单/中等/困难）
+- `set_repetitions` - 设置重复次数
+- `generate_vocab_video` - 生成单词视频
 
 **分析类任务：**
 - `analyze_script` - 分析剧本（完整分析，含角色/场景/分镜）
@@ -51,7 +59,7 @@ max_tokens: 800
 - `continue_workflow` - 继续工作流（用户说"继续"、"下一步"、"执行"时，根据当前阶段决定下一步操作）
 
 ### 超出范围 (out_of_scope)
-非漫剧创作相关的请求：
+非创作相关的请求：
 - `out_of_scope` - 超出能力边界（如闲聊、无关问题）
 
 ## 资源定位规则
@@ -134,6 +142,18 @@ max_tokens: 800
   ```
 
 ## 意图识别示例
+
+### Chat 类型创作（单词视频）示例
+
+| 用户消息 | intent | details |
+|---------|---------|---------|
+| "你能帮我做什么"、"有什么功能" | query_capabilities | `{"user_intent": "询问助手功能"}` |
+| "添加 apple"、"添加 banana 和 cat" | add_vocab | `{"target": "vocab", "target_names": ["apple", "banana", "cat"], "user_intent": "添加单词到创作"}` |
+| "删除 apple"、"移除 banana" | remove_vocab | `{"target": "vocab", "target_names": ["apple"], "user_intent": "删除单词"}` |
+| "设置简单难度"、"难度设为中等" | set_difficulty | `{"target": "vocab", "difficulty": "easy/medium/hard", "user_intent": "设置单词视频难度"}` |
+| "生成视频"、"开始制作" | generate_vocab_video | `{"target": "vocab", "user_intent": "生成单词教学视频"}` |
+
+### Chapter 类型创作（动漫）示例
 
 | 用户消息 | intent | details |
 |---------|---------|---------|

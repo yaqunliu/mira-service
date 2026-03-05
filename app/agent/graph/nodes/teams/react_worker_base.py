@@ -117,6 +117,16 @@ class ReActWorkerNode(ABC):
                     tool_args = tool_call["args"]
                     tool_id = tool_call["id"]
                     
+                    # 自动解析 JSON 字符串参数
+                    import json
+                    for key, value in list(tool_args.items()):
+                        if isinstance(value, str) and value.startswith('['):
+                            try:
+                                tool_args[key] = json.loads(value)
+                                logger.info(f"[{self.node_name}] 解析参数 {key} 为 JSON 数组")
+                            except:
+                                pass
+                    
                     logger.info(f"[{self.node_name}] 调用工具 {tool_name}")
                     logger.info(f"[{self.node_name}] 工具参数: {tool_args}")
                     

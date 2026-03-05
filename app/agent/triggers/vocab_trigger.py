@@ -8,8 +8,73 @@ from typing import Dict, Any
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import logger
+from app.models.creation import Creation, WorkflowMode
+
+
+async def trigger_vocab_creation(
+    db: AsyncSession,
+    user_id: int,
+    config: Dict[str, Any],
+) -> Creation:
+    """
+    创建 Vocab 创作任务（供 Standalone Agent 使用）
+    
+    Args:
+        db: 数据库会话
+        user_id: 用户ID
+        config: 单词视频配置
+        
+    Returns:
+        Creation: 创建的 Creation 对象
+    """
+    import asyncio
+    from uuid import uuid4
+    
+    task_uuid = str(uuid4())
+    words = config.get("words", [])
+    
+    # 优化视频命名
+    if len(words) == 0:
+        title = "单词视频"
+    elif len(words) <= 3:
+        title = f"单词视频: {', '.join(words)}"
+    else:
+        title = f"单词视频: {', '.join(words[:3])} 等{len(words)}个单词"
+    
+    creation = Creation(
+        uuid=task_uuid,
+        title=title,
+        creation_type="chat",
+        status="processing",
+        owner_id=user_id,
+        workflow_mode=WorkflowMode.AGENT,
+        extra_data={
+            "config": config,
+            "progress": 0,
+            "current_step": "等待处理",
+        }
+    )
+    
+    db.add(creation)
+    await db.commit()
+    await db.refresh(creation)
+    
+    # 异步触发 Agent
+    asyncio.create_task(
+        trigger_agent_for_vocab(
+            user_id=user_id,
+            task_uuid=creation.uuid,
+            creation_id=creation.creation_id,
+            config=config,
+        )
+    )
+    
+    logger.info(f"[trigger_vocab_creation] 创建成功: creation_id={creation.creation_id}, uuid={creation.uuid}")
+    
+    return creation
 
 
 async def trigger_agent_for_vocab(
@@ -74,27 +139,11 @@ async def trigger_agent_for_vocab(
         vocab_worker.user_id = user_id
         vocab_worker.task_id = creation_id
         
+        # 执行 Worker（内部已完成视频生成和导出）
         result = await vocab_worker.run(initial_state)
         
-        await _update_creation_status(
-            creation_id=creation_id,
-            status="exporting",
-            progress=80,
-            current_step="导出视频",
-        )
-        
-        from app.agent.tools.export_video_tool import export_final_video
-        shot_ids = [s.get("shot_id") for s in result.get("shots", []) if s.get("shot_id")]
-        
-        export_result = await export_final_video.ainvoke({
-            "creation_uuid": creation_uuid,
-            "shot_ids": shot_ids,
-        })
-        
-        logger.info(f"[Vocab Trigger] 导出结果: {export_result}")
-        
-        # 更新最终状态
-        video_url = export_result.get("video_url")
+        # Worker 返回的结果已经包含 final_video_url
+        video_url = result.get("final_video_url", "")
         logger.info(f"[Vocab Trigger] 视频URL: {video_url}")
         
         await _update_creation_status(

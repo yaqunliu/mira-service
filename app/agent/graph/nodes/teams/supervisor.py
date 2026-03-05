@@ -277,7 +277,19 @@ Worker 执行结果: {worker_result}
 
    **关键**：COMPLETED 阶段用户确认后，应该设置 needs_input=False，表示流程已结束，不要再询问用户！
 
-9. **worker_result 显示 asset_regenerator 刚完成重新生成（关键！）**:
+9. **用户要求导出视频（在 COMPLETED 阶段）**:
+   当 production_stage="COMPLETED" 且用户说"导出视频"、"导出"、"生成视频链接"时，需要调用 export_video 工具：
+   
+   首先调用 export_video 工具：
+   ```
+   export_video(creation_uuid="xxx")
+   ```
+   
+   工具返回后，根据结果返回决策：
+   - 导出成功: supervisor_decision(next_worker=None, needs_input=False, board_actions=[], response_text="视频导出完成！您的视频链接是：{video_url}")
+   - 导出失败: supervisor_decision(next_worker=None, needs_input=True, board_actions=[], response_text="视频导出失败，请稍后重试。错误信息：{error}")
+
+10. **worker_result 显示 asset_regenerator 刚完成重新生成（关键！）**:
    当 worker_result.worker="asset_regenerator" 时，说明重新生成已完成，**必须暂停确认**：
    supervisor_decision(next_worker=None, needs_input=True, board_actions=[{{"type": "approve_reject", "message": "重新生成完成，请确认结果"}}], response_text="重新生成完成，请确认生成的结果是否符合预期。")
 
@@ -374,6 +386,45 @@ class RouteToWorkerInput(BaseModel):
     worker: WorkerType = Field(..., description="目标 Worker")
     task: str = Field(..., description="任务描述")
     params: Dict[str, Any] = Field(default_factory=dict, description="任务参数")
+
+
+@tool
+async def export_video(
+    creation_uuid: str,
+) -> Dict[str, Any]:
+    """
+    导出最终视频 - 将所有分镜的视频和音频合并，生成最终视频并上传到US3
+
+    Args:
+        creation_uuid: 创作项目 UUID
+
+    Returns:
+        导出结果，包含 video_url
+    """
+    logger.info(f"[Supervisor] 触发视频导出: {creation_uuid}")
+
+    try:
+        from app.tasks.comic_drama_export import export_comic_drama_video_task
+
+        task = export_comic_drama_video_task.delay(creation_uuid)
+
+        logger.info(f"[Supervisor] 导出任务已提交: task_id={task.id}")
+
+        return {
+            "success": True,
+            "action": "export_video",
+            "task_id": task.id,
+            "message": "视频导出任务已提交，请稍候..."
+        }
+
+    except Exception as e:
+        logger.error(f"[Supervisor] 导出视频失败: {str(e)}")
+        return {
+            "success": False,
+            "action": "export_video",
+            "error": str(e),
+            "message": f"导出失败: {str(e)}"
+        }
 
 
 @tool
@@ -522,6 +573,7 @@ def _get_supervisor_tools() -> List:
     return [
         query_production_status,
         check_constraints,
+        export_video,
         supervisor_decision,  # 主决策工具
     ]
 

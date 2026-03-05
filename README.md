@@ -103,8 +103,8 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 启动服务后，访问以下地址查看API文档：
 
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+- Swagger UI: http://localhost:8100/docs
+- ReDoc: http://localhost:8100/redoc
 
 ## 数据库设计
 

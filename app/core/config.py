@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     LLM_MODEL_NAME: str = ""
     LLM_MODEL_DEFAULT: str = "Qwen/Qwen-Plus"  # Agent 对话默认 LLM 模型
 
+    LLM_AGENT_DEFAULT: str = "Qwen/Qwen-Plus"
     # 专用LLM模型配置
     LLM_MODEL_CHARACTER_ANALYSIS: str = "Qwen/Qwen-Plus"  # 人物解析模型
     LLM_MODEL_SCENE_ANALYSIS: str = "Qwen/Qwen-Plus"  # 场景解析模型
@@ -139,7 +140,7 @@ class Settings(BaseSettings):
     
     # LangGraph 配置
     LANGGRAPH_CHECKPOINT_NAMESPACE: str = "mira_comic_drama"  # Checkpointer 命名空间
-    LANGGRAPH_RECURSION_LIMIT: int = 25  # 递归深度限制（防止无限循环）
+    LANGGRAPH_RECURSION_LIMIT: int = 100  # 递归深度限制（防止无限循环）
 
     # ChromaDB 向量数据库配置
     CHROMADB_PATH: str = "./chroma_db"  # ChromaDB 持久化存储路径

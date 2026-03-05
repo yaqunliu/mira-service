@@ -40,8 +40,17 @@ async def intent_detection_node(state: ComicDramaState) -> Dict[str, Any]:
         # 直接映射 action 到意图
         return _handle_action_intent(pending_action, state)
     
+    # 根据 creation_type 选择提示词
+    creation_type = state.get("creation_type", "chapter")
+    if creation_type == "chat":
+        prompt_name = "intent_detection_chat"
+        logger.info("[Intent Detection] 使用 Chat 类型意图识别")
+    else:
+        prompt_name = "intent_detection"
+        logger.info("[Intent Detection] 使用 Chapter 类型意图识别")
+    
     # 加载提示词
-    prompt_data = load_prompt("intent_detection")
+    prompt_data = load_prompt(prompt_name)
     
     # 构建上下文
     context = {

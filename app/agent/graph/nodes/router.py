@@ -16,15 +16,16 @@ RouterTarget = Literal["status_query", "task_execution", "clarify"]
 
 def router_node(state: ComicDramaState) -> RouterTarget:
     """
-    路由节点 - 根据意图分发到不同节点
+    路由节点 - 根据意图和创作类型分发到不同节点
     
-    路由规则（简化版）：
-    | 意图分类 | 目标节点 | 说明 |
-    |----------|----------|------|
-    | query | status_query | 状态查询 + 知识问答（ReAct Agent） |
-    | production | task_execution | 制作任务（子图） |
-    | confirm | task_execution | 确认/取消（子图） |
-    | out_of_scope | clarify | 超出范围，引导用户 |
+    路由规则：
+    | 条件 | 目标节点 | 说明 |
+    |------|----------|------|
+    | creation_type=chat | task_execution | chat类型统一走ChatSubgraph处理 |
+    | category=query | status_query | 状态查询 + 知识问答（ReAct Agent） |
+    | category=production | task_execution | 制作任务（子图） |
+    | category=confirm | task_execution | 确认/取消（子图） |
+    | category=out_of_scope | clarify | 超出范围，引导用户 |
     
     Args:
         state: 当前 Graph 状态
@@ -35,13 +36,20 @@ def router_node(state: ComicDramaState) -> RouterTarget:
     intent_category = state.get("intent_category", "other")
     confidence = state.get("intent_confidence", 0.0)
     detected_intent = state.get("detected_intent", "unknown")
+    creation_type = state.get("creation_type", "chapter")
     
     logger.info(
         f"[Router] 路由决策: "
+        f"creation_type={creation_type}, "
         f"category={intent_category}, "
         f"intent={detected_intent}, "
         f"confidence={confidence}"
     )
+    
+    # chat 类型统一走 task_execution（ChatSubgraph 会处理所有意图）
+    if creation_type == "chat":
+        logger.info("[Router] -> task_execution (chat类型，统一处理)")
+        return "task_execution"
     
     # 查询类 -> status_query（ReAct Agent，支持状态查询+知识问答）
     if intent_category == "query":

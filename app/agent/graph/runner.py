@@ -63,11 +63,30 @@ class GraphRunner:
         try:
             # 1. 加载历史消息
             history_messages = await self.message_history.load()
+            logger.info(f"[GraphRunner] 加载历史消息: {len(history_messages)} 条")
             
             # 2. 尝试加载上一个检查点
             last_state = await self.persistence.load_checkpoint()
+            logger.info(f"[GraphRunner] checkpoint 内容: {last_state}")
             
-            # 3. 构建初始状态
+            # 尝试从 LangGraph 内存获取状态
+            from app.agent.graph.dialogue_graph import get_dialogue_runner
+            runner = get_dialogue_runner()
+            langgraph_state = runner.get_state(self.thread_id)
+            if langgraph_state and hasattr(langgraph_state, 'values'):
+                langgraph_values = dict(langgraph_state.values)
+                logger.info(f"[GraphRunner] LangGraph 状态: {langgraph_values}")
+                # 合并 LangGraph 状态到 last_state
+                if last_state:
+                    last_state.update(langgraph_values)
+                else:
+                    last_state = langgraph_values
+            
+            # 3. 加载 creation_type
+            creation_type = await self._load_creation_type()
+            logger.info(f"[GraphRunner] 加载 creation_type: {creation_type}, creation_uuid: {self.creation_uuid}")
+            
+            # 4. 构建初始状态
             initial_state = self._build_initial_state(
                 user_message=user_message,
                 user_action=user_action,
@@ -75,6 +94,8 @@ class GraphRunner:
                 history_messages=history_messages,
                 last_state=last_state,
             )
+            initial_state["creation_type"] = creation_type
+            logger.info(f"[GraphRunner] 初始状态: creation_type={initial_state.get('creation_type')}")
             
             # 4. 添加用户消息到历史
             await self.message_history.append({
@@ -125,19 +146,187 @@ class GraphRunner:
             "user_message": user_message,
             "messages": history_messages,
             "updated_at": datetime.now().isoformat(),
+            "video_type": None,
+            "should_generate": False,
         }
-        
         # 如果有上一个检查点状态，恢复部分字段
         if last_state:
             state["current_stage"] = last_state.get("current_stage", "init")
             state["pending_approval"] = last_state.get("pending_approval", False)
+            # 恢复 Chat 模式的状态
+            state["video_type"] = last_state.get("video_type")
+            state["vocab_config"] = last_state.get("vocab_config", {})
+            state["should_generate"] = last_state.get("should_generate", False)
+            # 优先使用 checkpoint 中的 creation_uuid
+            if last_state.get("creation_uuid"):
+                state["creation_uuid"] = last_state.get("creation_uuid")
         
         # 如果有用户操作
         if user_action:
             state["user_action"] = user_action
             state["user_action_data"] = user_action_data or {}
+            
+            # 如果用户确认生成
+            if user_action == "confirm_generation":
+                state["should_generate"] = True
+                state["user_action"] = user_action  # 重新设置
+                logger.info(f"[GraphRunner] 用户确认生成视频, user_action={user_action}, should_generate={state.get('should_generate')}")
         
         return state
+    
+    async def _load_creation_type(self) -> str:
+        """从数据库加载 creation_type"""
+        from app.db.base import _get_async_session_factory
+        from app.models.creation import Creation
+        from sqlalchemy import select
+        
+        db = _get_async_session_factory()()
+        try:
+            result = await db.execute(
+                select(Creation).where(Creation.uuid == self.creation_uuid)
+            )
+            creation = result.scalar_one_or_none()
+            if creation:
+                return creation.creation_type or "chapter"
+            return "chapter"
+        finally:
+            await db.close()
+    
+    async def _monitor_task(
+        self,
+        task_id: Optional[str],
+        creation_id: Optional[int],
+        formatter,
+        message_id: str,
+    ) -> AsyncIterator[str]:
+        """
+        监控任务状态，推送进度到前端
+        
+        当 graph 执行完成后，如果有任务在运行，继续保持 SSE 连接推送进度
+        """
+        from app.db.base import _get_async_session_factory
+        from app.models.creation import Creation
+        from sqlalchemy import select
+        
+        logger.info(f"[GraphRunner] 开始监控任务: task_id={task_id}, creation_id={creation_id}")
+        
+        # 任务状态映射
+        STATUS_MAP = {
+            "pending": "等待中",
+            "processing": "处理中",
+            "generating": "生成中",
+            "completed": "已完成",
+            "failed": "失败",
+        }
+        
+        check_interval = 3  # 每 3 秒检查一次
+        max_wait_time = 3600  # 最多等待 1 小时
+        elapsed = 0
+        
+        while elapsed < max_wait_time:
+            await asyncio.sleep(check_interval)
+            elapsed += check_interval
+            
+            # 查询任务状态
+            db = _get_async_session_factory()()
+            try:
+                creation = None
+                if creation_id:
+                    result = await db.execute(
+                        select(Creation).where(Creation.creation_id == creation_id)
+                    )
+                    creation = result.scalar_one_or_none()
+                elif task_id:
+                    result = await db.execute(
+                        select(Creation).where(Creation.uuid == task_id)
+                    )
+                    creation = result.scalar_one_or_none()
+                
+                if not creation:
+                    logger.warning(f"[GraphRunner] 任务不存在: {task_id}/{creation_id}")
+                    break
+                
+                status = creation.status or "unknown"
+                logger.info(f"[GraphRunner] 任务状态: {status}")
+                
+                # 发送进度更新
+                status_text = STATUS_MAP.get(status, status)
+                
+                if status == "completed":
+                    # 任务完成
+                    video_url = getattr(creation, 'video_url', None) or getattr(creation, 'output_url', None)
+                    yield formatter._format_sse({
+                        "event": "message.delta",
+                        "data": {
+                            "id": message_id,
+                            "content": f"\n\n✅ 视频生成完成！\n",
+                            "node": "task_monitor",
+                        },
+                    })
+                    if video_url:
+                        yield formatter._format_sse({
+                            "event": "message.delta",
+                            "data": {
+                                "id": message_id,
+                                "content": f"视频地址：{video_url}\n",
+                                "node": "task_monitor",
+                            },
+                        })
+                    yield formatter._format_sse({
+                        "event": "progress",
+                        "data": {
+                            "node": "task_monitor",
+                            "status": "completed",
+                        },
+                    })
+                    logger.info(f"[GraphRunner] 任务完成: {task_id}")
+                    break
+                    
+                elif status == "failed":
+                    # 任务失败
+                    error_msg = getattr(creation, 'error_message', None) or "未知错误"
+                    yield formatter._format_sse({
+                        "event": "message.delta",
+                        "data": {
+                            "id": message_id,
+                            "content": f"\n\n❌ 视频生成失败：{error_msg}\n",
+                            "node": "task_monitor",
+                        },
+                    })
+                    yield formatter._format_sse({
+                        "event": "progress",
+                        "data": {
+                            "node": "task_monitor",
+                            "status": "failed",
+                        },
+                    })
+                    logger.info(f"[GraphRunner] 任务失败: {task_id}")
+                    break
+                else:
+                    # 仍在处理中，发送进度
+                    yield formatter._format_sse({
+                        "event": "progress",
+                        "data": {
+                            "node": "task_monitor",
+                            "status": status,
+                            "progress": f"正在{status_text}...",
+                        },
+                    })
+                    
+            finally:
+                await db.close()
+        
+        # 超时
+        if elapsed >= max_wait_time:
+            logger.warning(f"[GraphRunner] 任务监控超时: {task_id}")
+            yield formatter._format_sse({
+                "event": "message.delta",
+                "data": {
+                    "id": message_id,
+                    "content": "\n\n⏰ 任务等待超时，请稍后查询状态\n",
+                    "node": "task_monitor",
+                },
+            })
     
     async def _run_graph(
         self,
@@ -173,6 +362,9 @@ class GraphRunner:
             sent_complete_nodes = set()  # 已发送完成消息的节点
             sent_response_nodes = set()  # 已发送 response_text 的节点
             
+            # 收集所有 board_actions，用于保存到消息历史
+            all_board_actions = []
+            
             # 用户可见节点（会流式输出 LLM tokens）
             # - clarify: 澄清对话
             # - task_execution: 任务执行（保持 SSE 连接活跃）
@@ -180,7 +372,7 @@ class GraphRunner:
             # - supervisor: 重新生成等操作需要展示给用户
             # 注意：status_query 改为 ReAct Agent 后，不应流式输出中间思考过程
             # 注意：asset_generation 不在此列表，因为它的 LLM 输出是内部提示词，不应显示给用户
-            USER_VISIBLE_NODES = {"query_status", "clarify", "human_review", "supervisor"}
+            USER_VISIBLE_NODES = {"query_status", "clarify", "human_review", "supervisor", "chat_supervisor"}
             
             # 不应发送 response_text 的节点（分析/内部过程）
             INTERNAL_NODES = {"storyboard_creation", "audio_processing", "video_generation", "editing", "entry", "intent_detection", "router", "response_formatter", "stage_complete"}
@@ -197,18 +389,14 @@ class GraphRunner:
             # 需要发送完成消息的节点（只有这些节点发送自动完成消息）
             # script_analysis 不在此列表，因为它的 response_text 已包含结果
             COMPLETE_MESSAGE_NODES = {
-                # "script_analysis": "✅ 剧本分析完成！",
-                # "asset_generation": "✅ 资产图片生成完成！",
-                # "storyboard_creation": "✅ 分镜脚本生成完成！",
-                # "audio_processing": "✅ 音频处理完成！",
-                # "video_generation": "✅ 视频生成完成！",
+                "vocab_worker": "✅ 视频生成完成！",
             }
             
             # 需要发送 response_text 的节点
-            # 只有外层包装节点发送，内部子图节点（如 script_analysis）不在此列表
-            # storyboard_creation 需要发送完成消息到 SSE
-            # supervisor: 重新生成等操作需要展示结果给用户
-            RESPONSE_TEXT_NODES = {"supervisor"}
+            # 统一由 supervisor 发送消息，其他节点只返回结果不直接发送
+            # supervisor: 统一管理和发送所有消息给用户
+            # chat_supervisor: ChatGraph 的 supervisor 节点
+            RESPONSE_TEXT_NODES = {"supervisor", "chat_supervisor"}
             
             # 配置递归深度限制
             from app.core.config import settings
@@ -330,6 +518,10 @@ class GraphRunner:
                             current_node = node_name
                             output = event.get("data", {}).get("output", {})
                             
+                            # 处理 Command 对象
+                            if hasattr(output, 'update') and isinstance(getattr(output, 'update', None), dict):
+                                output = output.update
+                            
                             # 调试日志
                             if node_name in RESPONSE_TEXT_NODES and isinstance(output, dict) and "response_text" in output:
                                 logger.info(f"[GraphRunner] on_chain_end: node={node_name}, has_response_text=True, already_sent={node_name in sent_response_nodes}")
@@ -363,22 +555,36 @@ class GraphRunner:
                                 if node_name in RESPONSE_TEXT_NODES:
                                     resp_text = output["response_text"]
                                     if resp_text:
-                                        # 发送响应内容
-                                        yield formatter._format_sse({
-                                            "event": "message.delta",
-                                            "data": {
-                                                "id": message_id,
-                                                "content": resp_text,
-                                                "node": node_name,
-                                            },
-                                        })
-                                        full_response += resp_text
+                                        # 检查是否已经发送过这个节点的 response_text
+                                        if node_name not in sent_response_nodes:
+                                            sent_response_nodes.add(node_name)
+                                            logger.info(f"[GraphRunner] 发送 response_text from {node_name}, 长度={len(resp_text)}")
+                                            # 发送响应内容
+                                            yield formatter._format_sse({
+                                                "event": "message.delta",
+                                                "data": {
+                                                    "id": message_id,
+                                                    "content": resp_text,
+                                                    "node": node_name,
+                                                },
+                                            })
+                                            full_response += resp_text
+                                        else:
+                                            logger.warning(f"[GraphRunner] 跳过重复 response_text from {node_name}")
                             
                             # 处理 board_actions - 发送给前端控制看板
                             # 只有特定节点才发送 board_actions（避免状态累积导致重复发送）
-                            BOARD_ACTION_NODES = {"supervisor"}
-                            if node_name in BOARD_ACTION_NODES and isinstance(output, dict) and "board_actions" in output:
-                                board_actions = output.get("board_actions", [])
+                            BOARD_ACTION_NODES = {"supervisor", "chat_supervisor"}
+                            
+                            # 处理 Command 对象或 dict
+                            output_data = output
+                            # Command 对象的 update 属性是字典
+                            if hasattr(output, 'update') and isinstance(getattr(output, 'update', None), dict):
+                                output_data = output.update
+                            
+                            if node_name in BOARD_ACTION_NODES and isinstance(output_data, dict) and "board_actions" in output_data:
+                                board_actions = output_data.get("board_actions", [])
+                                logger.info(f"[GraphRunner] 发现 board_actions: {board_actions}")
                                 if board_actions:
                                     for action in board_actions:
                                         if action:  # 确保 action 不为 None
@@ -389,6 +595,8 @@ class GraphRunner:
                                                     "node": node_name,
                                                 },
                                             })
+                                            # 收集 board_action 用于保存
+                                            all_board_actions.append(action)
                                             logger.info(f"[GraphRunner] 发送 board_action: {action}")
             
             finally:
@@ -408,21 +616,58 @@ class GraphRunner:
                 },
             })
             
-            # 4. 保存助手消息
+            # 4. 保存助手消息（包含 board_actions，用于刷新后恢复卡片）
             if full_response:
-                await self.message_history.append({
+                message_data = {
                     "role": "assistant",
                     "content": full_response,
                     "timestamp": datetime.now().isoformat(),
-                })
+                }
+                # 如果有 board_actions，保存到消息中
+                if all_board_actions:
+                    message_data["board_actions"] = all_board_actions
+                    logger.info(f"[GraphRunner] 保存消息时包含 {len(all_board_actions)} 个 board_actions")
+                await self.message_history.append(message_data)
             
             # 5. 保存检查点
             final_state = runner.get_state(self.thread_id)
+            logger.info(f"[GraphRunner] 保存检查点: final_state={final_state}")
             if final_state:
-                await self.persistence.save_checkpoint(
-                    dict(final_state.values) if hasattr(final_state, 'values') else {},
-                    checkpoint_type="auto",
-                )
+                state_values = dict(final_state.values) if hasattr(final_state, 'values') else {}
+                logger.info(f"[GraphRunner] 保存 checkpoint 前的 state_values: creation_uuid in state_values={'creation_uuid' in state_values}, value={state_values.get('creation_uuid')}")
+                logger.info(f"[GraphRunner] self.creation_uuid = {self.creation_uuid}")
+                # 确保 creation_uuid 被保存
+                if self.creation_uuid and "creation_uuid" not in state_values:
+                    state_values["creation_uuid"] = self.creation_uuid
+                await self.persistence.save_checkpoint(state_values, checkpoint_type="auto")
+                
+                # 6. 检查是否应该结束 SSE（Worker 已完成）
+                should_end_sse = state_values.get("should_end_sse", False)
+                
+                if should_end_sse:
+                    logger.info("[GraphRunner] Worker 已完成，标记 should_end_sse=True，不进入监控模式")
+                    # Worker 已完成，直接发送完成消息
+                    worker_result = state_values.get("worker_result", {})
+                    video_url = worker_result.get("video_url", "")
+                    if video_url:
+                        yield formatter._format_sse({
+                            "event": "message.delta",
+                            "data": {
+                                "id": message_id,
+                                "content": f"\n\n🎬 视频生成完成！\n\n视频地址：{video_url}\n",
+                                "node": "vocab_worker",
+                            },
+                        })
+                else:
+                    # 检查是否有任务在运行，如果有则继续监控
+                    task_id = state_values.get("task_id")
+                    creation_id = state_values.get("creation_id")
+                    
+                    if task_id or creation_id:
+                        logger.info(f"[GraphRunner] 检测到任务运行中: task_id={task_id}, creation_id={creation_id}")
+                        # 进入任务监控模式
+                        async for task_event in self._monitor_task(task_id, creation_id, formatter, message_id):
+                            yield task_event
                 
         except Exception as e:
             logger.error(f"[GraphRunner] Graph 执行错误: {e}")

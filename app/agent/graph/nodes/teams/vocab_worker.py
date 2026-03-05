@@ -136,7 +136,7 @@ class VocabWorkerNode(ReActWorkerNode):
         sentence_level = self.config.get("sentence_level", "primary")
         voice_gender = self.config.get("voice_gender", "female")
         voice_age = self.config.get("voice_age", "child")
-        video_model = self.config.get("video_model", "doubao-seedance-1-5-pro-251215")
+        video_model = self.config.get("video_model", "sora-2")
         
         return f"""请为以下单词创建视频：
 
@@ -395,7 +395,7 @@ class VocabWorkerNode(ReActWorkerNode):
             return {"success": True, "count": len(shots_data)}
         
         @tool
-        async def generate_videos_batch(shot_ids: List[int], model: str = "doubao-seedance-1-5-pro-251215") -> Dict:
+        async def generate_videos_batch(shot_ids: List[int], model: str = "sora-2") -> Dict:
             """
             批量生成视频
             
@@ -457,12 +457,12 @@ class VocabWorkerNode(ReActWorkerNode):
             if self.task_id:
                 try:
                     from app.agent.triggers.vocab_trigger import _update_creation_status
-                    video_url = result.get("video_url", "")[:50] if result.get("video_url") else "无"
+                    video_url = result.get("video_url", "")[:100] if result.get("video_url") else "无"
                     status_msg = f"视频生成并导出完成: video_url={video_url}"
                     await _update_creation_status(
                         creation_id=self.task_id,
-                        status="exporting",
-                        progress=90,
+                        status="completed",
+                        progress=100,
                         current_step="导出完成",
                         step_status=status_msg,
                     )
@@ -516,11 +516,13 @@ class VocabWorkerNode(ReActWorkerNode):
             if self.task_id:
                 try:
                     from app.agent.triggers.vocab_trigger import _update_creation_status
-                    video_url = result.get("video_url", "")[:50] if result.get("video_url") else "无"
+                    video_url = result.get("video_url", "")[:100] if result.get("video_url") else "无"
                     status_msg = f"调用工具 export_final_video: shot_ids={shot_ids or [s['shot_id'] for s in self.all_shots]}, video_url={video_url}"
                     await _update_creation_status(
                         creation_id=self.task_id,
                         current_step="导出视频",
+                        status="completed",
+                        progress=100,
                         step_status=status_msg,
                     )
                 except:
@@ -560,10 +562,10 @@ class VocabWorkerNode(ReActWorkerNode):
                 creation = Creation(
                     uuid=creation_uuid,
                     title="单词视频",
-                    creation_type="vocab",
+                    creation_type="chat",
                     status="processing",
                     owner_id=self.user_id or 1,
-                    extra_data={"video_model": self.config.get("video_model", "doubao-seedance-1-5-pro-251215")}
+                    extra_data={"video_model": self.config.get("video_model", "sora-2")}
                 )
                 db.add(creation)
                 await db.flush()
@@ -844,9 +846,23 @@ class VocabWorkerNode(ReActWorkerNode):
         
         video_url = ""
         for result in tool_results:
-            if result.get("tool") == "export_final_video":
-                video_url = result.get("result", {}).get("video_url", "")
+            tool_name = result.get("tool", "")
+            tool_result = result.get("result", {})
+            
+            # 1. 直接调用 export_final_video 工具
+            if tool_name == "export_final_video":
+                video_url = tool_result.get("video_url", "")
                 break
+            
+            # 2. generate_videos_batch 工具内部调用了 export_final_video
+            if tool_name == "generate_videos_batch":
+                export_result = tool_result.get("export_result", {})
+                if export_result:
+                    video_url = export_result.get("video_url", "")
+                    if video_url:
+                        break
+        
+        logger.info(f"[{self.node_name}] 提取的视频URL: {video_url}")
         
         return {
             "final_video_url": video_url,

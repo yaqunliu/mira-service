@@ -20,6 +20,7 @@ from app.api.api_v1.endpoints import (
     video_generation,
     agent,
     vocab,
+    standalone_agent,
 )
 
 api_router = APIRouter()
@@ -78,3 +79,6 @@ api_router.include_router(agent.router, prefix="/creations", tags=["Agent"])
 
 # Vocab 单词视频路由
 api_router.include_router(vocab.router, tags=["单词视频"])
+
+# 独立创作 Agent 路由
+api_router.include_router(standalone_agent.router, prefix="/agent", tags=["独立创作Agent"])

@@ -68,7 +68,9 @@ async def create_creation_service(
                 f"将忽略 novel_id 和 chapter_id"
             )
     else:
-        if not ((creation_data.novel_id and creation_data.chapter_id) or creation_data.text_content):
+        # chat 类型不需要 novel_id/chapter_id
+        is_chat_mode = creation_data.creation_type == "chat"
+        if not is_chat_mode and not ((creation_data.novel_id and creation_data.chapter_id) or creation_data.text_content):
             raise HTTPException(
                 status_code=400,
                 detail="创建新创作时必须提供 novel_id 和 chapter_id，或提供 text_content 进行文案创作，或提供 creation_id 继续已存在的创作"
@@ -101,6 +103,30 @@ async def create_creation_service(
                 detail="指定的创作项目不存在"
             )
 
+    # chat 类型直接创建，不经过复杂 service
+    if creation_data.creation_type == "chat":
+        from app.models.creation import Creation, WorkflowMode
+        import uuid as uuid_module
+        
+        new_creation = Creation(
+            uuid=str(uuid_module.uuid4()),
+            title=creation_data.title or "自由创作",
+            creation_type="chat",
+            status="created",
+            owner_id=user_id,
+            workflow_mode=WorkflowMode.AGENT if creation_data.workflow_mode == "agent" else WorkflowMode.TRADITIONAL,
+            extra_data=creation_data.extra_data or {}
+        )
+        db.add(new_creation)
+        await db.flush()
+        await db.commit()
+        await db.refresh(new_creation)
+        
+        return success_response(
+            data={"creation_id": new_creation.creation_id, "uuid": new_creation.uuid},
+            message="空白创作创建成功"
+        )
+    
     narration_mode = creation_data.narration_mode or "original"
     if narration_mode not in ["original", "rewrite"]:
         raise HTTPException(
@@ -191,8 +217,9 @@ async def get_creations_service(
                 "creation_type": creation.creation_type,
                 "preview_text": creation.preview_text,
                 "text_content_url": creation.text_content_url,
+                "workflow_mode": creation.workflow_mode.value if creation.workflow_mode else "traditional",
             }
-
+            
             creation_data["characters"] = []
             if hasattr(creation, 'characters'):
                 for character in (creation.characters or []):
@@ -408,6 +435,7 @@ async def get_creation_detail(
             "updated_at": creation.updated_at,
             "extra_data": creation.extra_data,
             "character_ids": creation.character_ids or [],  # 返回 character_ids 列表
+            "creation_type": creation.creation_type,
             "characters": [
                 {
                     "character_id": c.character_id,
