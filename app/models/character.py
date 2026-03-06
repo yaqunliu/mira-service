@@ -26,6 +26,8 @@ class Character(Base):
     clothing = Column(Text)  # 服装描述
     tags = Column(ARRAY(String))  # 标签 (字符串数组)
     voice_description = Column(String(500))  # 声音描述
+    voice_id = Column(String(100))  # Fish Audio 语音模型 ID
+    voice_speed = Column(String(20), default="1.0")  # 语速 (0.5-2.0)
     
     # 图片相关
     image_prompt = Column(Text)  # 图片生成提示词

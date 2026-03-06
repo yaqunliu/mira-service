@@ -13,6 +13,8 @@ class CharacterBase(BaseModel):
     clothing: Optional[str] = None
     tags: Optional[List[str]] = None  # JSON数组
     voice_description: Optional[str] = None
+    voice_id: Optional[str] = None  # Fish Audio 语音模型 ID
+    voice_speed: Optional[str] = None  # 语速 (0.5-2.0)
     image_prompt: Optional[str] = None
     visual_style: Optional[str] = None
 
@@ -32,6 +34,8 @@ class CharacterUpdate(BaseModel):
     clothing: Optional[str] = None
     tags: Optional[List[str]] = None  # JSON数组
     voice_description: Optional[str] = None
+    voice_id: Optional[str] = None  # Fish Audio 语音模型 ID
+    voice_speed: Optional[str] = None  # 语速 (0.5-2.0)
     image_prompt: Optional[str] = None
     visual_style: Optional[str] = None
     image_url: Optional[str] = None
@@ -50,7 +54,7 @@ class CharacterRegenerateImageRequest(BaseModel):
     """单个角色重新生成图片请求"""
     character_uuid: str
     visual_style: str
-    creation_uuid: str
+    creation_uuid: Optional[str] = None  # 创作UUID，可选
     model_name: Optional[str] = None  # 使用的模型名称
     image_prompt: Optional[str] = None  # 使用的自定义生图提示词
     refresh_prompt: bool = False  # 是否重新生成提示词（忽略现有提示词）

@@ -91,15 +91,15 @@ docker-compose logs -f api
 
 访问以下地址验证服务是否正常运行：
 
-- 应用首页: http://localhost:8000/
-- API文档: http://localhost:8000/docs
-- 健康检查: http://localhost:8000/health
+- 应用首页: http://localhost:8100/
+- API文档: http://localhost:8100/docs
+- 健康检查: http://localhost:8100/health
 
 ## 5. API使用示例
 
 ### 用户注册
 ```bash
-curl -X POST "http://localhost:8000/api/v1/auth/register" \
+curl -X POST "http://localhost:8100/api/v1/auth/register" \
   -H "Content-Type: application/json" \
   -d '{
     "username": "testuser",
@@ -110,14 +110,14 @@ curl -X POST "http://localhost:8000/api/v1/auth/register" \
 
 ### 用户登录
 ```bash
-curl -X POST "http://localhost:8000/api/v1/auth/login" \
+curl -X POST "http://localhost:8100/api/v1/auth/login" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=testuser&password=password123"
 ```
 
 ### 上传小说
 ```bash
-curl -X POST "http://localhost:8000/api/v1/novels/upload" \
+curl -X POST "http://localhost:8100/api/v1/novels/upload" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -F "file=@your_novel.txt"
 ```
@@ -163,6 +163,6 @@ uv run mypy app/
 
 ## 8. 下一步
 
-- 查看完整的API文档: http://localhost:8000/docs
+- 查看完整的API文档: http://localhost:8100/docs
 - 阅读项目README了解更多功能
 - 根据业务需求实现具体的API逻辑

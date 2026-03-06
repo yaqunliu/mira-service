@@ -129,9 +129,9 @@ async def create_video_generation_task(
                 Creation.novel_id == request.novel_id,
                 Creation.chapter_id == request.chapter_id,
                 Creation.deleted_at.is_(None)
-            )
+            ).order_by(Creation.creation_id.desc())  # 获取最新的
         )
-        existing_creation = result.scalar_one_or_none()
+        existing_creation = result.scalars().first()  # 用 first() 避免多条记录报错
         if existing_creation:
             logger.info(f"章节已存在创作记录，直接返回: creation_id={existing_creation.creation_id}")
             return {

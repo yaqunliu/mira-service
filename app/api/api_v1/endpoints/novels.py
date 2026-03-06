@@ -1,8 +1,12 @@
 from fastapi import APIRouter, Depends, status, UploadFile, File, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select
 from typing import Optional
 from app.api.deps import get_async_db, get_current_user
 from app.models.user import User
+from app.models.novel import Novel
+from app.models.chapter import Chapter
+import uuid
 from app.services.novel_async_service import NovelAsyncService
 from app.core.logger import logger
 from app.core.exceptions import BaseServiceException
@@ -105,8 +109,17 @@ async def create_project(
         # Since NovelAsyncService.create_novel_service doesn't exist yet (only upload), we'll implement logic here or calling a service method
         # For simplicity and speed, let's implement service logic inline or add to service
         
-        # Call service to create
-        novel = await NovelAsyncService.create_project_service(db=db, novel_in=novel_in, user_id=user.user_id)
+        # Call service to create - 创建 script 类型的项目
+        novel = Novel(
+            uuid=str(uuid.uuid4()),
+            title=novel_in.title,
+            author=novel_in.author if hasattr(novel_in, 'author') else None,
+            type='script',
+            owner_id=user.user_id
+        )
+        db.add(novel)
+        await db.commit()
+        await db.refresh(novel)
         return success_response(data={"novel_id": novel.novel_id, "uuid": novel.uuid, "title": novel.title, "type": novel.type}, message="项目创建成功")
         
     except Exception as e:
@@ -211,6 +224,91 @@ async def get_novels(
             "has_next": page < total_pages,
             "has_prev": page > 1
         }
+    )
+
+
+@router.get("/by-id/{novel_id}")
+async def get_novel_by_id(
+    novel_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    根据ID获取小说详情
+    
+    注意：章节列表需要通过 GET /{novel_uuid}/chapters 接口单独获取（支持分页）
+    """
+    try:
+        novel = await NovelAsyncService.get_novel_by_id_service(db=db, novel_id=novel_id, user_id=user.user_id)
+    except BaseServiceException as e:
+        # 将业务异常转换为HTTP异常
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail
+        )
+    
+    if not novel:
+        raise HTTPException(status_code=404, detail="小说不存在")
+    
+    # 构建创作列表（关系查询已自动过滤已删除的），按creation_id降序排序
+    creations = [
+        {
+            "creation_id": creation.creation_id,
+            "title": creation.title,
+            "status": creation.status,
+            "chapter_id": creation.chapter_id,
+            "video_url": creation.video_url,
+            "audio_url": creation.audio_url,
+            "subtitle_url": creation.subtitle_url,
+            "voice_id": creation.voice_id,
+            "voice_speed": creation.voice_speed,
+            "current_task_id": creation.current_task_id,
+            "created_at": creation.created_at,
+            "updated_at": creation.updated_at,
+        }
+        for creation in sorted(novel.creations, key=lambda c: c.creation_id, reverse=True)
+    ]
+    
+    # 构建角色列表，按character_id降序排序
+    characters = [
+        {
+            "character_id": character.character_id,
+            "name": character.name,
+            "status": character.status,
+            "basic_info": character.basic_info,
+            "appearance": character.appearance,
+            "body": character.body,
+            "hair": character.hair,
+            "clothing": character.clothing,
+            "tags": character.tags,
+            "image_prompt": character.image_prompt,
+            "visual_style": character.visual_style,
+            "image_url": character.image_url,
+            "creation_id": character.creation_id,
+            "created_at": character.created_at,
+            "updated_at": character.updated_at,
+        }
+        for character in sorted(novel.characters, key=lambda c: c.character_id, reverse=True)
+    ]
+    
+    # 将Novel对象转换为响应格式
+    return success_response(
+        data={
+            "novel_id": novel.novel_id,
+            "uuid": novel.uuid,
+            "title": novel.title,
+            "author": novel.author,
+            "chapter_count": novel.chapter_count,
+            "status": novel.status,
+            "type": novel.type,
+            "owner_id": novel.owner_id,
+            "task_id": novel.task_id,
+            "created_at": novel.created_at,
+            "updated_at": novel.updated_at,
+            "creations": creations,
+            "characters": characters,
+        },
+        message="小说获取成功"
     )
 
 
@@ -417,11 +515,12 @@ async def update_novel(
     try:
         # 先通过uuid获取novel
         novel = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
+        # 将 novel_update 转换为字典并过滤掉 None 值
+        update_data = novel_update.model_dump(exclude_unset=True)
         novel = await NovelAsyncService.update_novel_service(
             db=db,
             novel_id=novel.novel_id,
-            novel_update=novel_update,
-            user_id=user.user_id
+            **update_data
         )
     except BaseServiceException as e:
         # 将业务异常转换为HTTP异常
@@ -460,11 +559,12 @@ async def update_chapter(
     try:
         # 先通过uuid获取chapter
         chapter = await NovelAsyncService.get_chapter_by_uuid_service(db=db, chapter_uuid=chapter_uuid, user_id=user.user_id)
+        # 将 chapter_update 转换为字典并过滤掉 None 值
+        update_data = chapter_update.model_dump(exclude_unset=True)
         chapter = await NovelAsyncService.update_chapter_service(
             db=db,
             chapter_id=chapter.chapter_id,
-            chapter_update=chapter_update,
-            user_id=user.user_id
+            **update_data
         )
         
         # 验证章节是否属于指定的小说
@@ -509,13 +609,19 @@ async def create_chapter(
         novel = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
         
         # Use service to create chapter
-        # Override novel_id from path
-        chapter_in.novel_id = novel.novel_id
+        # Get the next order number for this novel
+        chapter_count_result = await db.execute(
+            select(func.count(Chapter.chapter_id)).where(Chapter.novel_id == novel.novel_id)
+        )
+        chapter_count = chapter_count_result.scalar() or 0
+        next_order = chapter_count + 1
         
         chapter = await NovelAsyncService.create_chapter_service(
             db=db, 
             novel_id=novel.novel_id, 
-            chapter_in=chapter_in, 
+            title=chapter_in.title,
+            chapter_number=next_order,
+            content=chapter_in.content,
             user_id=user.user_id
         )
         return success_response(data={"chapter_id": chapter.chapter_id, "uuid": chapter.uuid, "title": chapter.title}, message="章节创建成功")
@@ -555,8 +661,7 @@ async def delete_chapter(
         # 调用服务层删除章节
         await NovelAsyncService.delete_chapter_service(
             db=db,
-            chapter_id=chapter.chapter_id,
-            user_id=user.user_id
+            chapter_id=chapter.chapter_id
         )
     except HTTPException:
         raise
@@ -588,7 +693,7 @@ async def delete_novel(
     try:
         # 先通过uuid获取novel
         novel = await NovelAsyncService.get_novel_by_uuid_service(db=db, novel_uuid=novel_uuid, user_id=user.user_id)
-        await NovelAsyncService.delete_novel_service(db=db, novel_id=novel.novel_id, user_id=user.user_id)
+        await NovelAsyncService.delete_novel_service(db=db, novel_id=novel.novel_id)
     except BaseServiceException as e:
         # 将业务异常转换为HTTP异常
         raise HTTPException(

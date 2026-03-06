@@ -126,6 +126,7 @@ class AgentSession(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True, comment="会话完成时间")
+    deleted_at = Column(DateTime(timezone=True), nullable=True, comment="软删除时间")
 
     # 关系
     creation = relationship("Creation", back_populates="agent_session")

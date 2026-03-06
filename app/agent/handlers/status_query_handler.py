@@ -183,7 +183,8 @@ class AIStatusQueryHandler:
             shots = shot_result.scalars().all()
 
             session_stmt = select(AgentSession).where(
-                AgentSession.creation_uuid == creation_uuid
+                AgentSession.creation_uuid == creation_uuid,
+                AgentSession.deleted_at.is_(None)
             ).order_by(AgentSession.created_at.desc())
             session_result = await db.execute(session_stmt)
             session = session_result.scalar_one_or_none()

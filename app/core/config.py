@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     
     # 安全配置
     SECRET_KEY: str = ""
-    ALGORITHM: str = "HS256"
+    ALGORITHM: str = "ES256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24小时
     
     # CORS配置
@@ -93,12 +93,14 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = ""
     LLM_MODEL_NAME: str = ""
+    LLM_MODEL_DEFAULT: str = "Qwen/Qwen-Plus"  # Agent 对话默认 LLM 模型
 
+    LLM_AGENT_DEFAULT: str = "Qwen/Qwen-Plus"
     # 专用LLM模型配置
-    LLM_MODEL_CHARACTER_ANALYSIS: str = "zai-org/glm-4.6"  # 人物解析模型
-    LLM_MODEL_SCENE_ANALYSIS: str = "zai-org/glm-4.6"  # 场景解析模型
-    LLM_MODEL_SHOT_ANALYSIS: str = "zai-org/glm-4.6"  # 分镜解析模型
-    LLM_MODEL_SCRIPT_GENERATION: str = "zai-org/glm-4.6"  # 剧本生成模型
+    LLM_MODEL_CHARACTER_ANALYSIS: str = "Qwen/Qwen-Plus"  # 人物解析模型
+    LLM_MODEL_SCENE_ANALYSIS: str = "Qwen/Qwen-Plus"  # 场景解析模型
+    LLM_MODEL_SHOT_ANALYSIS: str = "Qwen/Qwen-Plus"  # 分镜解析模型
+    LLM_MODEL_SCRIPT_GENERATION: str = "Qwen/Qwen-Plus"  # 剧本生成模型
     LLM_MODEL_PROMPT_GENERATION: str = "Qwen/Qwen-Plus"  # 提示词生成模型
 
     # 图片生成模型配置
@@ -120,7 +122,7 @@ class Settings(BaseSettings):
     ARK_VIDEO_RETRY_DELAY: int = 5  # 视频生成重试间隔（秒）
 
     # Sora2 视频生成配置（使用 OPENAI_API_KEY 和 OPENAI_BASE_URL）
-    SORA2_MODEL: str = "openai/sora-2/image-to-video"  # Sora2 图生视频模型
+    SORA2_MODEL: str = "openai/sora-2/image-to-video-pro"  # Sora2 图生视频模型
     SORA2_TIMEOUT: int = 1800  # Sora2 视频生成超时时间（秒），默认30分钟
     SORA2_RETRY_DELAY: int = 5  # Sora2 视频生成重试间隔（秒）
     
@@ -138,7 +140,7 @@ class Settings(BaseSettings):
     
     # LangGraph 配置
     LANGGRAPH_CHECKPOINT_NAMESPACE: str = "mira_comic_drama"  # Checkpointer 命名空间
-    LANGGRAPH_RECURSION_LIMIT: int = 25  # 递归深度限制（防止无限循环）
+    LANGGRAPH_RECURSION_LIMIT: int = 100  # 递归深度限制（防止无限循环）
 
     # ChromaDB 向量数据库配置
     CHROMADB_PATH: str = "./chroma_db"  # ChromaDB 持久化存储路径
@@ -157,6 +159,7 @@ class Settings(BaseSettings):
     # Fish Audio 配置
     FISH_AUDIO_API_KEY: str = ""
     FISH_AUDIO_DEFAULT_VOICE_ID: str = ""  # 默认语音模型 ID，如 "54a5170264694bfc8e9ad98df7bd89c3" (丁真)
+    FISH_AUDIO_DEFAULT_MODEL: str = "s1"  # 默认 TTS 模型，可选值：s1, speech-1.6, speech-1.5
     
     # 字体配置
     FONT_DIR: str = "static/fonts"  # 字体文件本地存储目录
@@ -238,6 +241,12 @@ class Settings(BaseSettings):
     WECHAT_RETRY_DELAY: int = 2  # 微信支付API重试间隔（秒）
     
     ENABLE_TEST_EXCEPTION: str = "false"
+    
+    # Debug 生成配置
+    DEBUG_GENERATE_IMAGE: bool = False  # 调试生成模式，为 True 时不调用真实 API，返回固定地址
+    DEBUG_GENERATE_VIDEO: bool = False  # 调试生成模式，为 True 时不调用真实 API，返回固定地址
+    DEBUG_GENERATE_IMAGE_URL: str = "https://novel-agent.cn-sh2.ufileos.com/dev/20260205/10a34369-16b7-4cb9-ab19-4be8b84adb5a/characters/characters/78/image_41b33d9a-19b5-471c-8d6c-80ff72323446.png"
+    DEBUG_GENERATE_VIDEO_URL: str = "https://novel-agent.cn-sh2.ufileos.com/test/testvideo/0001.mp4"
     
     model_config = ConfigDict(
         env_file=[".env.local", ".env"],  # 先读取 .env.local（本地开发），再读取 .env（Docker/生产）

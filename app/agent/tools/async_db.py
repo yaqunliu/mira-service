@@ -20,15 +20,21 @@ async def get_async_db_session() -> AsyncGenerator[AsyncSession, None]:
     Returns:
         AsyncSession 实例
     """
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+    # AsyncSessionLocal 是工厂类，需要先实例化再调用
+    # AsyncSessionLocal() 返回工厂实例，再调用 () 获取 session
+    session = AsyncSessionLocal()()
+    try:
+        yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+# 别名，方便 db_tools 调用
+get_async_session = get_async_db_session
 
 
 async def execute_async(db: AsyncSession, stmt):

@@ -211,6 +211,10 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
                     # 只有 Sora 和 Doubao 会生成音频，其他模型生成的是静音视频
                     has_audio_model = video_model not in ["Wan-AI/Wan2.6-I2V", "viduq2-pro", "viduq2-turbo"]
                     
+                    # 如果 separate_audio=False，不分离音频
+                    if separate_audio is False:
+                        has_audio_model = False
+                    
                     if FFmpegUtils.normalize_video(temp_video_path, normalized_video_path, duration=float(video_duration), remove_audio=not has_audio_model):
                         if has_audio_model:
                             # 分离音视频 (使用标准化后的视频)
@@ -284,6 +288,22 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
                     })
                     flag_modified(shot, 'extra_data')
 
+                    # 保存视频版本历史到 status_detail
+                    from datetime import datetime
+                    if not shot.status_detail:
+                        shot.status_detail = {}
+                    if 'video_historys' not in shot.status_detail:
+                        shot.status_detail['video_historys'] = []
+                    
+                    shot.status_detail['video_historys'].append({
+                        'image_url': silent_video_url,
+                        'audio_url': audio_url,
+                        'video_prompt': video_prompt,
+                        'video_model': video_model,
+                        'created_at': datetime.utcnow().isoformat()
+                    })
+                    flag_modified(shot, 'status_detail')
+
                     # 更新 status_detail：视频生成成功
                     from datetime import datetime
                     if not shot.status_detail:
@@ -325,6 +345,7 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
                     logger.error(f"视频生成积分扣除失败: {str(points_error)}")
                     # 积分扣除失败不影响视频生成，记录错误后继续
                 db.flush()
+                db.commit()  # 提交当前分镜的更改，确保 version_history 被保存
                 generated_count += 1
                 
                 # 更新任务进度
@@ -399,7 +420,7 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
 
 
 @celery_app.task(bind=True, name="generate_single_shot_video_task", soft_time_limit=1800, time_limit=1900)
-def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None, model_name: str = None, last_frame_image_url: str = None):
+def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None, model_name: str = None, last_frame_image_url: str = None, separate_audio: bool = None):
     """
     单个分镜视频生成任务
 
@@ -414,7 +435,7 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
         model_name: 使用的模型名称
         last_frame_image_url: 尾帧图片URL（可选）
     """
-    logger.info(f"开始分镜视频生成任务: shot_id={shot_id}, creation_id={creation_id}, model_name={model_name}, 有尾帧: {bool(last_frame_image_url)}")
+    logger.info(f"开始分镜视频生成任务: shot_id={shot_id}, creation_id={creation_id}, model_name={model_name}, 有尾帧: {bool(last_frame_image_url)}, separate_audio={separate_audio}")
     db: Session = _get_sync_session_factory()()
 
     try:
@@ -620,7 +641,7 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
         shot_duration = shot.video_duration if shot.video_duration else 5
 
         # 根据作品配置或默认选择视频生成模型
-        video_model = model_name or (creation.extra_data or {}).get('video_model', 'sora2')
+        video_model = model_name or (creation.extra_data or {}).get('video_model', 'doubao-seedance-1-5-pro-251215') if creation else (model_name or 'doubao-seedance-1-5-pro-251215')
         
         # 根据模型选择时长映射
         if video_model == "Wan-AI/Wan2.6-I2V":
@@ -715,12 +736,19 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
             with open(temp_video_path, 'wb') as f:
                 f.write(response.content)
 
-            # 分离音视频
-            logger.info(f"分离音视频: shot_id={shot.shot_id}")
-            silent_video_path, audio_path = FFmpegUtils.separate_audio_video(temp_video_path)
+            # 分离音视频（如果 separate_audio 不为 False）
+            if separate_audio is not False:
+                logger.info(f"分离音视频: shot_id={shot.shot_id}")
+                silent_video_path, audio_path = FFmpegUtils.separate_audio_video(temp_video_path)
+                video_filename = f"videos/{creation_id}/{shot.shot_id}_{uuid.uuid4().hex[:8]}_silent.mp4"
+            else:
+                logger.info(f"不分离音视频: shot_id={shot.shot_id}")
+                silent_video_path = temp_video_path
+                audio_path = None
+                video_filename = f"videos/{creation_id}/{shot.shot_id}_{uuid.uuid4().hex[:8]}.mp4"
 
-            # 上传静音视频到US3
-            video_put_key = f"videos/{creation_id}/{shot.shot_id}_{uuid.uuid4().hex[:8]}_silent.mp4"
+            # 上传视频到US3
+            video_put_key = video_filename
             video_upload_result = us3_client.upload_file(silent_video_path, put_key=video_put_key)
 
             if not video_upload_result.get('success'):
@@ -776,6 +804,21 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
                 'created_at': datetime.utcnow().isoformat()
             })
             flag_modified(shot, 'extra_data')
+
+            # 保存视频版本历史到 status_detail
+            if not shot.status_detail:
+                shot.status_detail = {}
+            if 'video_historys' not in shot.status_detail:
+                shot.status_detail['video_historys'] = []
+            
+            shot.status_detail['video_historys'].append({
+                'image_url': silent_video_url,
+                'audio_url': audio_url,
+                'video_prompt': video_prompt,
+                'video_model': video_model,
+                'created_at': datetime.utcnow().isoformat()
+            })
+            flag_modified(shot, 'status_detail')
 
             # 更新 status_detail：视频生成成功
             shot.status_detail['video_status'] = 'completed'

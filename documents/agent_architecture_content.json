@@ -1,0 +1,299 @@
+{
+  "title": "AI Manju Agent 架构设计分享",
+  "subtitle": "从理论到实践的技术探索",
+  "schema_version": "1.0.0",
+  "slides": [
+    {
+      "type": "title",
+      "title": "AI Manju Agent 架构设计分享",
+      "subtitle": "从理论到实践的技术探索"
+    },
+    {
+      "type": "agenda",
+      "title": "目录",
+      "items": [
+        "常见 Agent 架构模式 - 业界主流方案概览",
+        "漫剧创作业务流程 - 从剧本到视频的完整链路",
+        "为什么选择 Supervisor 架构 - 技术选型思考",
+        "我们的架构设计 - 系统实现详解",
+        "踩过的坑 - 问题与解决方案"
+      ]
+    },
+    {
+      "type": "section",
+      "title": "第一章：常见 Agent 架构模式"
+    },
+    {
+      "type": "content",
+      "title": "1.1 ReAct 模式",
+      "items": [
+        "Reasoning + Acting 交替循环",
+        "流程: Thought → Action → Observation → Thought → ...",
+        "LLM 自主决定何时调用工具",
+        "每次观察后重新思考",
+        "适合探索性任务",
+        "示例: 帮我查一下项目进度，如果角色图还没生成就开始生成"
+      ]
+    },
+    {
+      "type": "content",
+      "title": "1.2 Plan-and-Execute 模式",
+      "items": [
+        "先规划，后执行",
+        "Planner (生成计划) → Executor (逐步执行)",
+        "计划可预览、可修改",
+        "执行过程确定性高",
+        "适合复杂多步骤任务",
+        "示例: 帮我一键生成整个漫剧"
+      ]
+    },
+    {
+      "type": "content",
+      "title": "1.3 Supervisor-Worker 模式",
+      "items": [
+        "中央调度 + 专业分工",
+        "Supervisor 统一决策，分发任务给 Workers",
+        "职责清晰，便于维护",
+        "适合流程化生产任务"
+      ]
+    },
+    {
+      "type": "two_column",
+      "title": "1.4 架构模式对比",
+      "left_title": "模式",
+      "left_items": [
+        "ReAct: 灵活自主，但不可控难预测",
+        "Plan-Execute: 可预览确定性高，规划开销大"
+      ],
+      "right_title": "适用场景",
+      "right_items": [
+        "Supervisor: 职责清晰易扩展，需精心设计",
+        "Workflow: 确定性最高，但不灵活难处理异常"
+      ]
+    },
+    {
+      "type": "section",
+      "title": "第二章：漫剧创作业务流程"
+    },
+    {
+      "type": "content",
+      "title": "2.1 完整创作链路",
+      "items": [
+        "剧本上传 → 剧本分析 (识别角色+场景)",
+        "资产生成: 角色/场景提示词 → 图片生成",
+        "分镜设计: 分镜脚本 + 提示词设计",
+        "分镜图生成: 首帧/尾帧图片",
+        "分镜视频生成: 首尾帧/仅首帧/参考图模式",
+        "音频处理 (旁白、音效、BGM) → 最终合成"
+      ]
+    },
+    {
+      "type": "content",
+      "title": "2.2 剧本分析阶段",
+      "items": [
+        "输入: 用户上传的剧本文本",
+        "输出: 角色列表 (姓名、性别、年龄、外貌、性格)",
+        "输出: 场景列表 (名称、环境、时间、氛围)",
+        "技术要点: LLM 结构化输出 (JSON Schema)",
+        "多轮提取保证完整性"
+      ]
+    },
+    {
+      "type": "content",
+      "title": "2.3 资产生成阶段",
+      "items": [
+        "角色/场景 → LLM 生成英文 Image Prompt",
+        "调用图片生成模型 (豆包/Stable Diffusion)",
+        "异步任务 + 轮询状态",
+        "支持重新生成和手动修改"
+      ]
+    },
+    {
+      "type": "content",
+      "title": "2.4 分镜与视频生成",
+      "items": [
+        "分镜脚本: 镜头描述、时长、旁白、场景、角色",
+        "首尾帧模式: 首帧图 + 尾帧图 → 动作连贯镜头",
+        "仅首帧模式: 首帧图 + 视频提示词 → 自由运动镜头",
+        "参考图模式: 参考图 + 提示词 → 风格参考"
+      ]
+    },
+    {
+      "type": "section",
+      "title": "第三章：为什么选择 Supervisor 架构"
+    },
+    {
+      "type": "content",
+      "title": "3.1 业务特点分析",
+      "items": [
+        "流程明确: 剧本→角色→分镜→视频，有固定顺序",
+        "需要人工介入: 每个阶段需要用户确认",
+        "任务可拆分: 每个阶段职责单一",
+        "需要灵活跳转: 用户可能要求\"重新生成某个角色\""
+      ]
+    },
+    {
+      "type": "two_column",
+      "title": "3.2 为什么不选其他方案？",
+      "left_title": "Workflow 的问题",
+      "left_items": [
+        "过于死板: 用户说\"跳过这一步\"怎么办？",
+        "异常处理难: 某个节点失败整个流程卡死",
+        "扩展困难: 新增阶段需改动大量代码"
+      ],
+      "right_title": "纯 ReAct 的问题",
+      "right_items": [
+        "不可控: LLM 可能\"自由发挥\"跳过重要步骤",
+        "调试困难: 每次执行路径都不一样",
+        "Token 消耗大，可能陷入死循环"
+      ]
+    },
+    {
+      "type": "content",
+      "title": "3.3 Supervisor 架构的优势",
+      "items": [
+        "统一决策点: Supervisor 做路由，便于控制流程",
+        "职责清晰: 每个 Worker 专注自己的任务",
+        "灵活跳转: Supervisor 可以决定下一步去哪",
+        "易于扩展: 新增 Worker 只需注册到 Supervisor",
+        "HITL 友好: Supervisor 统一管理人工介入点"
+      ]
+    },
+    {
+      "type": "section",
+      "title": "第四章：我们的架构设计"
+    },
+    {
+      "type": "content",
+      "title": "4.1 双层 Graph 架构",
+      "items": [
+        "主图 (DialogueGraph): entry → intent_detection → 分支处理",
+        "分支: status_query / task_execution / clarify",
+        "子图 (ComicDramaSubgraph): stage_router → supervisor ⇅ Workers",
+        "7 个专业 Workers 处理不同任务"
+      ]
+    },
+    {
+      "type": "content",
+      "title": "4.2 Worker 节点列表",
+      "items": [
+        "script_analyst: 剧本分析 (save_characters, save_scenes)",
+        "asset_designer: 资产生成 (query_*, save_*_prompt, submit_*_image)",
+        "storyboard_director: 分镜创作 (save_shots)",
+        "audio_engineer: 音频处理 (generate_audio)",
+        "video_editor: 视频生成 (generate_shot_videos)",
+        "asset_regenerator: 资产重生成 (综合多个 Tools)"
+      ]
+    },
+    {
+      "type": "code",
+      "title": "4.3 Supervisor 决策机制",
+      "code": "# 强制工具调用模式\ntool_choice = {\n    \"type\": \"function\", \n    \"function\": {\"name\": \"supervisor_decision\"}\n}\n\n# 决策输出结构\n{\n    \"next_worker\": \"asset_designer\",\n    \"needs_input\": False,\n    \"board_actions\": [...],\n    \"response_text\": \"正在生成图片...\"\n}",
+      "language": "python"
+    },
+    {
+      "type": "two_column",
+      "title": "4.4 工具分类",
+      "left_title": "Reasoning Tools (推理工具)",
+      "left_items": [
+        "db_tools.py",
+        "query_characters / query_scenes / query_shots",
+        "save_characters / save_scenes / save_shots",
+        "update_* 系列"
+      ],
+      "right_title": "Action Tools (执行工具)",
+      "right_items": [
+        "agent_generation_tools.py",
+        "generate_character_image / generate_scene_image",
+        "generate_shot_images / generate_shot_videos",
+        "check_task_status / check_task_group_status"
+      ]
+    },
+    {
+      "type": "section",
+      "title": "第五章：踩过的坑"
+    },
+    {
+      "type": "content",
+      "title": "5.1 从 Workflow 到 Supervisor 的转变",
+      "items": [
+        "最初设计: 固定流程，无法跳转，异常难处理",
+        "问题: 用户说\"跳过角色生成\" → 无法处理",
+        "问题: 某个节点报错 → 整个流程卡死",
+        "问题: 新增\"重新生成\"功能 → 需要大量条件判断",
+        "解决方案: 重构为 Supervisor 架构"
+      ]
+    },
+    {
+      "type": "content",
+      "title": "5.2 Supervisor 决策不准的问题",
+      "items": [
+        "现象: 用户说\"继续生成\"，却调度了错误的 Worker",
+        "原因: Prompt 不够明确，状态信息不完整",
+        "解决方案 1: 状态注入 - 每次决策前注入 production_stage",
+        "解决方案 2: Prompt 硬规则 - 明确阶段对应的行为",
+        "解决方案 3: 强制工具调用 - 使用 tool_choice"
+      ]
+    },
+    {
+      "type": "content",
+      "title": "5.3 内部思考逻辑不能对外暴露",
+      "items": [
+        "现象: 用户看到 \"根据 JSON 解析结果...\" 等内部信息",
+        "原因: LLM 的 token 流直接暴露给用户",
+        "解决方案: 可见性白名单",
+        "只有 supervisor、clarify 节点的消息才发送给用户"
+      ]
+    },
+    {
+      "type": "content",
+      "title": "5.4 Tool 调用失败的异常处理",
+      "items": [
+        "现象: 图片生成超时/数据库连接失败/Celery任务失败",
+        "解决方案 1: 工具级容错 - try/except 返回错误信息",
+        "解决方案 2: 节点级回滚 - 回退到上一个稳定阶段",
+        "解决方案 3: 超时保护 - asyncio.timeout(300)"
+      ]
+    },
+    {
+      "type": "content",
+      "title": "5.5 Worker 节点迭代轮数过多",
+      "items": [
+        "现象: ReAct 循环 23/25，GraphRecursionError",
+        "原因: 每个资产生成都触发一轮 ReAct",
+        "解决方案 1: 批量处理 - 一次工具调用处理多个资产",
+        "解决方案 2: 提高递归限制 - graph.recursion_limit = 50",
+        "解决方案 3: 合并工具调用 - submit_character_images([...])"
+      ]
+    },
+    {
+      "type": "content",
+      "title": "5.6 AI 编码过程中的问题",
+      "items": [
+        "问题 1: 修复 Bug A → 引入 Bug B → 修复 B → A 又出现",
+        "问题 2: 代码越写越冗余，5个Worker重复代码",
+        "问题 3: 解决 Bug 引入新 Bug",
+        "解决: 充分上下文 + 分步验证 + 及时回滚"
+      ]
+    },
+    {
+      "type": "section",
+      "title": "总结"
+    },
+    {
+      "type": "summary",
+      "title": "核心收获",
+      "items": [
+        "架构选型要匹配业务特点: 流程化→Supervisor，探索性→ReAct",
+        "Prompt 工程是核心竞争力: 明确规则比\"智能\"更可靠",
+        "异常处理要前置设计: 每个环节都可能失败，优雅降级",
+        "AI 编码需要人工把关: 充分上下文，小步快跑及时验证"
+      ]
+    },
+    {
+      "type": "closing",
+      "title": "Q&A",
+      "subtitle": "有问题欢迎提问！"
+    }
+  ]
+}

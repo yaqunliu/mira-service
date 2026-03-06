@@ -54,11 +54,11 @@ class Creation(Base):
 
     # 外键
     owner_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
-    novel_id = Column(Integer, ForeignKey("novels.novel_id"), default=0, nullable=False)
-    chapter_id = Column(Integer, ForeignKey("chapters.chapter_id"), default=0, nullable=False)
+    novel_id = Column(Integer, ForeignKey("novels.novel_id"), nullable=True)
+    chapter_id = Column(Integer, ForeignKey("chapters.chapter_id"), nullable=True)
 
     # 新增字段
-    creation_type = Column(String(20), default="chapter", nullable=False)  # chapter: 章节创作, script: 文案创作
+    creation_type = Column(String(20), default="chapter", nullable=False)  # chapter: 章节创作, script: 文案创作, chat: 对话创作（不解析，全靠Agent）
     preview_text = Column(String(500), nullable=True)  # 文本预览，最多500字符
     text_content_url = Column(String(500), nullable=True)  # 文本内容在US3上的存储URL
 

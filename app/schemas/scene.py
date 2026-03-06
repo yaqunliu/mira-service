@@ -38,6 +38,7 @@ class SceneUpdate(BaseModel):
     duration: Optional[str] = None
     scene_setting: Optional[SceneSetting] = None
     image_prompt: Optional[str] = None
+    image_url: Optional[str] = None
 
 
 class SceneRegenerateRequest(BaseModel):

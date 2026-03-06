@@ -33,7 +33,8 @@ TASK_INTENT_PROMPT = """判断用户消息的意图，只返回意图类型（�
 - generate_storyboard_images: 要求生成分镜图片（包含"生成分镜图片"、"分镜图片"、"分镜图"）
 - generate_videos: 要求生成视频（包含"生成视频"、"视频生成"、"生成短视频"）
 - generate_prompt_only: 只生成提示词不生成图片（包含"生成提示词"、"只要提示词"、"先生成prompt"、"不要图片只要提示词"）
-- modify_prompt: 修改提示词（包含"修改提示词"、"改一下提示词"、"编辑prompt"、"更新提示词"）
+- regenerate_prompt: 重新生成提示词（包含"重新生成提示词"、"提示词重新生成"、"提示词太啰嗦"、"提示词有错"、"优化提示词"、"修改提示词"、"改一下提示词"、"编辑prompt"、"更新提示词"）
+- regenerate: 重新生成图片/视频（包含"重新生成"、"再生成"、"重试生成"）
 - modify_settings: 修改创作设置（包含"设置分辨率"、"改成竖屏"、"改成横屏"、"16:9"、"9:16"、"修改风格"、"设置风格"）
 - collect_info: 采集创作信息或回答设置相关问题（用户提供分辨率、风格等设置信息）
 - auto_create: 全自动创作、智能创作、开始创作、接着创作、按流程创作（完整流程）
@@ -49,12 +50,13 @@ TASK_INTENT_PROMPT = """判断用户消息的意图，只返回意图类型（�
 6. "生成分镜图片"、"分镜图片"、"分镜图" → generate_storyboard_images
 7. "生成视频"、"视频生成" → generate_videos
 8. "生成提示词"、"只要提示词"、"先生成prompt" → generate_prompt_only
-9. "修改提示词"、"改一下提示词"、"编辑prompt" → modify_prompt
-10. "设置分辨率"、"改成竖屏"、"改成横屏"、"16:9"、"9:16"、"修改风格" → modify_settings
-11. 用户回答分辨率、风格等设置问题时 → collect_info
-12. "全自动创作"、"智能创作"、"开始创作"、"接着创作"、"按流程创作" → auto_create
-13. "状态怎么样"、"进度如何"、"情况如何" → status_query
-14. 其他无法识别的意图 → unknown
+9. "重新生成提示词"、"提示词太啰嗦"、"提示词有错"、"优化提示词"、"修改提示词"、"改一下提示词"、"编辑prompt"、"更新提示词" → regenerate_prompt
+10. "重新生成"、"再生成"、"重试生成" → regenerate
+12. "设置分辨率"、"改成竖屏"、"改成横屏"、"16:9"、"9:16"、"修改风格" → modify_settings
+13. 用户回答分辨率、风格等设置问题时 → collect_info
+14. "全自动创作"、"智能创作"、"开始创作"、"接着创作"、"按流程创作" → auto_create
+15. "状态怎么样"、"进度如何"、"情况如何" → status_query
+16. 其他无法识别的意图 → unknown
 
 只返回类型名称，格式：类型"""
 
@@ -76,6 +78,8 @@ INTENT_REFINE_PROMPT = """你是一个意图细化分析Agent。用户已经表�
     "target_numbers": [目标编号列表，如果有的话],
     "scope": "all" 或 "specific" 或 "first" 或 "last",
     "force_regenerate": true 或 false,
+    "resource_type": "image" 或 "video" 或 "both",
+    "frame_type": "start" 或 "end" 或 "both",
     "description": "对用户意图的简短描述"
 }}
 
@@ -84,26 +88,56 @@ INTENT_REFINE_PROMPT = """你是一个意图细化分析Agent。用户已经表�
   - action: "generate_shot_image"
   - scope: "all"（全部）, "specific"（指定编号）, "first"（第一个）, "last"（最后一个）
   - target_numbers: 用户提到的分镜编号列表，如 [1, 2, 3]
+  - resource_type: "image"
+  - frame_type: "start"（首帧）, "end"（尾帧）, "both"（首尾帧）
 
 - 对于 generate_scene_images（场景图片生成）:
   - action: "generate_scene_image"
   - scope: "all", "specific", "first", "last"
   - target_numbers: 用户提到的场景编号列表
+  - resource_type: "image"
 
 - 对于 generate_character_images（角色图片生成）:
   - action: "generate_character_image"
   - scope: "all", "specific"
   - target: 角色名称（如果用户指定了的话）
+  - resource_type: "image"
 
 - 对于 generate_videos（视频生成）:
   - action: "generate_video"
   - scope: "all", "specific"
   - target_numbers: 用户提到的分镜编号列表
+  - resource_type: "video"
+  - frame_type: "start"（只用首帧生成视频）, "both"（用首尾帧生成视频）
+  - 注意：视频生成时，frame_type 决定使用哪些帧作为输入
+
+- 对于 regenerate（重新生成）:
+  - target: "shot" 或 "character" 或 "scene"
+  - resource_type: "image" 或 "video"
+  - frame_type: "start"（仅首帧）, "end"（仅尾帧）, "both"（首尾帧）
+
+frame_type 识别规则（重要！必须严格遵守）：
+- 用户说"首帧"、"开始帧"、"第一帧"、"首帧图片" -> "start"
+- 用户说"尾帧"、"结束帧"、"最后一帧"、"尾帧图片" -> "end"
+- 用户说"分镜图"、"图片"、"重新生成图片"（未明确指定首尾）-> "both"
+
+关键判断逻辑：
+1. 只要用户明确提到"尾帧"或"结束帧"，frame_type 必须是 "end"
+2. 只要用户明确提到"首帧"或"开始帧"，frame_type 必须是 "start"
+3. 用户说"重新生成...尾帧" -> frame_type="end"
+4. 用户说"重新生成...首帧" -> frame_type="start"
+5. 用户只说"重新生成图片"没指定首尾 -> frame_type="both"
 
 示例：
-用户说"给第一个分镜生成图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [1], "scope": "first", "force_regenerate": false, "description": "为第1个分镜生成图片"}}
-用户说"重新生成所有分镜图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [], "scope": "all", "force_regenerate": true, "description": "重新生成所有分镜图片"}}
-用户说"生成第2和第3个分镜的图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [2, 3], "scope": "specific", "force_regenerate": false, "description": "为第2、3个分镜生成图片"}}
+用户说"给第一个分镜生成图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [1], "scope": "first", "force_regenerate": false, "resource_type": "image", "frame_type": "both", "description": "为第1个分镜生成图片"}}
+用户说"重新生成所有分镜图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [], "scope": "all", "force_regenerate": true, "resource_type": "image", "frame_type": "both", "description": "重新生成所有分镜图片"}}
+用户说"生成第2和第3个分镜的图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [2, 3], "scope": "specific", "force_regenerate": false, "resource_type": "image", "frame_type": "both", "description": "为第2、3个分镜生成图片"}}
+用户说"给分镜5生成尾帧" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [5], "scope": "specific", "force_regenerate": false, "resource_type": "image", "frame_type": "end", "description": "为分镜5生成尾帧"}}
+用户说"重新生成分镜3和5的尾帧图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [3, 5], "scope": "specific", "force_regenerate": true, "resource_type": "image", "frame_type": "end", "description": "重新生成分镜3和5的尾帧"}}
+用户说"给我的分镜1和分镜3重新生成一下尾帧图片" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [1, 3], "scope": "specific", "force_regenerate": true, "resource_type": "image", "frame_type": "end", "description": "重新生成分镜1和3的尾帧"}}
+用户说"重新生成首帧" -> {{"action": "generate_shot_image", "target": "shot", "target_ids": [], "target_numbers": [], "scope": "all", "force_regenerate": true, "resource_type": "image", "frame_type": "start", "description": "重新生成所有分镜的首帧"}}
+用户说"给分镜1生成视频" -> {{"action": "generate_video", "target": "shot", "target_ids": [], "target_numbers": [1], "scope": "specific", "force_regenerate": false, "resource_type": "video", "frame_type": "both", "description": "为分镜1生成视频（使用首尾帧）"}}
+用户说"用首帧给分镜2生成视频" -> {{"action": "generate_video", "target": "shot", "target_ids": [], "target_numbers": [2], "scope": "specific", "force_regenerate": false, "resource_type": "video", "frame_type": "start", "description": "为分镜2生成视频（只用首帧）"}}
 
 只返回JSON，不要其他内容。"""
 
@@ -166,33 +200,6 @@ SETTINGS_COLLECT_PROMPT = """你是一个短剧创作助手，正在帮助用户
 
 如果用户说"横屏"、"电脑"、"电视"，设置为 16:9
 如果用户说"竖屏"、"手机"、"抖音"、"短视频"，设置为 9:16
-
-只返回JSON，不要其他内容。"""
-
-
-MODIFY_PROMPT_PROMPT = """你是一个短剧创作助手，用户想要修改或查看提示词。
-
-用户消息：{user_message}
-
-{chat_history}
-
-{context_info}
-
-请分析用户的需求，返回JSON格式：
-{{
-    "action": "view_prompt" 或 "modify_prompt" 或 "generate_prompt",
-    "target_type": "shot" 或 "scene" 或 "character",
-    "target_numbers": [目标编号列表],
-    "target_name": "目标名称（如果是角色）",
-    "new_prompt": "新的提示词内容（如果是修改操作）",
-    "modification": "修改描述（如添加什么元素、改变什么风格）",
-    "description": "对操作的简短描述"
-}}
-
-示例：
-- "看看第一个分镜的提示词" -> {{"action": "view_prompt", "target_type": "shot", "target_numbers": [1], ...}}
-- "把第2个分镜的提示词改成xxx" -> {{"action": "modify_prompt", "target_type": "shot", "target_numbers": [2], "new_prompt": "xxx", ...}}
-- "给第3个分镜生成提示词" -> {{"action": "generate_prompt", "target_type": "shot", "target_numbers": [3], ...}}
 
 只返回JSON，不要其他内容。"""
 
@@ -323,6 +330,9 @@ class AgentTaskHandler:
             if json_match:
                 refined_intent = json.loads(json_match.group())
                 logger.info(f"意图细化结果: {refined_intent}")
+                logger.info(f"[TaskHandler] 提取 frame_type: {refined_intent.get('frame_type', 'both')}, "
+                           f"resource_type: {refined_intent.get('resource_type', 'image')}, "
+                           f"target_numbers: {refined_intent.get('target_numbers', [])}")
                 return refined_intent
             else:
                 logger.warning(f"无法解析意图细化结果: {result_text}")
@@ -1351,211 +1361,6 @@ class AgentTaskHandler:
                 "message_id": message_id,
                 "content": f"处理设置时发生错误：{str(e)}",
                 "delta": f"处理设置时发生错误：{str(e)}",
-            }, role="assistant")
-
-    async def handle_prompt_operation(
-        self,
-        db,
-        creation_uuid: str,
-        user_message: str,
-        chat_history: list = None,
-        operation_type: str = "modify"
-    ) -> AsyncIterator[str]:
-        """处理提示词操作（查看、修改、生成）"""
-        message_id = f"msg_{uuid.uuid4().hex[:12]}"
-
-        try:
-            from langchain_core.messages import HumanMessage
-            from langchain_openai import ChatOpenAI
-            from app.core.config import settings
-            from app.models.shot import Shot
-            from app.models.scene import Scene
-            from sqlalchemy import select
-            from sqlalchemy.orm.attributes import flag_modified
-
-            creation = await self._get_creation_async(db, creation_uuid)
-            if not creation:
-                yield self._make_sse("message", {
-                    "type": "message.content",
-                    "message_id": message_id,
-                    "content": "创作项目不存在",
-                    "delta": "创作项目不存在",
-                }, role="assistant")
-                return
-
-            # 获取上下文信息
-            context_info = await self.get_context_for_intent(db, creation_uuid, "generate_storyboard_images")
-
-            llm = ChatOpenAI(
-                model=settings.LLM_MODEL_NAME or "gpt-4",
-                api_key=settings.OPENAI_API_KEY,
-                base_url=str(settings.OPENAI_BASE_URL) if settings.OPENAI_BASE_URL else None,
-                temperature=0.1,
-                extra_body={"thinking": {"type": "disabled"}},
-            )
-
-            chat_history_text = ""
-            if chat_history:
-                chat_history_text = "对话历史：\n"
-                for msg in chat_history[-6:]:
-                    role = "用户" if msg.get("role") == "user" else "助手"
-                    content = msg.get("content", "")[:200]
-                    chat_history_text += f"{role}: {content}\n"
-
-            prompt = MODIFY_PROMPT_PROMPT.format(
-                user_message=user_message,
-                chat_history=chat_history_text,
-                context_info=context_info
-            )
-
-            response = await llm.ainvoke([HumanMessage(content=prompt)])
-            result_text = response.content.strip()
-
-            import re
-            json_match = re.search(r'\{[\s\S]*\}', result_text)
-            if json_match:
-                result = json.loads(json_match.group())
-            else:
-                result = {"action": "view_prompt", "target_type": "shot", "target_numbers": [1]}
-
-            yield self._make_sse("message.start", {
-                "type": "message.start",
-                "message_id": message_id,
-            }, role="assistant")
-
-            action = result.get("action", "view_prompt")
-            target_type = result.get("target_type", "shot")
-            target_numbers = result.get("target_numbers", [])
-
-            response_msg = ""
-
-            if target_type == "shot":
-                stmt = select(Shot).where(Shot.creation_id == creation.creation_id).order_by(Shot.shot_number)
-                db_result = await db.execute(stmt)
-                shots = db_result.scalars().all()
-
-                if action == "view_prompt":
-                    # 查看提示词
-                    for num in target_numbers:
-                        for shot in shots:
-                            if shot.shot_number == num:
-                                prompt_text = shot.image_prompt or "（尚未生成提示词）"
-                                response_msg += f"分镜{num}的提示词：\n{prompt_text}\n\n"
-                                break
-                    if not response_msg:
-                        response_msg = "未找到指定的分镜"
-
-                elif action == "modify_prompt":
-                    # 修改提示词
-                    new_prompt = result.get("new_prompt", "")
-                    modified_count = 0
-                    for num in target_numbers:
-                        for shot in shots:
-                            if shot.shot_number == num:
-                                shot.image_prompt = new_prompt
-                                modified_count += 1
-                                break
-                    if modified_count > 0:
-                        await db.commit()
-                        response_msg = f"已修改{modified_count}个分镜的提示词"
-                    else:
-                        response_msg = "未找到指定的分镜"
-
-                elif action == "generate_prompt":
-                    # 只生成提示词，不生成图片
-                    from app.utils.ai_client import AIClient
-                    from app.utils.file_utils import read_prompt_file
-
-                    ai_client = AIClient()
-                    generated_count = 0
-
-                    for num in target_numbers:
-                        for shot in shots:
-                            if shot.shot_number == num:
-                                # 生成提示词
-                                prompt_template = read_prompt_file("shot_image.md")
-                                scene = shot.scene
-                                visual_style = creation.extra_data.get("visual_style", "anime") if creation.extra_data else "anime"
-
-                                messages = [{
-                                    "role": "user",
-                                    "content": f"{prompt_template}\n\n分镜描述：{shot.description}\n旁白：{shot.narration or '无'}\n视觉风格：{visual_style}"
-                                }]
-
-                                try:
-                                    resp = ai_client.chat_completion(messages=messages)
-                                    shot.image_prompt = resp.get("content", "").strip()
-                                    generated_count += 1
-                                except Exception as e:
-                                    logger.error(f"生成分镜{num}提示词失败: {e}")
-
-                    if generated_count > 0:
-                        await db.commit()
-                        response_msg = f"已为{generated_count}个分镜生成提示词"
-
-                        # 显示生成的提示词
-                        for num in target_numbers:
-                            for shot in shots:
-                                if shot.shot_number == num and shot.image_prompt:
-                                    response_msg += f"\n\n分镜{num}的提示词：\n{shot.image_prompt[:200]}..."
-                                    break
-                    else:
-                        response_msg = "未能生成提示词"
-
-            elif target_type == "scene":
-                stmt = select(Scene).where(Scene.creation_id == creation.creation_id).order_by(Scene.scene_id)
-                db_result = await db.execute(stmt)
-                scenes = db_result.scalars().all()
-
-                if action == "view_prompt":
-                    for i, num in enumerate(target_numbers):
-                        if 0 < num <= len(scenes):
-                            scene = scenes[num - 1]
-                            prompt_text = scene.extra_data.get("image_prompt", "（尚未生成提示词）") if scene.extra_data else "（尚未生成提示词）"
-                            response_msg += f"场景{num}（{scene.title}）的提示词：\n{prompt_text}\n\n"
-                    if not response_msg:
-                        response_msg = "未找到指定的场景"
-
-                elif action == "modify_prompt":
-                    new_prompt = result.get("new_prompt", "")
-                    modified_count = 0
-                    for num in target_numbers:
-                        if 0 < num <= len(scenes):
-                            scene = scenes[num - 1]
-                            if scene.extra_data is None:
-                                scene.extra_data = {}
-                            scene.extra_data["image_prompt"] = new_prompt
-                            flag_modified(scene, "extra_data")
-                            modified_count += 1
-                    if modified_count > 0:
-                        await db.commit()
-                        response_msg = f"已修改{modified_count}个场景的提示词"
-                    else:
-                        response_msg = "未找到指定的场景"
-
-            if not response_msg:
-                response_msg = result.get("description", "操作完成")
-
-            yield self._make_sse("message", {
-                "type": "message.content",
-                "message_id": message_id,
-                "content": response_msg,
-                "delta": response_msg,
-            }, role="assistant")
-
-            yield self._make_sse("message.end", {
-                "type": "message.end",
-                "message_id": message_id,
-                "finish_reason": "completed"
-            })
-
-        except Exception as e:
-            logger.error(f"处理提示词操作失败: {e}")
-            yield self._make_sse("message", {
-                "type": "message.content",
-                "message_id": message_id,
-                "content": f"处理提示词时发生错误：{str(e)}",
-                "delta": f"处理提示词时发生错误：{str(e)}",
             }, role="assistant")
 
     def get_task_status(self, task_id: str) -> Dict[str, Any]:

@@ -70,6 +70,11 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         )
         if not shot:
             raise NotFoundError(detail=f"分镜不存在: shot_id={shot_id}")
+        
+        # 设置分镜状态为生成中
+        shot.status = "generating"
+        db.commit()
+        
         # 记录初始加载状态
         initial_image_url = shot.image_url
         initial_image_prompt = shot.image_prompt
@@ -91,32 +96,41 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 "duration_sec": total_sec,
             }
         
-        # 获取关联的角色及其图片URL
-        # 只处理出镜角色，跳过声音角色（声音角色 basic_info == "声音角色"）
+        # 获取参考图片 - 优先从 extra_data 获取，其次从角色获取
+        extra_data = shot.extra_data or {}
+        reference_images = extra_data.get("reference_images", [])
+        
         character_images = []
         character_profiles = []
-        for character in shot.characters:
-            # 跳过声音角色
-            if character.basic_info == "声音角色":
-                logger.info(f"跳过声音角色 {character.name}，不加入图片提示词生成")
-                continue
+        
+        # 如果 extra_data 中有参考图，使用它
+        if reference_images:
+            logger.info(f"[Shot {shot_id}] 使用 extra_data 中的参考图片: {reference_images}")
+            character_images = reference_images
+        else:
+            # 否则从角色表获取
+            for character in shot.characters:
+                # 跳过声音角色
+                if character.basic_info == "声音角色":
+                    logger.info(f"跳过声音角色 {character.name}，不加入图片提示词生成")
+                    continue
 
-            if character.image_url:
-                character_images.append(character.image_url)
-                # 构建角色档案描述
-                profile_parts = []
-                if character.name:
-                    profile_parts.append(f"姓名: {character.name}")
-                if character.appearance:
-                    profile_parts.append(f"外貌: {character.appearance}")
-                if character.body:
-                    profile_parts.append(f"身材: {character.body}")
-                if character.hair:
-                    profile_parts.append(f"发型: {character.hair}")
-                if character.clothing:
-                    profile_parts.append(f"服装: {character.clothing}")
-                if profile_parts:
-                    character_profiles.append("，".join(profile_parts))
+                if character.image_url:
+                    character_images.append(character.image_url)
+                    # 构建角色档案描述
+                    profile_parts = []
+                    if character.name:
+                        profile_parts.append(f"姓名: {character.name}")
+                    if character.appearance:
+                        profile_parts.append(f"外貌: {character.appearance}")
+                    if character.body:
+                        profile_parts.append(f"身材: {character.body}")
+                    if character.hair:
+                        profile_parts.append(f"发型: {character.hair}")
+                    if character.clothing:
+                        profile_parts.append(f"服装: {character.clothing}")
+                    if profile_parts:
+                        character_profiles.append("，".join(profile_parts))
         
         # 添加场景图片作为参考图（如果有）
         if shot.scene and shot.scene.image_url:
@@ -531,34 +545,45 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         db.commit()
         db.refresh(shot)
         
-        # 保存图片生成历史到 shot.extra_data
+        # 保存图片生成历史到 shot.status_detail
         try:
-            if shot.extra_data is None:
-                shot.extra_data = {}
+            # 确保 status_detail 是字典
+            if shot.status_detail is None:
+                shot.status_detail = {}
             
-            image_history = shot.extra_data.get('image_history', [])
+            # 获取现有历史记录
+            image_history = shot.status_detail.get('image_historys', [])
             
+            # 添加新的历史记录（只保留图片链接和提示词）
             new_image_record = {
-                "version_id": str(uuid.uuid4()),
                 "image_url": image_url,
-                "end_frame_image_url": end_frame_image_url,
                 "image_prompt": shot.image_prompt,
-                "model_name": image_to_image_model,
-                "visual_style": visual_style,
                 "generated_at": datetime.now().isoformat(),
-                "success": True,
-                "file_size": len(image_data) if image_data else None,
-                "duration_sec": total_sec,
-                "character_refs": len(character_images),
-                "is_current": False  # 标记为非当前版本
             }
             
             image_history.append(new_image_record)
-            shot.extra_data['image_history'] = image_history
+            shot.status_detail['image_historys'] = image_history
+            
+            # 保存尾帧历史到 last_image_historys
+            if frame_type in ("end", "both") and end_frame_image_url:
+                last_image_history = shot.status_detail.get('last_image_historys', [])
+                
+                # 添加尾帧历史记录（只保留图片链接和提示词）
+                new_last_image_record = {
+                    "image_url": end_frame_image_url,
+                    "image_prompt": end_frame_prompt,
+                    "generated_at": datetime.now().isoformat(),
+                }
+                
+                last_image_history.append(new_last_image_record)
+                shot.status_detail['last_image_historys'] = last_image_history
+            
+            # 显式标记 status_detail 字段已修改（SQLAlchemy JSONB 需要）
+            flag_modified(shot, "status_detail")
             
             db.commit()
             db.refresh(shot)
-            logger.info(f"分镜 {shot_id} 图片生成历史保存成功")
+            logger.info(f"分镜 {shot_id} 图片生成历史保存成功，首帧历史数: {len(image_history)}, 尾帧历史数: {len(shot.status_detail.get('last_image_historys', []))}")
         except Exception as e:
             logger.error(f"保存分镜 {shot_id} 图片生成历史失败: {str(e)}")
             # 历史保存失败不影响主流程

@@ -89,14 +89,43 @@ def read_prompt_file(filename: str) -> str:
     
     if not prompt_file.exists():
         error_msg = f"Prompt 文件不存在: {filename} (searched in {prompt_file})"
-        logger.error(error_msg)
+        # logger.error(error_msg)
         raise FileNotFoundError(error_msg)
     try:
         with open(prompt_file, 'r', encoding='utf-8') as f:
             content = f.read()
-        logger.debug(f"成功读取 prompt 文件: {prompt_file.name}")
+        # logger.debug(f"成功读取 prompt 文件: {prompt_file.name}")
         return content
     except Exception as e:
         error_msg = f"读取 prompt 文件失败: {prompt_file.name}, 错误: {str(e)}"
         logger.error(error_msg)
         raise IOError(error_msg) from e
+
+
+def read_knowledge_file(relative_path: str) -> str:
+    """
+    读取知识库文件内容
+    
+    Args:
+        relative_path: 知识库文件相对路径（如 "director/camera_techniques.md"）
+                      默认搜索 app/agent/knowledge/ 目录
+        
+    Returns:
+        知识库文件内容（字符串），文件不存在返回空字符串
+    """
+    # 获取项目根目录（app 目录的父目录）
+    app_dir = Path(__file__).parent.parent
+    knowledge_file = app_dir / "agent" / "knowledge" / relative_path
+    
+    if not knowledge_file.exists():
+        logger.warning(f"知识库文件不存在: {relative_path} (searched in {knowledge_file})")
+        return ""
+    
+    try:
+        with open(knowledge_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        logger.debug(f"成功读取知识库文件: {knowledge_file.name}")
+        return content
+    except Exception as e:
+        logger.error(f"读取知识库文件失败: {knowledge_file.name}, 错误: {str(e)}")
+        return ""

@@ -239,20 +239,30 @@ async def get_scene_with_shots(
     )
 
 
-@router.put("/{scene_uuid}")
+@router.put("/{scene_identifier}")
 async def update_scene(
-    scene_uuid: str,
+    scene_identifier: str,
     scene_update: SceneUpdate,
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
     """更新场景信息"""
-    result = await db.execute(
-        select(Scene).options(
-            selectinload(Scene.shots),
-            selectinload(Scene.creation)
-        ).where(Scene.uuid == scene_uuid)
-    )
+    # 支持 uuid 或 scene_id（数字）
+    if scene_identifier.isdigit():
+        result = await db.execute(
+            select(Scene).options(
+                selectinload(Scene.shots),
+                selectinload(Scene.creation)
+            ).where(Scene.scene_id == int(scene_identifier))
+        )
+    else:
+        result = await db.execute(
+            select(Scene).options(
+                selectinload(Scene.shots),
+                selectinload(Scene.creation)
+            ).where(Scene.uuid == scene_identifier)
+        )
+    
     scene = result.scalar_one_or_none()
     
     if not scene:
@@ -282,6 +292,9 @@ async def update_scene(
             scene.extra_data = {}
         scene.extra_data["image_prompt"] = scene_update.image_prompt
         flag_modified(scene, "extra_data")
+    
+    if scene_update.image_url is not None:
+        scene.image_url = scene_update.image_url
     
     await db.commit()
     await db.refresh(scene)
@@ -406,98 +419,4 @@ async def delete_scene(
     return success_response(
         data={"scene_uuid": scene_uuid},
         message="场景删除成功"
-    )
-
-
-class ApplySceneImageVersionRequest(BaseModel):
-    version_id: str
-    image_url: str
-    image_prompt: Optional[str] = None
-
-
-@router.get("/{scene_uuid}/image-history")
-async def get_scene_image_history(
-    scene_uuid: str,
-    db: AsyncSession = Depends(get_async_db),
-    user: User = Depends(get_current_user)
-):
-    """获取场景图片生成历史"""
-    result = await db.execute(
-        select(Scene).options(
-            selectinload(Scene.creation)
-        ).where(Scene.uuid == scene_uuid)
-    )
-    scene = result.scalar_one_or_none()
-    
-    if not scene:
-        raise HTTPException(status_code=404, detail="场景不存在")
-    
-    if scene.creation.owner_id != user.user_id:
-        raise HTTPException(status_code=403, detail="无权限访问该场景")
-    
-    image_history = scene.extra_data.get('image_history', []) if scene.extra_data else []
-    
-    return success_response(
-        data={
-            "current_image_url": scene.image_url,
-            "current_image_prompt": scene.extra_data.get('image_prompt') if scene.extra_data else None,
-            "image_history": image_history
-        },
-        message="获取场景图片历史成功"
-    )
-
-
-@router.post("/{scene_uuid}/apply-image-version")
-async def apply_scene_image_version(
-    scene_uuid: str,
-    request: ApplySceneImageVersionRequest,
-    db: AsyncSession = Depends(get_async_db),
-    user: User = Depends(get_current_user)
-):
-    """将历史图片应用为场景的当前图片"""
-    result = await db.execute(
-        select(Scene).options(
-            selectinload(Scene.creation)
-        ).where(Scene.uuid == scene_uuid)
-    )
-    scene = result.scalar_one_or_none()
-    
-    if not scene:
-        raise HTTPException(status_code=404, detail="场景不存在")
-    
-    if scene.creation.owner_id != user.user_id:
-        raise HTTPException(status_code=403, detail="无权限操作该场景")
-    
-    image_history = scene.extra_data.get('image_history', []) if scene.extra_data else []
-    
-    version_found = any(v.get('version_id') == request.version_id for v in image_history)
-    
-    if not version_found:
-        raise HTTPException(status_code=404, detail="指定的版本不存在")
-    
-    scene.image_url = request.image_url
-    if request.image_prompt:
-        if scene.extra_data is None:
-            scene.extra_data = {}
-        scene.extra_data['image_prompt'] = request.image_prompt
-        flag_modified(scene, "extra_data")
-    
-    for version in image_history:
-        version['is_current'] = version.get('version_id') == request.version_id
-    
-    if scene.extra_data is None:
-        scene.extra_data = {}
-    scene.extra_data['image_history'] = image_history
-    flag_modified(scene, "extra_data")
-    
-    await db.commit()
-    await db.refresh(scene)
-
-    return success_response(
-        data={
-            "scene_uuid": scene_uuid,
-            "image_url": scene.image_url,
-            "image_prompt": scene.extra_data.get('image_prompt') if scene.extra_data else None
-        },
-        message="应用历史图片成功"
     )

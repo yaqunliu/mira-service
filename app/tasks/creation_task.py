@@ -263,17 +263,25 @@ def character_analysis_task(self, novel_id: int, chapter_id: int, creation_id: i
         # 先 flush 以确保新创建的角色有 character_id
         db.flush()
         
+        # 获取原有的角色ID列表
+        existing_character_ids = creation.character_ids or []
+        if not isinstance(existing_character_ids, list):
+            existing_character_ids = []
+            
         # 收集所有角色的ID（包括新建和复用的），过滤掉 None 值
-        all_character_ids = [
+        new_character_ids = [
             char.character_id 
             for char in character_map.values() 
             if char.character_id is not None
         ]
         
+        # 合并新旧角色ID，并去重（保持顺序）
+        all_character_ids = list(dict.fromkeys(existing_character_ids + new_character_ids))
+        
         # 更新状态为 CHARACTER_ANALYZED，并保存角色ID列表
         creation.status = CreationStatus.CHARACTER_ANALYZED
         creation.current_task_id = None
-        creation.character_ids = all_character_ids  # 保存所有角色ID（包括复用的）
+        creation.character_ids = all_character_ids
         
         # 更新任务状态：成功
         CreationService.update_creation_step_status(
@@ -604,17 +612,25 @@ def scene_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, 
         # 先 flush 以确保新创建的场景有 scene_id
         db.flush()
 
+        # 获取原有的场景ID列表
+        existing_scene_ids = creation.scene_ids or []
+        if not isinstance(existing_scene_ids, list):
+            existing_scene_ids = []
+
         # 收集所有场景的ID（包括新建和复用的）
-        all_scene_ids = [
+        new_scene_ids = [
             scene.scene_id
             for scene in created_scenes
             if scene.scene_id is not None
         ]
 
+        # 合并新旧场景ID，并去重（保持顺序）
+        all_scene_ids = list(dict.fromkeys(existing_scene_ids + new_scene_ids))
+
         # 更新创作状态
         creation.status = CreationStatus.SCENES_ANALYZED
         creation.current_task_id = None
-        creation.scene_ids = all_scene_ids  # 保存所有场景ID（包括复用的）
+        creation.scene_ids = all_scene_ids
         
         # 更新步骤状态
         CreationService.update_creation_step_status(
@@ -887,32 +903,17 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
         logger.info(f"分镜拆解完成，共 {len(shot_list)} 个分镜")
         
         # 保存分镜
-        # 清除旧分镜？
-        # 如果是重新生成，应该清除旧分镜。
-        # 注意：由于 Shot 和 Character 是多对多关系 (shot_characters)，
-        # 删除 Shot 时，需要确保清理 shot_characters 表中的关联。
-        # SQLAlchemy 的 delete() 可能会因为外键约束失败，除非配置了 cascade。
-        # 更安全的做法是：先手动清空 shot_characters，再删除 shot。
-        
-        # 1. 找到所有需要删除的分镜 ID
-        scene_ids = [scene.scene_id for scene in scenes]
-        shots_to_delete = db.query(Shot).filter(Shot.scene_id.in_(scene_ids)).all()
+        # 清除旧分镜 - 只删除当前 creation 的分镜，不影响其他创作
+        shots_to_delete = db.query(Shot).filter(Shot.creation_id == creation_id).all()
         shot_ids_to_delete = [s.shot_id for s in shots_to_delete]
         
         if shot_ids_to_delete:
-            logger.info(f"准备删除旧分镜: {len(shot_ids_to_delete)} 个")
-            # 2. 手动删除 shot_characters 关联（如果是原生 SQL 或需要强制清理）
-            # 由于 Shot.characters 配置了 secondary 表，SQLAlchemy 通常会自动处理，
-            # 但 delete() 批量删除可能不会触发 ORM 事件。
-            # 最稳妥的方式是清空这些 shot 的 characters 集合，或者直接执行 SQL 删除关联表。
-            
-            # 尝试通过 ORM 清空关联
+            logger.info(f"准备删除旧分镜: {len(shots_to_delete)} 个")
+            # 清空关联后删除
             for shot in shots_to_delete:
                 shot.characters = []
-            db.flush() # 提交关联表的删除
+            db.flush()
             
-            # 3. 删除分镜
-            # 现在关联表已清空，可以安全删除 Shot
             db.query(Shot).filter(Shot.shot_id.in_(shot_ids_to_delete)).delete(synchronize_session=False)
             db.flush()
         
@@ -967,6 +968,7 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
                 image_prompt=shot_data.get("画面提示词", "") or shot_data.get("图片提示词", ""),
                 video_duration=shot_data.get("分镜时长", 5),
                 scene_id=target_scene.scene_id,
+                creation_id=creation_id,
                 extra_data={
                     "camera_movement": shot_data.get("运镜", ""),
                     "sound_effect": shot_data.get("音效", ""),

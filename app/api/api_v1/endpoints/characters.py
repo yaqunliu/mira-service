@@ -86,9 +86,9 @@ async def get_character(
     )
 
 
-@router.put("/{character_uuid}")
+@router.put("/{character_identifier}")
 async def update_character(
-    character_uuid: str,
+    character_identifier: str,
     character_update: CharacterUpdate,
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
@@ -97,9 +97,16 @@ async def update_character(
     from app.models.character import Character
     from app.models.creation import Creation
     
-    result = await db.execute(
-        select(Character).where(Character.uuid == character_uuid)
-    )
+    # 支持 uuid 或 character_id（数字）
+    if character_identifier.isdigit():
+        result = await db.execute(
+            select(Character).where(Character.character_id == int(character_identifier))
+        )
+    else:
+        result = await db.execute(
+            select(Character).where(Character.uuid == character_identifier)
+        )
+    
     character = result.scalar_one_or_none()
     
     if not character:
@@ -231,95 +238,46 @@ class ApplyImageVersionRequest(BaseModel):
     image_prompt: Optional[str] = None
 
 
-@router.get("/{character_uuid}/image-history")
-async def get_character_image_history(
-    character_uuid: str,
-    db: AsyncSession = Depends(get_async_db),
-    user: User = Depends(get_current_user)
-):
-    """获取角色图片生成历史"""
-    from app.models.character import Character
-    from app.models.creation import Creation
-
-    result = await db.execute(
-        select(Character).where(Character.uuid == character_uuid)
-    )
-    character = result.scalar_one_or_none()
-    
-    if not character:
-        raise HTTPException(status_code=404, detail="角色不存在")
-
-    if character.creation_id:
-        result = await db.execute(
-            select(Creation).where(Creation.creation_id == character.creation_id)
-        )
-        creation = result.scalar_one_or_none()
-        if creation and creation.owner_id != user.user_id:
-            raise HTTPException(status_code=403, detail="无权限访问该角色")
-
-    image_history = character.status_detail.get('image_history', []) if character.status_detail else []
-    
-    return success_response(
-        data={
-            "current_image_url": character.image_url,
-            "current_image_prompt": character.image_prompt,
-            "image_history": image_history
-        },
-        message="获取角色图片历史成功"
-    )
-
-
-@router.post("/{character_uuid}/apply-image-version")
+@router.post("/apply-image-version")
 async def apply_character_image_version(
-    character_uuid: str,
     request: ApplyImageVersionRequest,
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user)
 ):
-    """将历史图片应用为角色的当前图片"""
-    from app.models.character import Character
-    from app.models.creation import Creation
-
-    result = await db.execute(
-        select(Character).where(Character.uuid == character_uuid)
-    )
-    character = result.scalar_one_or_none()
-    
-    if not character:
-        raise HTTPException(status_code=404, detail="角色不存在")
-
-    if character.creation_id:
+    """应用角色的特定图片版本"""
+    try:
+        from app.models.character import Character
+        from app.models.creation import Creation
+        
+        # 需要通过version_id查找对应的角色
+        # 这里假设version_id包含或能关联到character_uuid
+        # 实际实现可能需要调整
         result = await db.execute(
-            select(Creation).where(Creation.creation_id == character.creation_id)
+            select(Character).where(Character.uuid == request.version_id)
         )
-        creation = result.scalar_one_or_none()
-        if creation and creation.owner_id != user.user_id:
-            raise HTTPException(status_code=403, detail="无权限操作该角色")
+        character = result.scalar_one_or_none()
+        
+        if not character:
+            raise HTTPException(status_code=404, detail="角色不存在")
 
-    image_history = character.status_detail.get('image_history', []) if character.status_detail else []
-    
-    version_found = any(v.get('version_id') == request.version_id for v in image_history)
-    
-    if not version_found:
-        raise HTTPException(status_code=404, detail="指定的版本不存在")
+        if character.creation_id:
+            result = await db.execute(
+                select(Creation).where(Creation.creation_id == character.creation_id)
+            )
+            creation = result.scalar_one_or_none()
+            if creation and creation.owner_id != user.user_id:
+                raise HTTPException(status_code=403, detail="无权限操作该角色")
 
-    character.image_url = request.image_url
-    if request.image_prompt:
-        character.image_prompt = request.image_prompt
-
-    for version in image_history:
-        version['is_current'] = version.get('version_id') == request.version_id
-    
-    character.status_detail['image_history'] = image_history
-    
-    await db.commit()
-    await db.refresh(character)
-
-    return success_response(
-        data={
-            "character_uuid": character_uuid,
-            "image_url": character.image_url,
-            "image_prompt": character.image_prompt
-        },
-        message="应用历史图片成功"
-    )
+        result = await CharacterAsyncService.apply_image_version(
+            character_uuid=character.uuid,
+            version_id=request.version_id,
+            image_url=request.image_url,
+            image_prompt=request.image_prompt,
+            db=db
+        )
+        return success_response(
+            data=result,
+            message="角色图片版本应用成功"
+        )
+    except BaseServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)

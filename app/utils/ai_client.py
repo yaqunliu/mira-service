@@ -52,10 +52,10 @@ class AIClient:
             image_model_name: 图片模型名称（向后兼容，已废弃）
             text_to_image_model: 文生图模型名称（用于生成角色图片）
             image_to_image_model: 图生图模型名称（用于生成分镜图片）
-            character_analysis_model: 人物解析模型，默认使用 zai-org/glm-4.6
-            scene_analysis_model: 场景解析模型，默认使用 zai-org/glm-4.6
-            shot_analysis_model: 分镜解析模型，默认使用 zai-org/glm-4.6
-            script_generation_model: 剧本生成模型，默认使用 zai-org/glm-4.6
+            character_analysis_model: 人物解析模型，默认使用 Qwen/Qwen-Plus
+            scene_analysis_model: 场景解析模型，默认使用 Qwen/Qwen-Plus
+            shot_analysis_model: 分镜解析模型，默认使用 Qwen/Qwen-Plus
+            script_generation_model: 剧本生成模型，默认使用 Qwen/Qwen-Plus
             prompt_generation_model: 提示词生成模型，默认使用 Qwen/Qwen-Plus
             ark_api_key: 火山云AI API 密钥，默认从配置读取
             ark_base_url: 火山云AI API 基础 URL，默认从配置读取
@@ -74,15 +74,15 @@ class AIClient:
         self.image_model_name = image_model_name or self.text_to_image_model
 
         # 专用LLM模型配置
-        # self.character_analysis_model = character_analysis_model or llm_model_name or getattr(settings, 'LLM_MODEL_CHARACTER_ANALYSIS', 'zai-org/glm-4.6')
-        # self.scene_analysis_model = scene_analysis_model or llm_model_name or getattr(settings, 'LLM_MODEL_SCENE_ANALYSIS', 'zai-org/glm-4.6')
-        # self.shot_analysis_model = shot_analysis_model or llm_model_name or getattr(settings, 'LLM_MODEL_SHOT_ANALYSIS', 'zai-org/glm-4.6')
-        # self.script_generation_model = script_generation_model or llm_model_name or getattr(settings, 'LLM_MODEL_SCRIPT_GENERATION', 'zai-org/glm-4.6')
+        # self.character_analysis_model = character_analysis_model or llm_model_name or getattr(settings, 'LLM_MODEL_CHARACTER_ANALYSIS', 'Qwen/Qwen-Plus')
+        # self.scene_analysis_model = scene_analysis_model or llm_model_name or getattr(settings, 'LLM_MODEL_SCENE_ANALYSIS', 'Qwen/Qwen-Plus')
+        # self.shot_analysis_model = shot_analysis_model or llm_model_name or getattr(settings, 'LLM_MODEL_SHOT_ANALYSIS', 'Qwen/Qwen-Plus')
+        # self.script_generation_model = script_generation_model or llm_model_name or getattr(settings, 'LLM_MODEL_SCRIPT_GENERATION', 'Qwen/Qwen-Plus')
         # self.prompt_generation_model = prompt_generation_model or llm_model_name or getattr(settings, 'LLM_MODEL_PROMPT_GENERATION', 'Qwen/Qwen-Plus')
-        self.character_analysis_model = character_analysis_model or getattr(settings, 'LLM_MODEL_CHARACTER_ANALYSIS', 'zai-org/glm-4.6')
-        self.scene_analysis_model = scene_analysis_model or getattr(settings, 'LLM_MODEL_SCENE_ANALYSIS', 'zai-org/glm-4.6')
-        self.shot_analysis_model = shot_analysis_model or getattr(settings, 'LLM_MODEL_SHOT_ANALYSIS', 'zai-org/glm-4.6')
-        self.script_generation_model = script_generation_model or getattr(settings, 'LLM_MODEL_SCRIPT_GENERATION', 'zai-org/glm-4.6')
+        self.character_analysis_model = character_analysis_model or getattr(settings, 'LLM_MODEL_CHARACTER_ANALYSIS', 'Qwen/Qwen-Plus')
+        self.scene_analysis_model = scene_analysis_model or getattr(settings, 'LLM_MODEL_SCENE_ANALYSIS', 'Qwen/Qwen-Plus')
+        self.shot_analysis_model = shot_analysis_model or getattr(settings, 'LLM_MODEL_SHOT_ANALYSIS', 'Qwen/Qwen-Plus')
+        self.script_generation_model = script_generation_model or getattr(settings, 'LLM_MODEL_SCRIPT_GENERATION', 'Qwen/Qwen-Plus')
         self.prompt_generation_model = prompt_generation_model or getattr(settings, 'LLM_MODEL_PROMPT_GENERATION', 'Qwen/Qwen-Plus')
 
         # 火山云AI配置
@@ -1159,6 +1159,11 @@ class AIClient:
             AITimeoutError: 调用超时
             Exception: 其他错误
         """
+        # Debug 模式：直接返回固定视频地址
+        if settings.DEBUG_GENERATE_VIDEO:
+            logger.info(f"[DEBUG] 视频生成模式，直接返回固定地址: {settings.DEBUG_GENERATE_VIDEO_URL}")
+            return settings.DEBUG_GENERATE_VIDEO_URL
+        
         # 检查火山云AI配置
         if not self.ark_api_key or not self.ark_base_url:
             raise ValueError("火山云AI API配置未设置")
@@ -1264,6 +1269,11 @@ class AIClient:
             AITimeoutError: 调用超时
             Exception: 其他错误
         """
+        # Debug 模式：直接返回固定视频地址
+        if settings.DEBUG_GENERATE_VIDEO:
+            logger.info(f"[DEBUG] 图生视频模式，直接返回固定地址: {settings.DEBUG_GENERATE_VIDEO_URL}")
+            return settings.DEBUG_GENERATE_VIDEO_URL
+        
         # 检查火山云AI配置
         if not self.ark_api_key or not self.ark_base_url:
             raise ValueError("火山云AI API配置未设置")
@@ -1407,18 +1417,18 @@ class AIClient:
         payload = {
             "model": self.sora2_model,
             "input": {
-                "first_frame_url": image_url
+                "first_frame_url": image_url,
+                "prompt": prompt,
             },
             "parameters": {
-                "duration": duration
+                "duration": duration,
+                "resolution": "1080p",
             }
         }
 
         # 如果提供了prompt，添加到请求中
-        if prompt:
-            payload["input"]["prompt"] = prompt
-
         logger.info(f"提交Sora2视频生成任务，图片URL: {image_url[:100]}...")
+        logger.info(f"【Sora2 请求信息】: URL={submit_url}, model={self.sora2_model}, payload={payload}")
 
         # 提交任务时添加重试机制（针对502等临时网络错误）
         max_retries = 3
@@ -1474,6 +1484,7 @@ class AIClient:
         # 步骤2: 轮询任务状态
         start_time = time.time()
         status_url = f"{self.sora2_base_url}/tasks/status"
+        status_query_retries = 0
 
         while time.time() - start_time < self.sora2_timeout:
             try:
@@ -1518,6 +1529,10 @@ class AIClient:
 
             except requests.exceptions.RequestException as e:
                 logger.warning(f"查询Sora2任务状态失败: {str(e)}，将重试")
+                status_query_retries += 1
+                if status_query_retries >= 5:
+                    logger.error(f"查询Sora2任务状态失败超过5次，任务ID: {task_id}")
+                    raise Exception(f"查询Sora2任务状态失败（已重试5次）: {str(e)}")
                 time.sleep(self.sora2_retry_delay)
                 continue
 
@@ -1597,6 +1612,204 @@ class AIClient:
         }
 
         return self._generate_video_modelverse(payload, "Vidu")
+
+    def generate_video_by_prompt_sora2(self, prompt: str, model: str = "sora-2", duration: int = 8, size: str = "1280x720") -> str:
+        """
+        使用 UCloud Sora2 模型生成视频（文生视频）
+
+        Args:
+            prompt: 提示词，用于指导视频生成
+            model: 模型名称，默认 sora-2
+            duration: 视频生成时长（秒），可选值 4, 8, 12，默认为 8
+            size: 分辨率，默认 1280x720 (16:9)，可选 720x1280 (9:16)
+
+        Returns:
+            生成的视频URL
+        """
+        if not self.sora2_api_key or not self.sora2_base_url:
+            raise ValueError("Sora2 API配置未设置")
+
+        if duration not in [4, 8, 12]:
+            logger.warning(f"不支持的视频时长 {duration}秒，使用默认值 8秒")
+            duration = 8
+
+        logger.info(f"Sora2 文生视频开始，模型: {model}, 时长: {duration}秒, 分辨率: {size}")
+        logger.info("【Sora2 视频生成提示词】: " + prompt)
+
+        submit_url = f"{self.sora2_base_url}/videos"
+        
+        headers = {
+            "Authorization": self.sora2_api_key,
+        }
+
+        files = {
+            "prompt": (None, prompt),
+            "model": (None, model),
+            "size": (None, size),
+            "seconds": (None, str(duration)),
+        }
+
+        logger.info(f"提交Sora2文生视频任务")
+
+        max_retries = 3
+        task_id = None
+
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(submit_url, headers=headers, files=files, timeout=self.timeout)
+                response.raise_for_status()
+
+                result = response.json()
+                task_id = result.get("id")
+
+                if not task_id:
+                    raise Exception("Sora2 API返回的响应中没有任务ID")
+
+                logger.info(f"Sora2文生视频任务创建成功，任务ID: {task_id}")
+                break
+
+            except requests.exceptions.HTTPError as e:
+                if e.response and e.response.status_code in [502, 503, 504]:
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                        continue
+                logger.error(f"Sora2 API请求失败: {e}")
+                raise
+
+        if not task_id:
+            raise Exception("Sora2 文生视频任务提交失败")
+
+        max_wait = 300
+        waited = 0
+        check_interval = 5
+
+        while waited < max_wait:
+            time.sleep(check_interval)
+            waited += check_interval
+
+            status_url = f"{self.sora2_base_url}/videos/{task_id}"
+            
+            try:
+                status_response = requests.get(status_url, headers=headers, timeout=self.timeout)
+                status_response.raise_for_status()
+
+                status_result = status_response.json()
+                task_status = status_result.get("status")
+
+                logger.debug(f"Sora2视频生成任务状态: {task_status}, 任务ID: {task_id}")
+
+                if task_status == "completed":
+                    content_url = f"{self.sora2_base_url}/videos/{task_id}/content"
+                    
+                    logger.info(f"Sora2视频生成成功，任务ID: {task_id}, 下载URL: {content_url}")
+                    return content_url
+
+                elif task_status == "failed":
+                    error_msg = status_result.get("error", {}).get("message", "未知错误")
+                    logger.error(f"Sora2视频生成失败: {error_msg}")
+                    raise Exception(f"Sora2视频生成失败: {error_msg}")
+
+                elif task_status in ["queued", "in_progress"]:
+                    time.sleep(self.sora2_retry_delay)
+
+                else:
+                    logger.warning(f"Sora2视频生成任务状态未知: {task_status}")
+                    time.sleep(self.sora2_retry_delay)
+
+            except Exception as e:
+                logger.error(f"查询Sora2任务状态失败: {e}")
+                raise
+
+        raise AITimeoutError(f"Sora2视频生成超时，超过 {max_wait} 秒")
+
+    def generate_speech_minimax(
+        self,
+        text: str,
+        model: str = "speech-2.8-hd",
+        voice_id: str = "male-qn-qingse",
+        speed: float = 1.0,
+        emotion: str = "happy",
+        format: str = "mp3",
+        sample_rate: int = 32000
+    ) -> str:
+        """
+        使用 Minimax Speech TTS 合成语音
+
+        Args:
+            text: 需要合成语音的文本
+            model: 模型版本，可选 speech-2.8-hd, speech-2.6-hd, speech-02-hd_id: 音色ID
+            speed 等
+            voice: 语速 [0.5, 2]
+            emotion: 情绪，可选 happy, sad, angry, fearful, disgusted, surprised, calm, fluent, whisper
+            format: 音频格式，mp3, wav, flac
+            sample_rate: 采样率
+
+        Returns:
+            生成的音频URL
+        """
+        if not self.sora2_api_key or not self.sora2_base_url:
+            raise ValueError("Minimax TTS API配置未设置")
+
+        url = f"{self.sora2_base_url}/v1/t2a_v2"
+        
+        headers = {
+            "Authorization": self.sora2_api_key,
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": model,
+            "text": text,
+            "voice_setting": {
+                "voice_id": voice_id,
+                "speed": speed,
+                "emotion": emotion
+            },
+            "audio_setting": {
+                "sample_rate": sample_rate,
+                "format": format
+            },
+            "output_format": "url"
+        }
+        
+        logger.info(f"[Minimax TTS] 开始合成，文本: {text[:50]}..., 音色: {voice_id}, 情绪: {emotion}")
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=60)
+                response.raise_for_status()
+                
+                result = response.json()
+                
+                if result.get("base_resp", {}).get("status_code") != 0:
+                    error_msg = result.get("base_resp", {}).get("status_msg", "未知错误")
+                    logger.error(f"[Minimax TTS] 合成失败: {error_msg}")
+                    if attempt < max_retries - 1:
+                        time.sleep(1)
+                        continue
+                    raise Exception(f"TTS合成失败: {error_msg}")
+                
+                audio_url = result.get("data", {}).get("audio")
+                
+                if not audio_url:
+                    logger.error(f"[Minimax TTS] 未返回音频URL: {result}")
+                    if attempt < max_retries - 1:
+                        time.sleep(1)
+                        continue
+                    raise Exception("TTS合成失败: 未返回音频URL")
+                
+                logger.info(f"[Minimax TTS] 合成成功，音频URL: {audio_url}")
+                return audio_url
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"[Minimax TTS] 请求失败: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                raise
+        
+        raise Exception("TTS合成失败: 达到最大重试次数")
 
     def generate_video_by_image_wan(self, image_url: str, prompt: str = None, duration: int = 5, resolution: str = "1080P", model: str = "Wan-AI/Wan2.6-I2V", last_frame_image_url: str = None) -> str:
         """
@@ -1730,10 +1943,126 @@ class AIClient:
         
         return self._generate_video_modelverse(payload, f"Doubao-Modelverse")
 
+    def generate_video_by_prompt_doubao_modelverse(self, prompt: str, duration: int = 5, aspect_ratio: str = "16:9", resolution: str = "720p") -> str:
+        """
+        使用 Modelverse 协议生成豆包视频（纯文字生成，无需图片）
+        
+        Args:
+            prompt: 视频生成提示词
+            duration: 视频时长（秒）
+            aspect_ratio: 视频比例
+            resolution: 分辨率
+        """
+        model = "doubao-seedance-1-5-pro-251215"
+        
+        content = []
+        if prompt:
+            content.append({
+                "type": "text",
+                "text": prompt
+            })
+        
+        payload = {
+            "model": model,
+            "input": {
+                "content": content
+            },
+            "parameters": {
+                "generate_audio": True,
+                "duration": duration,
+                "resolution": resolution,
+                "execution_expires_after": 3600,
+                "camera_fixed": False,
+                "watermark": False,
+                "draft": False,
+                "ratio": "adaptive"
+            }
+        }
+        
+        return self._generate_video_modelverse(payload, f"Doubao-Modelverse-Text")
+
+    def generate_video_by_prompt_vidu(self, prompt: str, model: str = "viduq2", duration: int = 5, aspect_ratio: str = "16:9", resolution: str = "720p", bgm: bool = False) -> str:
+        """
+        使用 Modelverse Vidu 模型生成视频（文生视频）
+        
+        Args:
+            prompt: 视频生成提示词
+            model: 模型名称，默认 viduq2，可选 viduq2-pro, viduq2-turbo
+            duration: 视频时长（秒），1-10
+            aspect_ratio: 视频比例，可选 16:9, 9:16, 3:4, 4:3, 1:1
+            resolution: 分辨率，可选 540p, 720p, 1080p
+            bgm: 是否添加背景音乐
+        """
+        payload = {
+            "model": model,
+            "input": {
+                "prompt": prompt
+            },
+            "parameters": {
+                "vidu_type": "text2video",
+                "duration": duration,
+                "aspect_ratio": aspect_ratio,
+                "resolution": resolution,
+                "bgm": bgm
+            }
+        }
+        
+        return self._generate_video_modelverse(payload, f"Vidu-{model}")
+
+    def generate_video_by_reference_vidu(self, image_url: str, prompt: str, model: str = "viduq2", duration: int = 5, aspect_ratio: str = "16:9", resolution: str = "720p", bgm: bool = False, audio: bool = True) -> str:
+        """
+        使用 Modelverse Vidu 模型生成视频（图生视频/参考图生视频）
+        
+        Args:
+            image_url: 参考图片URL（支持1-7张图片，逗号分隔）
+            prompt: 视频生成提示词
+            model: 模型名称，默认 viduq2，可选 viduq2-pro, viduq2-turbo
+            duration: 视频时长（秒），1-10
+            aspect_ratio: 视频比例，可选 16:9, 9:16, 3:4, 4:3, 1:1
+            resolution: 分辨率，可选 540p, 720p, 1080p
+            bgm: 是否添加背景音乐
+            audio: 是否使用音视频直出能力
+        """
+        images = [img.strip() for img in image_url.split(",") if img.strip()]
+        
+        subjects = []
+        for i, img in enumerate(images):
+            subjects.append({
+                "id": str(i + 1),
+                "images": [img],
+                "voice_id": ""
+            })
+        
+        subject_prompt = ""
+        if len(subjects) > 1:
+            for i in range(len(subjects)):
+                subject_prompt += f"@{i+1} "
+            prompt = f"{subject_prompt}{prompt}"
+        
+        payload = {
+            "model": model,
+            "input": {
+                "prompt": prompt,
+                "subjects": subjects
+            },
+            "parameters": {
+                "vidu_type": "reference2video",
+                "duration": duration,
+                "aspect_ratio": aspect_ratio,
+                "resolution": resolution,
+                "bgm": bgm,
+                "audio": audio
+            }
+        }
+        
+        return self._generate_video_modelverse(payload, f"Vidu-Ref2Video-{model}")
+
     def _generate_video_modelverse(self, payload: Dict[str, Any], model_name_log: str) -> str:
         """
         通用的 Modelverse 视频生成调用（包含提交和轮询）
         """
+        if settings.DEBUG_GENERATE_VIDEO:
+            return settings.DEBUG_GENERATE_VIDEO_URL
         # 统一使用 Bearer Token
         auth_token = self.sora2_api_key
         if not auth_token.startswith("Bearer "):
@@ -1872,6 +2201,11 @@ class AIClient:
             AITimeoutError: 调用超时
             AIRetryExhaustedError: 重试次数耗尽
         """
+        # Debug 模式：直接返回固定图片地址
+        if settings.DEBUG_GENERATE_IMAGE:
+            logger.info(f"[DEBUG] 图片生成模式，直接返回固定地址: {settings.DEBUG_GENERATE_IMAGE_URL}")
+            return settings.DEBUG_GENERATE_IMAGE_URL
+        
         # 文生图使用 text_to_image_model
         model = model or self.text_to_image_model
         
@@ -2068,6 +2402,9 @@ class AIClient:
         """
         执行图生图调用的内部方法（不包含重试逻辑）
         """
+        if settings.DEBUG_GENERATE_IMAGE:
+            return settings.DEBUG_GENERATE_IMAGE_URL
+
         # 检查是否为 Gemini 模型
         if "gemini" in model.lower():
             return self._call_gemini_image_api(

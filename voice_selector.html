@@ -1,0 +1,1308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fish Audio 音色选择器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+            padding-bottom: 100px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+        }
+        
+        .file-input-section {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .file-input-section p {
+            color: #666;
+            margin-bottom: 15px;
+        }
+        
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .file-input-wrapper input[type="file"] {
+            position: absolute;
+            left: 0;
+            top: 0;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+        
+        .file-input-button {
+            padding: 12px 30px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .file-input-button:hover {
+            background: #1976d2;
+        }
+        
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .filter-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .filter-group label {
+            font-weight: 500;
+            color: #666;
+        }
+        
+        .filter-group select,
+        .filter-group input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .filter-group input {
+            min-width: 200px;
+        }
+        
+        .stats {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .main-content {
+            display: flex;
+            gap: 20px;
+        }
+        
+        .voice-grid-container {
+            flex: 1;
+        }
+        
+        .voice-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            gap: 15px;
+        }
+        
+        .voice-card {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+            position: relative;
+        }
+        
+        .voice-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transform: translateY(-2px);
+        }
+        
+        .voice-card.selected {
+            border-color: #4CAF50;
+            background: #f1f8f4;
+        }
+        
+        .voice-card.selected::before {
+            content: "✓";
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 24px;
+            height: 24px;
+            background: #4CAF50;
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        .voice-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 10px;
+            padding-right: 30px;
+        }
+        
+        .voice-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        
+        .voice-id {
+            font-size: 11px;
+            color: #999;
+            font-family: monospace;
+        }
+        
+        .voice-gender {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        .voice-gender.male {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        
+        .voice-gender.female {
+            background: #fce4ec;
+            color: #c2185b;
+        }
+        
+        .voice-gender.unknown {
+            background: #f5f5f5;
+            color: #666;
+        }
+        
+        .voice-description {
+            font-size: 13px;
+            color: #666;
+            line-height: 1.5;
+            margin-bottom: 10px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        
+        .voice-stats {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: #999;
+        }
+        
+        .task-count {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .task-count::before {
+            content: "📊";
+        }
+        
+        /* 音频播放器样式 */
+        .audio-player {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 10px;
+        }
+        
+        .audio-controls-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        
+        .play-btn {
+            width: 36px;
+            height: 36px;
+            border: none;
+            border-radius: 50%;
+            background: #2196F3;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+            flex-shrink: 0;
+        }
+        
+        .play-btn:hover {
+            background: #1976d2;
+        }
+        
+        .play-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .play-btn.playing {
+            background: #ff5722;
+        }
+        
+        .progress-container {
+            flex: 1;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            cursor: pointer;
+            position: relative;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background: #2196F3;
+            border-radius: 3px;
+            width: 0%;
+            transition: width 0.1s linear;
+        }
+        
+        .time-display {
+            font-size: 11px;
+            color: #666;
+            min-width: 70px;
+            text-align: right;
+            font-family: monospace;
+        }
+        
+        .volume-control {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .volume-slider {
+            width: 60px;
+            height: 4px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: #e0e0e0;
+            border-radius: 2px;
+            outline: none;
+        }
+        
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #2196F3;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        
+        /* 样本文本 */
+        .sample-text {
+            font-size: 12px;
+            color: #555;
+            line-height: 1.5;
+            margin-top: 10px;
+            padding: 10px;
+            background: #fff;
+            border-radius: 4px;
+            border-left: 3px solid #2196F3;
+            max-height: 80px;
+            overflow-y: auto;
+        }
+        
+        .sample-text-label {
+            font-size: 11px;
+            color: #999;
+            margin-bottom: 4px;
+        }
+        
+        /* 波形可视化 */
+        .waveform {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            height: 30px;
+            margin: 8px 0;
+        }
+        
+        .waveform-bar {
+            width: 3px;
+            background: #ddd;
+            border-radius: 2px;
+            transition: height 0.1s ease, background 0.2s;
+        }
+        
+        .waveform-bar.active {
+            background: #2196F3;
+        }
+        
+        .waveform.playing .waveform-bar.active {
+            animation: wave 0.5s ease-in-out infinite alternate;
+        }
+        
+        @keyframes wave {
+            0% { transform: scaleY(0.3); }
+            100% { transform: scaleY(1); }
+        }
+        
+        /* 选择按钮 */
+        .select-btn {
+            padding: 10px 16px;
+            border: 2px solid #4CAF50;
+            border-radius: 6px;
+            background: white;
+            color: #4CAF50;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+            margin-top: 10px;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+        
+        .select-btn:hover {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .voice-card.selected .select-btn {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        /* 选中列表侧边栏 */
+        .selected-sidebar {
+            width: 320px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 20px;
+            position: sticky;
+            top: 20px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            display: none;
+        }
+        
+        .selected-sidebar.show {
+            display: block;
+        }
+        
+        .selected-sidebar h3 {
+            margin-bottom: 15px;
+            color: #333;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .selected-count-badge {
+            background: #4CAF50;
+            color: white;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 14px;
+        }
+        
+        .selected-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .selected-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .selected-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .selected-item-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: #333;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .selected-item-id {
+            font-size: 11px;
+            color: #999;
+            font-family: monospace;
+        }
+        
+        .selected-item-gender {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+        
+        .selected-item-gender.male {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        
+        .selected-item-gender.female {
+            background: #fce4ec;
+            color: #c2185b;
+        }
+        
+        .selected-item-gender.unknown {
+            background: #f5f5f5;
+            color: #666;
+        }
+        
+        .remove-btn {
+            width: 24px;
+            height: 24px;
+            border: none;
+            background: #ff5252;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+        
+        .remove-btn:hover {
+            background: #d32f2f;
+        }
+        
+        .clear-all-btn {
+            width: 100%;
+            padding: 10px;
+            margin-top: 15px;
+            border: 1px solid #ff5252;
+            background: white;
+            color: #ff5252;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .clear-all-btn:hover {
+            background: #ff5252;
+            color: white;
+        }
+        
+        .export-btn {
+            width: 100%;
+            padding: 12px;
+            margin-top: 10px;
+            border: none;
+            border-radius: 6px;
+            background: #4CAF50;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        
+        .export-btn:hover {
+            background: #45a049;
+        }
+        
+        .export-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .empty-selected {
+            text-align: center;
+            padding: 30px;
+            color: #999;
+            font-size: 14px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #666;
+        }
+        
+        .empty {
+            text-align: center;
+            padding: 50px;
+            color: #999;
+        }
+        
+        /* 全局音频播放器 */
+        .global-player {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            padding: 15px 25px;
+            border-radius: 50px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            display: none;
+            align-items: center;
+            gap: 15px;
+            z-index: 999;
+            min-width: 400px;
+        }
+        
+        .global-player.show {
+            display: flex;
+        }
+        
+        .global-player-info {
+            font-size: 14px;
+            color: #333;
+            max-width: 150px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .global-player-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+        }
+        
+        .global-player .progress-container {
+            flex: 1;
+        }
+        
+        .close-player-btn {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            color: #999;
+            padding: 5px;
+        }
+        
+        .close-player-btn:hover {
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ Fish Audio 音色选择器</h1>
+        
+        <div class="file-input-section" id="fileInputSection">
+            <p>请上传音色列表 JSON 文件 (FISH_AUDIO_VOICES_REAL.json)</p>
+            <div class="file-input-wrapper">
+                <button class="file-input-button">📁 选择文件</button>
+                <input type="file" id="fileInput" accept=".json" onchange="handleFileSelect(event)">
+            </div>
+        </div>
+        
+        <div class="controls" id="controls" style="display: none;">
+            <div class="filter-group">
+                <label>性别筛选：</label>
+                <select id="genderFilter" onchange="renderVoices()">
+                    <option value="all">全部</option>
+                    <option value="male">男声</option>
+                    <option value="female">女声</option>
+                    <option value="unknown">未知</option>
+                </select>
+                
+                <label>搜索：</label>
+                <input type="text" id="searchInput" placeholder="输入音色名称或描述..." oninput="renderVoices()">
+                
+                <label>排序：</label>
+                <select id="sortBy" onchange="renderVoices()">
+                    <option value="task_count">使用次数</option>
+                    <option value="title">名称</option>
+                </select>
+                
+                <label>
+                    <input type="checkbox" id="filterValidOnly" onchange="renderVoices()" checked>
+                    只显示有效音色
+                </label>
+                
+                <button onclick="loadDemoData()" style="padding: 8px 16px; background: #ff9800; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    加载演示数据
+                </button>
+            </div>
+            <div class="stats" id="stats"></div>
+        </div>
+        
+        <div class="main-content">
+            <div class="voice-grid-container">
+                <div class="voice-grid" id="voiceGrid">
+                    <div class="empty">请先上传 JSON 文件或点击"加载演示数据"</div>
+                </div>
+            </div>
+            
+            <!-- 选中列表侧边栏 -->
+            <div class="selected-sidebar" id="selectedSidebar">
+                <h3>
+                    已选音色
+                    <span class="selected-count-badge" id="sidebarCount">0</span>
+                </h3>
+                <div class="selected-list" id="selectedList">
+                    <div class="empty-selected">还没有选择任何音色</div>
+                </div>
+                <button class="clear-all-btn" id="clearAllBtn" onclick="clearAllSelected()" style="display: none;">
+                    🗑️ 清空全部
+                </button>
+                <button class="export-btn" id="exportBtn" onclick="exportSelected()">
+                    💾 导出到 finalfish.json
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 全局音频播放器 -->
+    <div class="global-player" id="globalPlayer">
+        <span class="global-player-info" id="playerInfo">正在播放...</span>
+        <div class="global-player-controls">
+            <button class="play-btn" id="globalPlayBtn" onclick="event.stopPropagation(); toggleGlobalPlay()">⏸️</button>
+            <div class="progress-container" onclick="event.stopPropagation(); seekGlobalAudio(event)">
+                <div class="progress-bar" id="globalProgressBar"></div>
+            </div>
+            <span class="time-display" id="globalTime">0:00 / 0:00</span>
+        </div>
+        <div class="volume-control">
+            <span>🔊</span>
+            <input type="range" class="volume-slider" id="globalVolume" min="0" max="100" value="100" onchange="event.stopPropagation(); setGlobalVolume(this.value)">
+        </div>
+        <button class="close-player-btn" onclick="event.stopPropagation(); closeGlobalPlayer()">✕</button>
+    </div>
+
+    <script>
+        let allVoices = [];
+        let selectedVoices = new Set();
+        let currentAudio = null;
+        let currentVoiceId = null;
+
+        // 处理文件选择
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    processVoiceData(data);
+                    document.getElementById('fileInputSection').style.display = 'none';
+                    document.getElementById('controls').style.display = 'block';
+                    document.getElementById('selectedSidebar').classList.add('show');
+                } catch (error) {
+                    alert('JSON 解析失败: ' + error.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // 加载演示数据
+        function loadDemoData() {
+            const demoData = {
+                "male": [
+                    {
+                        "id": "54a5170264694bfc8e9ad98df7bd89c3",
+                        "title": "丁真",
+                        "description": "This is a youthful male voice with a gentle, sincere, and calm tone.",
+                        "gender": "male",
+                        "task_count": 390548,
+                        "samples": [{
+                            "id": "",
+                            "title": "Default Sample",
+                            "text": "大家好，我是丁真。今天想跟大家分享我们这里的风景。",
+                            "task_id": "5f55a97cbbf84d059f8249c489c90fce",
+                            "audio_url": "https://platform.r2.fish.audio/task/5f55a97cbbf84d059f8249c489c90fce.mp3"
+                        }]
+                    },
+                    {
+                        "id": "59cb5986671546eaa6ca8ae6f29f6d22",
+                        "title": "央视配音",
+                        "description": "A professional male voice with a middle-aged quality.",
+                        "gender": "male",
+                        "task_count": 124277,
+                        "samples": [{
+                            "id": "",
+                            "title": "Default Sample",
+                            "text": "春日的阳光洒落在长城古道上，千年的风霜见证着华夏文明的沧桑巨变。",
+                            "task_id": "121e958e29924b01807894e1aeb767c7",
+                            "audio_url": "https://platform.r2.fish.audio/task/121e958e29924b01807894e1aeb767c7.mp3"
+                        }]
+                    }
+                ],
+                "female": [
+                    {
+                        "id": "7f92f8afb8ec43bf81429cc1c9199cb1",
+                        "title": "AD学姐",
+                        "description": "https://space.bilibili.com/197621852",
+                        "gender": "female",
+                        "task_count": 288761,
+                        "samples": []
+                    }
+                ],
+                "unknown": [
+                    {
+                        "id": "e4642e5edccd4d9ab61a69e82d4f8a14",
+                        "title": "蔡徐坤",
+                        "description": "",
+                        "gender": "unknown",
+                        "task_count": 125916,
+                        "samples": []
+                    }
+                ]
+            };
+            
+            processVoiceData(demoData);
+            document.getElementById('fileInputSection').style.display = 'none';
+            document.getElementById('controls').style.display = 'block';
+            document.getElementById('selectedSidebar').classList.add('show');
+        }
+
+        // 处理音色数据
+        function processVoiceData(data) {
+            allVoices = [
+                ...(data.male || []).map(v => ({...v, gender: 'male'})),
+                ...(data.female || []).map(v => ({...v, gender: 'female'})),
+                ...(data.unknown || []).map(v => ({...v, gender: 'unknown'}))
+            ];
+            
+            renderVoices();
+            updateStats();
+            updateSelectedList();
+        }
+
+        // 生成波形条
+        function generateWaveform(voiceId, isPlaying) {
+            const bars = 30;
+            let html = '<div class="waveform ' + (isPlaying ? 'playing' : '') + '" id="waveform-' + voiceId + '">';
+            for (let i = 0; i < bars; i++) {
+                const height = Math.random() * 60 + 20;
+                html += `<div class="waveform-bar" style="height: ${height}%;" data-index="${i}"></div>`;
+            }
+            html += '</div>';
+            return html;
+        }
+
+        // 检查音色是否有效（有描述且有音频）
+        function isValidVoice(voice) {
+            const hasDescription = voice.description && voice.description.trim().length > 0;
+            const hasAudio = hasAudioSample(voice);
+            return hasDescription && hasAudio;
+        }
+
+        // 渲染音色列表
+        function renderVoices() {
+            const grid = document.getElementById('voiceGrid');
+            const genderFilter = document.getElementById('genderFilter').value;
+            const searchQuery = document.getElementById('searchInput').value.toLowerCase();
+            const sortBy = document.getElementById('sortBy').value;
+            const validOnly = document.getElementById('filterValidOnly').checked;
+            
+            let filtered = allVoices.filter(voice => {
+                // 只显示有效音色
+                if (validOnly && !isValidVoice(voice)) {
+                    return false;
+                }
+                if (genderFilter !== 'all' && voice.gender !== genderFilter) {
+                    return false;
+                }
+                if (searchQuery) {
+                    const title = (voice.title || '').toLowerCase();
+                    const desc = (voice.description || '').toLowerCase();
+                    return title.includes(searchQuery) || desc.includes(searchQuery);
+                }
+                return true;
+            });
+            
+            filtered.sort((a, b) => {
+                if (sortBy === 'task_count') {
+                    return (b.task_count || 0) - (a.task_count || 0);
+                } else {
+                    return (a.title || '').localeCompare(b.title || '');
+                }
+            });
+            
+            if (filtered.length === 0) {
+                grid.innerHTML = '<div class="empty">没有找到匹配的音色</div>';
+                updateStats();
+                return;
+            }
+            
+            // 更新统计信息
+            updateStats();
+            
+            grid.innerHTML = filtered.map(voice => {
+                const hasAudio = hasAudioSample(voice);
+                const isPlaying = currentVoiceId === voice.id && currentAudio && !currentAudio.paused;
+                const sample = hasAudio ? voice.samples[0] : null;
+                const isSelected = selectedVoices.has(voice.id);
+                
+                return `
+                <div class="voice-card ${isSelected ? 'selected' : ''}" 
+                     data-id="${voice.id}">
+                    <div class="voice-header">
+                        <div>
+                            <div class="voice-title">${escapeHtml(voice.title || 'Unknown')}</div>
+                            <div class="voice-id">${voice.id}</div>
+                        </div>
+                        <span class="voice-gender ${voice.gender}">
+                            ${voice.gender === 'male' ? '男' : voice.gender === 'female' ? '女' : '?'}
+                        </span>
+                    </div>
+                    <div class="voice-description">${escapeHtml(voice.description || '暂无描述')}</div>
+                    <div class="voice-stats">
+                        <span class="task-count">${voice.task_count || 0} 次使用</span>
+                    </div>
+                    
+                    ${hasAudio ? `
+                    <div class="audio-player" onclick="event.stopPropagation()">
+                        <div class="audio-controls-row">
+                            <button class="play-btn ${isPlaying ? 'playing' : ''}" 
+                                    id="play-btn-${voice.id}"
+                                    onclick="event.stopPropagation(); togglePlay('${voice.id}')">
+                                ${isPlaying ? '⏸️' : '▶️'}
+                            </button>
+                            <div class="progress-container" onclick="event.stopPropagation(); seekAudio(event, '${voice.id}')">
+                                <div class="progress-bar" id="progress-${voice.id}"></div>
+                            </div>
+                            <span class="time-display" id="time-${voice.id}">0:00 / 0:00</span>
+                            <div class="volume-control" onclick="event.stopPropagation()">
+                                <span>🔊</span>
+                                <input type="range" class="volume-slider" min="0" max="100" value="100" 
+                                       onchange="event.stopPropagation(); setVolume('${voice.id}', this.value)">
+                            </div>
+                        </div>
+                        ${generateWaveform(voice.id, isPlaying)}
+                        ${sample.text ? `
+                        <div class="sample-text" onclick="event.stopPropagation()">
+                            <div class="sample-text-label">📝 样本文本</div>
+                            ${escapeHtml(sample.text)}
+                        </div>
+                        ` : ''}
+                    </div>
+                    ` : '<div style="color: #999; font-size: 12px; padding: 10px;">🚫 暂无音频样本</div>'}
+                    
+                    <button class="select-btn" onclick="event.stopPropagation(); toggleSelect('${voice.id}')">
+                        ${isSelected ? '✓ 已选择' : '➕ 选择'}
+                    </button>
+                </div>
+            `}).join('');
+            
+            // 如果正在播放，更新进度条
+            if (currentAudio && currentVoiceId) {
+                updateProgressBar(currentVoiceId);
+                updateTimeDisplay(currentVoiceId);
+            }
+        }
+
+        // 检查是否有音频样本
+        function hasAudioSample(voice) {
+            return voice.samples && voice.samples.length > 0 && voice.samples[0].audio_url;
+        }
+
+        // 格式化时间
+        function formatTime(seconds) {
+            if (isNaN(seconds)) return '0:00';
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // 切换播放
+        function togglePlay(voiceId) {
+            const voice = allVoices.find(v => v.id === voiceId);
+            if (!voice || !voice.samples || !voice.samples[0].audio_url) {
+                return;
+            }
+            
+            // 如果正在播放同一个音频，则暂停
+            if (currentAudio && currentVoiceId === voiceId) {
+                if (currentAudio.paused) {
+                    currentAudio.play();
+                    updatePlayButton(voiceId, true);
+                    showGlobalPlayer(voice);
+                } else {
+                    currentAudio.pause();
+                    updatePlayButton(voiceId, false);
+                }
+                return;
+            }
+            
+            // 停止之前的音频
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio.currentTime = 0;
+                if (currentVoiceId) {
+                    updatePlayButton(currentVoiceId, false);
+                    updateProgressBar(currentVoiceId, 0);
+                }
+            }
+            
+            // 创建新音频
+            currentAudio = new Audio(voice.samples[0].audio_url);
+            currentVoiceId = voiceId;
+            
+            currentAudio.onloadedmetadata = () => {
+                updateTimeDisplay(voiceId);
+            };
+            
+            currentAudio.ontimeupdate = () => {
+                updateProgressBar(voiceId);
+                updateTimeDisplay(voiceId);
+                updateGlobalPlayer();
+                animateWaveform(voiceId);
+            };
+            
+            currentAudio.onended = () => {
+                updatePlayButton(voiceId, false);
+                updateProgressBar(voiceId, 0);
+                hideGlobalPlayer();
+            };
+            
+            currentAudio.onerror = () => {
+                alert('音频加载失败');
+                updatePlayButton(voiceId, false);
+            };
+            
+            currentAudio.play();
+            updatePlayButton(voiceId, true);
+            showGlobalPlayer(voice);
+        }
+
+        // 更新播放按钮状态
+        function updatePlayButton(voiceId, isPlaying) {
+            const btn = document.getElementById(`play-btn-${voiceId}`);
+            if (btn) {
+                btn.innerHTML = isPlaying ? '⏸️' : '▶️';
+                if (isPlaying) {
+                    btn.classList.add('playing');
+                } else {
+                    btn.classList.remove('playing');
+                }
+            }
+            
+            // 更新波形动画
+            const waveform = document.getElementById(`waveform-${voiceId}`);
+            if (waveform) {
+                if (isPlaying) {
+                    waveform.classList.add('playing');
+                } else {
+                    waveform.classList.remove('playing');
+                }
+            }
+        }
+
+        // 动画波形
+        function animateWaveform(voiceId) {
+            const waveform = document.getElementById(`waveform-${voiceId}`);
+            if (!waveform || !currentAudio || currentAudio.paused) return;
+            
+            const bars = waveform.querySelectorAll('.waveform-bar');
+            const progress = currentAudio.currentTime / currentAudio.duration;
+            const activeIndex = Math.floor(progress * bars.length);
+            
+            bars.forEach((bar, index) => {
+                if (index <= activeIndex) {
+                    bar.classList.add('active');
+                } else {
+                    bar.classList.remove('active');
+                }
+            });
+        }
+
+        // 更新进度条
+        function updateProgressBar(voiceId, percent = null) {
+            if (!currentAudio) return;
+            
+            const progress = percent !== null ? percent : 
+                (currentAudio.currentTime / currentAudio.duration * 100) || 0;
+            
+            const progressBar = document.getElementById(`progress-${voiceId}`);
+            if (progressBar) {
+                progressBar.style.width = progress + '%';
+            }
+        }
+
+        // 更新时间显示
+        function updateTimeDisplay(voiceId) {
+            if (!currentAudio) return;
+            
+            const timeDisplay = document.getElementById(`time-${voiceId}`);
+            if (timeDisplay) {
+                timeDisplay.textContent = 
+                    `${formatTime(currentAudio.currentTime)} / ${formatTime(currentAudio.duration)}`;
+            }
+        }
+
+        // 跳转音频
+        function seekAudio(event, voiceId) {
+            if (!currentAudio || currentVoiceId !== voiceId) return;
+            
+            const container = event.currentTarget;
+            const rect = container.getBoundingClientRect();
+            const percent = (event.clientX - rect.left) / rect.width;
+            
+            currentAudio.currentTime = percent * currentAudio.duration;
+            updateProgressBar(voiceId);
+        }
+
+        // 设置音量
+        function setVolume(voiceId, value) {
+            if (currentAudio && currentVoiceId === voiceId) {
+                currentAudio.volume = value / 100;
+            }
+        }
+
+        // 显示全局播放器
+        function showGlobalPlayer(voice) {
+            const player = document.getElementById('globalPlayer');
+            const info = document.getElementById('playerInfo');
+            info.textContent = `🎵 ${voice.title}`;
+            player.classList.add('show');
+            updateGlobalPlayer();
+        }
+
+        // 隐藏全局播放器
+        function hideGlobalPlayer() {
+            const player = document.getElementById('globalPlayer');
+            player.classList.remove('show');
+        }
+
+        // 关闭全局播放器
+        function closeGlobalPlayer() {
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio.currentTime = 0;
+                if (currentVoiceId) {
+                    updatePlayButton(currentVoiceId, false);
+                    updateProgressBar(currentVoiceId, 0);
+                }
+            }
+            hideGlobalPlayer();
+        }
+
+        // 更新全局播放器
+        function updateGlobalPlayer() {
+            if (!currentAudio) return;
+            
+            const progress = (currentAudio.currentTime / currentAudio.duration * 100) || 0;
+            document.getElementById('globalProgressBar').style.width = progress + '%';
+            document.getElementById('globalTime').textContent = 
+                `${formatTime(currentAudio.currentTime)} / ${formatTime(currentAudio.duration)}`;
+            document.getElementById('globalPlayBtn').innerHTML = 
+                currentAudio.paused ? '▶️' : '⏸️';
+        }
+
+        // 全局播放控制
+        function toggleGlobalPlay() {
+            if (!currentAudio) return;
+            
+            if (currentAudio.paused) {
+                currentAudio.play();
+            } else {
+                currentAudio.pause();
+            }
+            updatePlayButton(currentVoiceId, !currentAudio.paused);
+            updateGlobalPlayer();
+        }
+
+        // 全局跳转
+        function seekGlobalAudio(event) {
+            if (!currentAudio) return;
+            
+            const container = event.currentTarget;
+            const rect = container.getBoundingClientRect();
+            const percent = (event.clientX - rect.left) / rect.width;
+            
+            currentAudio.currentTime = percent * currentAudio.duration;
+            updateGlobalPlayer();
+        }
+
+        // 全局音量
+        function setGlobalVolume(value) {
+            if (currentAudio) {
+                currentAudio.volume = value / 100;
+            }
+        }
+
+        // 切换选择
+        function toggleSelect(voiceId) {
+            if (selectedVoices.has(voiceId)) {
+                selectedVoices.delete(voiceId);
+            } else {
+                selectedVoices.add(voiceId);
+            }
+            renderVoices();
+            updateSelectedList();
+        }
+
+        // 更新选中列表
+        function updateSelectedList() {
+            const list = document.getElementById('selectedList');
+            const count = selectedVoices.size;
+            
+            document.getElementById('sidebarCount').textContent = count;
+            
+            if (count === 0) {
+                list.innerHTML = '<div class="empty-selected">还没有选择任何音色</div>';
+                document.getElementById('clearAllBtn').style.display = 'none';
+                return;
+            }
+            
+            document.getElementById('clearAllBtn').style.display = 'block';
+            
+            const selected = Array.from(selectedVoices)
+                .map(id => allVoices.find(v => v.id === id))
+                .filter(v => v);
+            
+            list.innerHTML = selected.map(voice => `
+                <div class="selected-item">
+                    <div class="selected-item-info">
+                        <div class="selected-item-title">${escapeHtml(voice.title)}</div>
+                        <div class="selected-item-id">${voice.id}</div>
+                    </div>
+                    <span class="selected-item-gender ${voice.gender}">
+                        ${voice.gender === 'male' ? '男' : voice.gender === 'female' ? '女' : '?'}
+                    </span>
+                    <button class="remove-btn" onclick="removeSelected('${voice.id}')" title="移除">
+                        ✕
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        // 移除选中
+        function removeSelected(voiceId) {
+            selectedVoices.delete(voiceId);
+            renderVoices();
+            updateSelectedList();
+        }
+
+        // 清空全部
+        function clearAllSelected() {
+            if (confirm('确定要清空所有选中的音色吗？')) {
+                selectedVoices.clear();
+                renderVoices();
+                updateSelectedList();
+            }
+        }
+
+        // 导出选择
+        function exportSelected() {
+            if (selectedVoices.size === 0) {
+                alert('请先选择至少一个音色');
+                return;
+            }
+            
+            const selected = Array.from(selectedVoices)
+                .map(id => allVoices.find(v => v.id === id))
+                .filter(v => v)
+                .map(v => ({
+                    id: v.id,
+                    title: v.title,
+                    description: v.description,
+                    gender: v.gender,
+                    task_count: v.task_count,
+                    samples: v.samples
+                }));
+            
+            const data = {
+                export_time: new Date().toISOString(),
+                total_selected: selected.length,
+                voices: selected
+            };
+            
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'finalfish.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            alert(`成功导出 ${selected.length} 个音色到 finalfish.json`);
+        }
+
+        // 更新统计
+        function updateStats() {
+            const validOnly = document.getElementById('filterValidOnly').checked;
+            const voicesToCount = validOnly ? allVoices.filter(isValidVoice) : allVoices;
+            
+            const male = voicesToCount.filter(v => v.gender === 'male').length;
+            const female = voicesToCount.filter(v => v.gender === 'female').length;
+            const unknown = voicesToCount.filter(v => v.gender === 'unknown').length;
+            const validCount = allVoices.filter(isValidVoice).length;
+            
+            let statsHtml = `总计: ${allVoices.length} 个音色 | 男声: ${male} | 女声: ${female} | 未知: ${unknown}`;
+            if (validOnly) {
+                statsHtml += ` | <span style="color: #4CAF50;">已过滤: 显示 ${voicesToCount.length} 个有效音色</span>`;
+            } else {
+                statsHtml += ` | <span style="color: #ff9800;">有效音色: ${validCount} 个</span>`;
+            }
+            
+            document.getElementById('stats').innerHTML = statsHtml;
+        }
+
+        // HTML 转义
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

@@ -227,8 +227,11 @@ class CreationAsyncService:
             
             from app.tasks.creation_task import character_analysis_task
             task_id = character_analysis_task.delay(
-                creation.creation_id, creation.novel_id, creation.chapter_id, 
-                chapter.content_url if chapter else None, narration_mode
+                novel_id=creation.novel_id,
+                chapter_id=creation.chapter_id,
+                creation_id=creation.creation_id,
+                chapter_content_url=chapter.content_url if chapter else None,
+                narration_mode=narration_mode
             ).id
             
             creation.current_task_id = task_id
@@ -320,7 +323,10 @@ class CreationAsyncService:
         
         from app.tasks.creation_task import character_analysis_task
         task_id = character_analysis_task.delay(
-            creation.creation_id, novel_id, chapter_id, content_url, narration_mode
+            novel_id=novel_id,
+            chapter_id=chapter_id,
+            creation_id=creation.creation_id,
+            chapter_content_url=content_url
         ).id
         
         creation.current_task_id = task_id
@@ -390,7 +396,7 @@ class CreationAsyncService:
     
     @staticmethod
     async def delete_creation(db: AsyncSession, creation_id: int) -> bool:
-        """删除创作"""
+        """删除创作（软删除）"""
         result = await db.execute(
             select(Creation).where(Creation.creation_id == creation_id)
         )
@@ -399,7 +405,15 @@ class CreationAsyncService:
         if not creation:
             return False
         
-        await db.delete(creation)
+        # 假删除关联的 agent_sessions（设置 deleted_at）
+        await db.execute(
+            sa_text("UPDATE agent_sessions SET deleted_at = now(), status = 'archived' WHERE creation_id = :creation_id"),
+            {"creation_id": creation_id}
+        )
+        
+        # 软删除 creation（设置 deleted_at）
+        from datetime import datetime
+        creation.deleted_at = datetime.utcnow()
         await db.commit()
         
         return True

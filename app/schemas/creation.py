@@ -38,6 +38,7 @@ class CreationCreate(CreationBase):
     narration_mode: Optional[str] = Field(default="original", description="解说词模式：original（原文模式）或 rewrite（爽文模式），默认 original")
     extra_data: Optional[dict] = Field(default=None, description="扩展数据，存储创作配置（如模型选择等）")
     text_content: Optional[str] = None  # 临时字段，用于接收上传的文本内容，将被转换为预览和US3存储
+    workflow_mode: Optional[str] = Field(default="traditional", description="工作流模式：traditional=传统手动，agent=Agent智能协助")
 
 
 class CreationUpdate(BaseModel):

@@ -1,0 +1,1035 @@
+{
+  "export_time": "2026-02-01T10:29:21.411Z",
+  "total_selected": 63,
+  "voices": [
+    {
+      "id": "dd43b30d04d9446a94ebe41f301229b5",
+      "title": "【宣传片】（大气悠扬浑厚）",
+      "description": "【宣传片】杭州临空经济示范区（大气悠扬浑厚）",
+      "gender": "unknown",
+      "task_count": 85384,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "璀璨的星河在广袤的天际延伸，五千年文明的灿烂华章在这片热土上绽放。看，这是一个充满希望的时代，我们共同见证着中华民族伟大复兴的光辉历程。让我们携手同行，创造更加辉煌的明天。",
+          "task_id": "74b32b61c30e4db99428c66bcfccbbda",
+          "audio_url": "https://platform.r2.fish.audio/task/74b32b61c30e4db99428c66bcfccbbda.mp3"
+        }
+      ]
+    },
+    {
+      "id": "faccba1a8ac54016bcfc02761285e67f",
+      "title": "温柔动听女声",
+      "description": "说话抑扬顿挫，语气温柔动听的女孩子",
+      "gender": "unknown",
+      "task_count": 45374,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "亲爱的，累了一天辛苦了。让我们一起深呼吸，慢慢放松身心。记住，生活中的每个时刻都值得珍惜，不要给自己太大压力。闭上眼睛，听听内心的声音，感受这份宁静美好。",
+          "task_id": "67a8fd3936304523b52b639aa54d4aeb",
+          "audio_url": "https://platform.r2.fish.audio/task/67a8fd3936304523b52b639aa54d4aeb.mp3"
+        }
+      ]
+    },
+    {
+      "id": "6ce7ea8ada884bf3889fa7c7fb206691",
+      "title": "御女茉莉",
+      "description": "A youthful female voice with a soft, breathy quality and a sweet, intimate tone. It features a playful and gentle delivery, well-suited for character-driven narratives and anime-style content.",
+      "gender": "female",
+      "task_count": 41373,
+      "samples": [
+        {
+          "id": "",
+          "title": "哥哥",
+          "text": "好舍不得你哦哥哥! 你会想我吗",
+          "task_id": "9281d28cb9594790b56197d84e437c01",
+          "audio_url": "https://platform.r2.fish.audio/task/9281d28cb9594790b56197d84e437c01.mp3"
+        }
+      ]
+    },
+    {
+      "id": "5c353fdb312f4888836a9a5680099ef0",
+      "title": "女大学生",
+      "description": "A young female voice with a bright and energetic tone, speaking Mandarin Chinese. It has a friendly, conversational quality suitable for social media or casual narration.",
+      "gender": "male",
+      "task_count": 35582,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "期末周真的好累啊，图书馆从早坐到晚，课本都快背烂了。不过想到马上就能放假了，还是要加油！室友说晚上请我吃火锅，这就是读书的动力吧，哈哈。希望这次考试能考好！",
+          "task_id": "81ecbe09d7cb49708cb1f836ada745b1",
+          "audio_url": "https://platform.r2.fish.audio/task/81ecbe09d7cb49708cb1f836ada745b1.mp3"
+        }
+      ]
+    },
+    {
+      "id": "62222f4a424349828331888d19c9b594",
+      "title": "孙正聿（红色背景老头）",
+      "description": "A mature and authoritative male voice with a calm, measured delivery and a professional tone. It sounds wise and steady, well-suited for educational content or philosophical narration.",
+      "gender": "male",
+      "task_count": 23290,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "年轻人啊，做事要有定力，不要被眼前的利益迷惑了双眼。我经常说，一个人的品格比才能更重要，做人先做德。现在社会节奏快，但做事不能急功近利，要懂得沉淀自己。",
+          "task_id": "9eecd574e38f4ad49e36ad89d083ad44",
+          "audio_url": "https://platform.r2.fish.audio/task/9eecd574e38f4ad49e36ad89d083ad44.mp3"
+        }
+      ]
+    },
+    {
+      "id": "21082ac382d945e29aea354e90380f11",
+      "title": "仿真人（男声、偏用于广告、捏造事实类）",
+      "description": "A young male voice with an energetic and enthusiastic tone, perfect for gaming reviews and promotional social media content. The delivery is fast-paced, clear, and highly expressive.",
+      "gender": "male",
+      "task_count": 20214,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "好家伙，这次游戏新出的联动皮肤是真的绝了，不光造型精致，特效也是一绝。官方这波是真的用心了，连动作设计都这么细腻。兄弟们，这波不冲真的说不过去啊，赶紧来感受一下这套皮肤的魅力吧。",
+          "task_id": "2d5e0ecb2de749df9b69651dd44bf9da",
+          "audio_url": "https://platform.r2.fish.audio/task/2d5e0ecb2de749df9b69651dd44bf9da.mp3"
+        }
+      ]
+    },
+    {
+      "id": "5e680ebc2eeb4f78a2224f2e1003b8c6",
+      "title": "刘备-正常",
+      "description": "A mature and authoritative male voice with a deep, resonant quality, ideal for historical or dramatic narration. The delivery is measured and steady, conveying a strong sense of leadership, gravity, and wisdom.",
+      "gender": "male",
+      "task_count": 14551,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "诸位将士，治国安邦，以民为本。我虽才疏学浅，但始终以百姓福祉为重。望诸位与我同心，共襄盛举。若能安民济世，何愁天下不定？让我们携手共创太平盛世。",
+          "task_id": "ded9c994c68145e3b3c9a3fa65934948",
+          "audio_url": "https://platform.r2.fish.audio/task/ded9c994c68145e3b3c9a3fa65934948.mp3"
+        }
+      ]
+    },
+    {
+      "id": "4fc0bf3230884ee28795d5c7fd4a3a91",
+      "title": "天童爱丽丝",
+      "description": "A bright and energetic young female voice with a high-pitched, enthusiastic tone. This voice is animated and playful, making it ideal for anime-style characters, gaming, and social media content in Mandarin Chinese.",
+      "gender": "male",
+      "task_count": 9784,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "大家好呀！今天也要元气满满哦！我最近在研究新的游戏攻略，超有意思的！要是大家感兴趣的话，可以一起来玩呢。约好了哦，一起创造美好的回忆吧！",
+          "task_id": "67e5827c079a4e928656e65cff7ce962",
+          "audio_url": "https://platform.r2.fish.audio/task/67e5827c079a4e928656e65cff7ce962.mp3"
+        }
+      ]
+    },
+    {
+      "id": "6fc59d2b56cf402eb572934114c8d8aa",
+      "title": "仿真人（男声、情绪平稳、常用与历史开头，故事类）",
+      "description": "A mature and authoritative male voice with a clear, confident, and professional delivery in Mandarin. It is well-suited for dramatic storytelling, character roles, or serious narrations.",
+      "gender": "male",
+      "task_count": 8644,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "新的挑战来了，你是刚升为知府的清官，却发现城中暗藏奸细。白天要装作不知，晚上暗访查案。一步走错就会打草惊蛇，但若能抓住证据，就能将他们一网打尽。这才是真正的智谋之战啊，看你如何应对。",
+          "task_id": "bfc1eed781e045f39e81d419726c82a8",
+          "audio_url": "https://platform.r2.fish.audio/task/bfc1eed781e045f39e81d419726c82a8.mp3"
+        }
+      ]
+    },
+    {
+      "id": "68321400e5fa458e8388a49a27800908",
+      "title": "中年男",
+      "description": "A mature, middle-aged male voice with a warm and calm tone, speaking Mandarin. He sounds like a friendly advisor or mentor, offering health tips in a gentle and professional manner.",
+      "gender": "male",
+      "task_count": 6664,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "最近天气变化大，我跟你说啊，一定要注意身体。年轻时不当回事，现在才知道健康最重要。早上起来喝杯温水，晚上少熬夜，平时多运动，这都是我这些年总结出来的经验。",
+          "task_id": "b537d8eb8eb447029b003accc42bf97b",
+          "audio_url": "https://platform.r2.fish.audio/task/b537d8eb8eb447029b003accc42bf97b.mp3"
+        }
+      ]
+    },
+    {
+      "id": "2abd548310dc4741b73e3ccc69ddc61d",
+      "title": "浙大男生书包（学生）",
+      "description": "A young male voice with an energetic and friendly tone, speaking Mandarin with a clear and bright quality. This voice is well-suited for conversational content, social media, or educational narration.",
+      "gender": "male",
+      "task_count": 6566,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "嗯，我们学校图书馆真的很棒啊，我每天早上七点就去占座，那边学习氛围特别好呢。我们班好多同学都考研，我也要加油啊，老师说我们这届能考上的特别多，我也要努力啊。",
+          "task_id": "a52bb93c479749ed8320f18d7d1597d3",
+          "audio_url": "https://platform.r2.fish.audio/task/a52bb93c479749ed8320f18d7d1597d3.mp3"
+        }
+      ]
+    },
+    {
+      "id": "8a9310ea9df5407882793705db93bbe7",
+      "title": "刘备（愤怒）",
+      "description": "刘备（愤怒）",
+      "gender": "male",
+      "task_count": 5379,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "岂有此理！竟敢如此欺凌百姓，践踏仁义！身为人主，岂能坐视不理？传我军令，集结三军，务必讨伐此等无道之徒。若天理昭昭，必叫他们付出代价！",
+          "task_id": "dda0ddcc2e9649ab86ee3338f787ec5b",
+          "audio_url": "https://platform.r2.fish.audio/task/dda0ddcc2e9649ab86ee3338f787ec5b.mp3"
+        }
+      ]
+    },
+    {
+      "id": "2d4fe930c97146c98ae2785c2845341a",
+      "title": "关羽",
+      "description": "A mature and authoritative middle-aged male voice with a formal, measured tone. The voice is clear and resonant, conveying a sense of wisdom and confidence, ideal for historical characters or serious narration.",
+      "gender": "male",
+      "task_count": 5273,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "为将者，当以忠义为本，以信义待人。治军贵在严明，带兵重在仁德。吾向来秉持此道，方能得将士之心。若要成就大业，必先修身养德，方可服众。",
+          "task_id": "ce5f70cd99294fd3a7dfa170a8fb4746",
+          "audio_url": "https://platform.r2.fish.audio/task/ce5f70cd99294fd3a7dfa170a8fb4746.mp3"
+        }
+      ]
+    },
+    {
+      "id": "6a6ec1a366fc4e1b976fe27982639358",
+      "title": "鲁智深",
+      "description": "A mature male voice with a wide dramatic range, transitioning from a deep, raspy, and energetic warrior tone to a calm and measured monastic delivery. This voice is ideal for expressive character performances in gaming and animation, specifically for Mandarin Chinese content.",
+      "gender": "male",
+      "task_count": 4566,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "俺老鲁最看不得这欺男霸女的事！今日在这瓦罐寺喝酒，却见几个狗官欺压百姓。哼，让俺先吃几碗酒壮壮胆，提起禅杖好好教训这些狗官！阿弥陀佛，得饶人处且饶人，不得饶人时便不饶人。",
+          "task_id": "9bcdd76a909a4e4aae33969e4d399e86",
+          "audio_url": "https://platform.r2.fish.audio/task/9bcdd76a909a4e4aae33969e4d399e86.mp3"
+        }
+      ]
+    },
+    {
+      "id": "60df5b28387045cba306003943d7d008",
+      "title": "王林正常说话的声音_01",
+      "description": "A professional and calm middle-aged male voice with a deep, smooth tone. His delivery is steady and clear, making it ideal for informative content such as news, weather reports, or educational narrations.",
+      "gender": "male",
+      "task_count": 4136,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "今天天气晴朗，适合外出活动。不过提醒大家，最近温差比较大，早晚温度可能会低一些，建议随身带件外套。另外，记得做好防晒措施，祝大家玩得开心。",
+          "task_id": "b86e4d06a8984ad381a24bca31de8860",
+          "audio_url": "https://platform.r2.fish.audio/task/b86e4d06a8984ad381a24bca31de8860.mp3"
+        }
+      ]
+    },
+    {
+      "id": "79b9954c15f24deeab2319ec5f44f3b0",
+      "title": "流萤",
+      "description": "可爱流萤",
+      "gender": "male",
+      "task_count": 4119,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "夜色渐深，我的光芒为迷途者指引方向。如同群星闪烁，每个生命都有属于自己的光辉时刻。让我们一同穿越黑暗，寻找黎明的希望。这便是我存在的意义。",
+          "task_id": "791e6eede54543f5bc251228f5f46050",
+          "audio_url": "https://platform.r2.fish.audio/task/791e6eede54543f5bc251228f5f46050.mp3"
+        }
+      ]
+    },
+    {
+      "id": "3e8b736a81364a0a98178435b51d4321",
+      "title": "王也",
+      "description": "A calm and authoritative middle-aged male voice with a deep, smooth tone, speaking in Mandarin. It conveys a sense of wisdom and gravity, suitable for philosophical narration or wise character roles.",
+      "gender": "male",
+      "task_count": 4071,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "天机玄妙，命途多舛。若遇灵台清明之时，当知乾坤造化，皆为明悟铺路。修身养性，持守本心，待到紫气东来，便是功德圆满之日。切记，道法自然，万物皆空，终有大道可循。",
+          "task_id": "c441da9fd51a4dcbbd05ae7d4b565e6e",
+          "audio_url": "https://platform.r2.fish.audio/task/c441da9fd51a4dcbbd05ae7d4b565e6e.mp3"
+        }
+      ]
+    },
+    {
+      "id": "34f3b5fd1e3e4e7796a3e403c8541e7e",
+      "title": "配角1",
+      "description": "A professional and calm male voice with a clear, medium-pitched tone, ideal for corporate or educational content. The speaker's delivery is measured and polite, conveying a sense of competence and reliability.",
+      "gender": "male",
+      "task_count": 4042,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "老板，这份文件我已经整理好了，按照您说的要求做了重点标注。要是有什么需要修改的地方，随时告诉我。我先去准备下午会议需要的材料。",
+          "task_id": "26aca5b49f224b6096609823810f9a4c",
+          "audio_url": "https://platform.r2.fish.audio/task/26aca5b49f224b6096609823810f9a4c.mp3"
+        }
+      ]
+    },
+    {
+      "id": "32ea6ed2f793439da52685ac910534ac",
+      "title": "女教师温柔版",
+      "description": "女教师温柔版",
+      "gender": "male",
+      "task_count": 4001,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "同学们，今天我们来复习一下昨天学习的内容。不要着急，我们慢慢来，每个知识点都很重要。记住，学习不是一蹴而就的事情，需要我们耐心地积累。有不懂的地方随时举手提问哦。",
+          "task_id": "710229d87cfc4d3b9e26871270b25627",
+          "audio_url": "https://platform.r2.fish.audio/task/710229d87cfc4d3b9e26871270b25627.mp3"
+        }
+      ]
+    },
+    {
+      "id": "13b9ff4ee7bb4f158f8ba3f051c6c0e6",
+      "title": "打码哥",
+      "description": "A young male voice with an energetic and professional tone, speaking standard Mandarin. It features a clear, confident delivery well-suited for instructional tech content and social media tutorials.",
+      "gender": "male",
+      "task_count": 3902,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "今天给大家讲个简单的debug技巧，很多新手遇到报错就慌了。其实打断点是个好办法，就像查案一样，一步步跟踪变量的变化，很快就能找到问题所在。学会这招，代码调试效率能提高好几倍。",
+          "task_id": "68caf3a7594e42b481402c561e808619",
+          "audio_url": "https://platform.r2.fish.audio/task/68caf3a7594e42b481402c561e808619.mp3"
+        }
+      ]
+    },
+    {
+      "id": "22d0f487c3d1497da18ec10e54595fce",
+      "title": "孙悟空",
+      "description": "A high-energy, rhythmic male voice featuring a traditional Chinese theatrical delivery typical of performance roles like the Monkey King. It is dramatic, authoritative, and distinctly expressive with a focus on storytelling and entertainment.",
+      "gender": "male",
+      "task_count": 3871,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "俺老孙的金箍棒，打遍天下无敌手！七十二变随心所欲，腾云驾雾上天入地。妖魔鬼怪见了都发抖，谁敢来战，俺老孙奉陪到底！",
+          "task_id": "c755c4b705144166a6a4f2976535338a",
+          "audio_url": "https://platform.r2.fish.audio/task/c755c4b705144166a6a4f2976535338a.mp3"
+        }
+      ]
+    },
+    {
+      "id": "61b33c9a45324f69a22dbb5f91a526d0",
+      "title": "薛之谦",
+      "description": "A young male voice with a clear, conversational, and friendly tone, speaking standard Mandarin. His delivery is relaxed and engaging, making it well-suited for social media or lighthearted narration.",
+      "gender": "male",
+      "task_count": 3701,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "今天录节目的时候又出糗了，造型师给我整了个特别前卫的发型，我说像不像被雷劈过？结果导演说挺好的要保持，我就这样录了一整天。粉丝们待会看到节目别笑我啊，真的不是我的主意。",
+          "task_id": "e296a35471f2498a886223bacde79544",
+          "audio_url": "https://platform.r2.fish.audio/task/e296a35471f2498a886223bacde79544.mp3"
+        }
+      ]
+    },
+    {
+      "id": "082a124799dc43d6bdef679b2d34f02c",
+      "title": "叶修",
+      "description": "A calm and confident young male voice speaking Mandarin with a smooth and professional delivery, suitable for gaming guides and educational content.",
+      "gender": "male",
+      "task_count": 3275,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "这个副本难度确实不低，但也没什么特别的。新手的话建议先熟悉一下技能连招，装备的话随便搭配，重要的是理解boss的攻击节奏。要是还不行，我可以带你们刷几次。",
+          "task_id": "ca347b71477940169ea852db8724adcc",
+          "audio_url": "https://platform.r2.fish.audio/task/ca347b71477940169ea852db8724adcc.mp3"
+        }
+      ]
+    },
+    {
+      "id": "428ae0014ca24620b166661ed9c51412",
+      "title": "阿楠anan",
+      "description": "A bright and enthusiastic young female voice speaking clear Mandarin. This voice has a friendly and energetic tone that is well-suited for social media content and lifestyle narration.",
+      "gender": "male",
+      "task_count": 3182,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "大家好呀，今天给大家分享一个超实用的生活小技巧。每天早上喝杯温水加蜂蜜，不仅能养胃还能美容。我已经坚持一个月了，感觉皮肤都变好了呢！你们要不要也试试看？",
+          "task_id": "30a0858d50e04f508ec76f99e9bc905c",
+          "audio_url": "https://platform.r2.fish.audio/task/30a0858d50e04f508ec76f99e9bc905c.mp3"
+        }
+      ]
+    },
+    {
+      "id": "460cc7c87ab34e86af76c0d9cb81caaa",
+      "title": "王者荣耀李白",
+      "description": "A powerful and energetic male voice with a heroic, dramatic tone, ideal for action-oriented character roles. The delivery is authoritative and confident, featuring a distinct Chinese accent with a cinematic quality.",
+      "gender": "male",
+      "task_count": 3159,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "剑光如月，舞动乾坤。看我一剑破万法，醉卧沙场笑苍天。谁与我比剑？谁敢争锋？且让这满天飞雪，见证我绝世风华。世人谓我狂，我谓世人懦弱。",
+          "task_id": "46a1cf0526de447dbff145a02c74083d",
+          "audio_url": "https://platform.r2.fish.audio/task/46a1cf0526de447dbff145a02c74083d.mp3"
+        }
+      ]
+    },
+    {
+      "id": "6909d228b1ee44cea4f4be8845559f92",
+      "title": "洪兴基哥",
+      "description": "An energetic and loud male voice with a fast-paced, high-pressure sales tone, characteristic of a live auctioneer or street vendor. The delivery is sharp and enthusiastic with a clear Chinese accent, making it suitable for dynamic commercial or character roles.",
+      "gender": "male",
+      "task_count": 3119,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "各位看官，这块极品翡翠的底价是28800，28800啊，真的只要28800！这可是千载难逢的好价格啊！有没有人要出28800啊？28800，谁来拿下这块极品翡翠啊？",
+          "task_id": "c68019a1da404617a2be218c8f106ba9",
+          "audio_url": "https://platform.r2.fish.audio/task/c68019a1da404617a2be218c8f106ba9.mp3"
+        }
+      ]
+    },
+    {
+      "id": "68fef9224cbf444fa73a40ce75c7c29d",
+      "title": "张飞（激动）",
+      "description": "A powerful and aggressive middle-aged male voice, characterized by high-energy shouting and an authoritative, dramatic tone. This voice is ideal for intense warrior characters, featuring a raspy quality and a strong Mandarin delivery.",
+      "gender": "male",
+      "task_count": 2940,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "哈哈哈！看我这杆丈八蛇矛，挡我者死！谁敢来战？俺老张在此，定要杀他个片甲不留！兄弟们，随我冲啊！今日定要让敌军闻风丧胆，杀个痛快！",
+          "task_id": "d5b2e7eed75b4362803a2304d404f367",
+          "audio_url": "https://platform.r2.fish.audio/task/d5b2e7eed75b4362803a2304d404f367.mp3"
+        }
+      ]
+    },
+    {
+      "id": "5611bf78886a4a9998f56538c4ec7d8c",
+      "title": "刻晴",
+      "description": "A calm and professional young female voice with a clear, authoritative tone. It delivers a smooth and measured performance in Mandarin, suitable for narrative or character roles.",
+      "gender": "male",
+      "task_count": 2813,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "身为玉衡星，我深知效率与责任的重要性。璃月的发展离不开每个人的努力，而我的职责就是确保各项工作有条不紊地进行。让我们携手共创璃月更美好的明天。",
+          "task_id": "fe145ed4dadb493dbfa0997b30fe7e5d",
+          "audio_url": "https://platform.r2.fish.audio/task/fe145ed4dadb493dbfa0997b30fe7e5d.mp3"
+        }
+      ]
+    },
+    {
+      "id": "0fa0c39f8c8849a482db9da1586d1888",
+      "title": "小男孩 2",
+      "description": "A high-pitched and energetic young male voice speaking Mandarin with an enthusiastic and cheerful tone. It has an animated and playful quality, making it ideal for children's content or character voices.",
+      "gender": "male",
+      "task_count": 2581,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "妈妈，你看我今天画的画！这是我们全家去公园玩，这个是爸爸，这个是你，这个小的是我。我还画了好多小花和蝴蝶，老师说我画得很棒呢！我最喜欢画画了。",
+          "task_id": "3dffe3679132444fa3ad8555288a37ce",
+          "audio_url": "https://platform.r2.fish.audio/task/3dffe3679132444fa3ad8555288a37ce.mp3"
+        }
+      ]
+    },
+    {
+      "id": "839118b112d74979b88aaf84ecf7ad39",
+      "title": "甄嬛",
+      "description": "A mature female voice with a calm, measured, and authoritative tone, speaking Mandarin with a refined and dramatic flair. It is well-suited for storytelling, cinematic narration, and character roles.",
+      "gender": "male",
+      "task_count": 2172,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "这世间万事，看似偶然实则必然。一盏茶的温度，一句话的轻重，一个眼神的深浅，皆是机关。若要在这深宫立足，既要懂得进退，更要明白取舍之道。",
+          "task_id": "832f3ffad6f340e7a2a4e385e6fbeb25",
+          "audio_url": "https://platform.r2.fish.audio/task/832f3ffad6f340e7a2a4e385e6fbeb25.mp3"
+        }
+      ]
+    },
+    {
+      "id": "176f23635e78484f8ca00f5288788179",
+      "title": "数学白老师",
+      "description": "A mature male voice with a calm and professional tone, providing clear instruction in standard Mandarin. The speech is measured and authoritative, making it ideal for educational content and tutorials.",
+      "gender": "male",
+      "task_count": 2137,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "同学们好，今天我们来讲解一个重要的数学概念。解题时要记住，先理解题目要求，再列出已知条件，最后按步骤分析。不要着急，每个步骤都要认真思考。掌握这个方法，难题也能变简单。",
+          "task_id": "2df4af22426f4e248d0bb5ac29bf1d59",
+          "audio_url": "https://platform.r2.fish.audio/task/2df4af22426f4e248d0bb5ac29bf1d59.mp3"
+        }
+      ]
+    },
+    {
+      "id": "4cc4e38293ad4a15a9b061165dc1c937",
+      "title": "光头强",
+      "description": "A middle-aged male voice with a lively, slightly raspy, and energetic tone, characteristic of an animated character. It features expressive Chinese Mandarin speech well-suited for storytelling and entertainment.",
+      "gender": "male",
+      "task_count": 2067,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "今天又要去砍树了，新买的电锯可真好用。就是那两只熊老是来捣乱，害得我工作都没法正常干。不过没关系，我光头强什么大风大浪没见过，一定要把今天的活儿干完！",
+          "task_id": "48e4b8fc7d484cec9d125bad653ee997",
+          "audio_url": "https://platform.r2.fish.audio/task/48e4b8fc7d484cec9d125bad653ee997.mp3"
+        }
+      ]
+    },
+    {
+      "id": "82a7576ebd634931b2926b64fc8e23ac",
+      "title": "山田凉",
+      "description": "A youthful female voice with a bright, playful tone and clear articulation in Mandarin. It carries a friendly and energetic quality suitable for character dialogue or engaging social media content.",
+      "gender": "female",
+      "task_count": 1964,
+      "samples": [
+        {
+          "id": "",
+          "title": "测试",
+          "text": "再不起床的话，我就不还钱了",
+          "task_id": "e591031363f8413f9a4e562e5a960512",
+          "audio_url": "https://platform.r2.fish.audio/task/e591031363f8413f9a4e562e5a960512.wav"
+        }
+      ]
+    },
+    {
+      "id": "5c0256430d8345d4a9e2d619f50d1b1a",
+      "title": "三角洲-蜂医",
+      "description": "A professional and deep middle-aged male voice with a calm, authoritative tone in Mandarin, suitable for instructional or educational narration.",
+      "gender": "male",
+      "task_count": 1959,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "蜂群出现异常行为要及时检查，特别是在换季时期。如果发现工蜂在巢门口徘徊，或者蜂王产卵不规律，建议立即进行巢框检查。预防胜于治疗，定期消毒和监测才能保证蜂群健康。",
+          "task_id": "20bf95e3d6704423aa0c91beee1b5fca",
+          "audio_url": "https://platform.r2.fish.audio/task/20bf95e3d6704423aa0c91beee1b5fca.mp3"
+        }
+      ]
+    },
+    {
+      "id": "0715599c7277458591efda3ff230a51e",
+      "title": "赉元柚子01",
+      "description": "A firm and resolute male voice with a confident, rhythmic delivery, suitable for storytelling or character roles. The tone is serious and expressive, reflecting a traditional martial arts narrative style.",
+      "gender": "male",
+      "task_count": 1774,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "师父说过，武学之道不在于招式有多快，而在于心中执念有多深。看着眼前的对手，我想起了那些年的教诲。真正的强者，不是打败了多少人，而是守护住了多少人的梦想。",
+          "task_id": "67ccefa8b6e44d77a3a51275f4e20090",
+          "audio_url": "https://platform.r2.fish.audio/task/67ccefa8b6e44d77a3a51275f4e20090.mp3"
+        }
+      ]
+    },
+    {
+      "id": "806b5ffd885d47f3a76e6ec9864ec8e6",
+      "title": "居家生活女",
+      "description": "A young female voice with a bright and enthusiastic tone, speaking clearly in Mandarin Chinese. The voice is energetic and friendly, making it ideal for social media and conversational content.",
+      "gender": "male",
+      "task_count": 1772,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "智能厨房真的太方便了，早上只要提前设定好时间，咖啡机就会自动开始煮咖啡。洗碗机也能用手机远程操控，回家就能看到干净的碗筷。还可以用语音控制油烟机，解放双手做美食，生活就是要这么轻松。",
+          "task_id": "f161f1cc6ca54111bc182f38d5766c4c",
+          "audio_url": "https://platform.r2.fish.audio/task/f161f1cc6ca54111bc182f38d5766c4c.mp3"
+        }
+      ]
+    },
+    {
+      "id": "7a2eb51abe9447ff9e38e18b63c61ecd",
+      "title": "仔仔声音",
+      "description": "A young, energetic female voice with a high-pitched and enthusiastic tone, ideal for expressive character roles. This voice is bright and cheerful, capturing a sense of youthful wonder.",
+      "gender": "male",
+      "task_count": 1725,
+      "samples": [
+        {
+          "id": "",
+          "title": "仔仔",
+          "text": "哇 是水摩托",
+          "task_id": "52ce9ab4003344ccaa790ddff7b06759",
+          "audio_url": "https://platform.r2.fish.audio/task/52ce9ab4003344ccaa790ddff7b06759.mp3"
+        }
+      ]
+    },
+    {
+      "id": "4e0a7a3570fd43628d22c4ac7d774b46",
+      "title": "中年男人",
+      "description": "A mature and empathetic male voice with a warm, calm tone. He speaks in a reflective, measured pace suitable for storytelling or supportive character roles.",
+      "gender": "male",
+      "task_count": 403,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "你看看现在的年轻人啊，压力也不小。房贷车贷都不容易，我们这代人虽然吃过苦，但是也得理解他们。现在社会变化太快了，我们老了，就多帮衬着点儿，让孩子们少受点累。日子呀，总是要过的。",
+          "task_id": "b0f6104e58044dbc92f18b7b7c50dda1",
+          "audio_url": "https://platform.r2.fish.audio/task/b0f6104e58044dbc92f18b7b7c50dda1.mp3"
+        }
+      ]
+    },
+    {
+      "id": "881e3929b9914ae1ad72781fdb3d3121",
+      "title": "年轻人 男青年01",
+      "description": "A mature and calm middle-aged male voice with a professional and warm tone. This voice is well-suited for storytelling or documentary narration, characterized by its steady and measured delivery.",
+      "gender": "male",
+      "task_count": 403,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "外公的木工店已经开了四十年，现在也快要关门了。年轻人都喜欢去商场买现成的家具，手工打造的木器渐渐没了市场。可外公说，木匠活儿不只是做家具，更是在雕刻一份对生活的态度和坚持。",
+          "task_id": "0352aa057659449294eb77eef31af2b9",
+          "audio_url": "https://platform.r2.fish.audio/task/0352aa057659449294eb77eef31af2b9.mp3"
+        }
+      ]
+    },
+    {
+      "id": "7a9d11293bce4e4abf1a6c2c3f3a75f7",
+      "title": "dongbei",
+      "description": "A lively and friendly middle-aged male voice with a distinctive Northeastern Chinese (Dongbei) accent. The tone is energetic and enthusiastic, making it well-suited for informal storytelling, food reviews, or social media content.",
+      "gender": "male",
+      "task_count": 402,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "哎呀我给你说，这小区门口新开的饭馆可有意思啦！大厨是咱东北老乡，做的锅包肉那叫一个地道，酸甜适中还不腻乎。来这儿吃饭啊，份量大管够，价钱还实惠，跟我老家的味儿一模一样！",
+          "task_id": "cf4c4ac71bf348cfbb1a1c061225013a",
+          "audio_url": "https://platform.r2.fish.audio/task/cf4c4ac71bf348cfbb1a1c061225013a.mp3"
+        }
+      ]
+    },
+    {
+      "id": "6365db4de0bf4e5097ddde434a7461c1",
+      "title": "玛拉妮",
+      "description": "A spirited and heroic young female voice with a determined, battle-ready tone and a slight raspy texture. This voice conveys a strong sense of confidence and resilience, making it ideal for dynamic characters in anime or gaming.",
+      "gender": "male",
+      "task_count": 401,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "我是玛拉妮，战士之刃。千百次的战斗让我明白，真正的力量源于不屈的意志。即便身负重伤，我依然矗立不倒。胜利与荣耀，终将属于坚持到最后的战士。",
+          "task_id": "fd51938a93304f95a40e1cf66460fb84",
+          "audio_url": "https://platform.r2.fish.audio/task/fd51938a93304f95a40e1cf66460fb84.mp3"
+        }
+      ]
+    },
+    {
+      "id": "074c16d4c5f247969076f965ec00db7e",
+      "title": "流浪者",
+      "description": "A cold and authoritative male voice with a dramatic, arrogant tone, suitable for character roles like a villain or a powerful leader.",
+      "gender": "male",
+      "task_count": 398,
+      "samples": [
+        {
+          "id": "",
+          "title": "範例一",
+          "text": "就憑你,也配直視我!?",
+          "task_id": "1dbb82da6c6046178564992340a8ada2",
+          "audio_url": "https://platform.r2.fish.audio/task/1dbb82da6c6046178564992340a8ada2.wav"
+        },
+        {
+          "id": "",
+          "title": "範例二",
+          "text": "把頭低下!",
+          "task_id": "22233b6581464a78b6cbef50edd31ab4",
+          "audio_url": "https://platform.r2.fish.audio/task/22233b6581464a78b6cbef50edd31ab4.wav"
+        }
+      ]
+    },
+    {
+      "id": "40f85609f239423fa5bef5eff353653f",
+      "title": "DongDong羊",
+      "description": "A bright and energetic young female voice with a cheerful, high-pitched tone, ideal for social media or lighthearted narration. The delivery is clear, enthusiastic, and friendly, making it highly engaging.",
+      "gender": "male",
+      "task_count": 398,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "大家好呀，今天给大家分享一个超实用的小技巧！最近天气变热了，想吃冰淇淋又怕热量太高，我发现可以把酸奶冻成小块，撒上水果粒，既健康又美味哦！你们也试试看吧～",
+          "task_id": "97e1e79a1659409880b81d1c78171f3c",
+          "audio_url": "https://platform.r2.fish.audio/task/97e1e79a1659409880b81d1c78171f3c.mp3"
+        }
+      ]
+    },
+    {
+      "id": "5b4988c7d6f34b9c84157886e3ed2c90",
+      "title": "江湖龙虎斗-高老四",
+      "description": "黑帮霸气声音",
+      "gender": "male",
+      "task_count": 398,
+      "samples": [
+        {
+          "id": "",
+          "title": "订台",
+          "text": "你知不知道今天什么日子？像这样的日子你不订台，分明就是不给我面子！这样吧，339那边我有个单子，风险是大了点儿，不过消费很高，所谓富贵险中求，如果你有种的话，事成之后你七，我三，怎么样",
+          "task_id": "445c7b9a35ca4e0ca4b90f92f380746f",
+          "audio_url": "https://platform.r2.fish.audio/task/445c7b9a35ca4e0ca4b90f92f380746f.mp3"
+        }
+      ]
+    },
+    {
+      "id": "01da121e84b3449d80edf451f292e8c5",
+      "title": "女学生1",
+      "description": "A clear and professional male voice with a standard Mandarin accent, ideal for educational content and instructional narration. The tone is energetic and confident, providing a pleasant and authoritative listening experience.",
+      "gender": "male",
+      "task_count": 395,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "其实我觉得学习英语也是这样的，很多同学说自己记不住单词，但是我们要去分析原因。是不是复习方法不对？是不是没有形成良好的习惯？找到问题，然后针对性地去解决，其实就会有很大的进步。",
+          "task_id": "b2338df29c7d41e3aa5215ed69e11007",
+          "audio_url": "https://platform.r2.fish.audio/task/b2338df29c7d41e3aa5215ed69e11007.mp3"
+        }
+      ]
+    },
+    {
+      "id": "7acab87fae234d6d988533915347ab8b",
+      "title": "唐僧凶",
+      "description": "A deep and smooth middle-aged male voice with a calm, confident tone, well-suited for professional narration and storytelling in Mandarin.",
+      "gender": "male",
+      "task_count": 395,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "别把时间浪费在不值得的人身上，漂亮女生太多了，为什么要在一棵树上吊死？真正喜欢你的女生不会问你买不买得起包，不喜欢你的，给她再多钱也没用。恋爱要懂得及时止损，换个人就是新的开始。",
+          "task_id": "b1dcd858a8704954a333a1f3df15ae3e",
+          "audio_url": "https://platform.r2.fish.audio/task/b1dcd858a8704954a333a1f3df15ae3e.mp3"
+        }
+      ]
+    },
+    {
+      "id": "3254fdd1cfa04d8c87b377ece63537e1",
+      "title": "台湾甜妹",
+      "description": "A bright and cheerful young female voice with an enthusiastic tone, ideal for casual storytelling or social media content. Her delivery is clear and friendly, conveying a warm and engaging personality.",
+      "gender": "male",
+      "task_count": 390,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "今天想跟大家分享一个超级可爱的小故事，就是我和室友小美一起养的小猫咪。她是个特别特别黏人的小家伙，每天早上都要跳到我床上叫我起床，感觉好幸福呀！她真的就像我们的开心果一样。",
+          "task_id": "d9b833196e2e4be9ac10600806944e6f",
+          "audio_url": "https://platform.r2.fish.audio/task/d9b833196e2e4be9ac10600806944e6f.mp3"
+        }
+      ]
+    },
+    {
+      "id": "05e50c98f48845999d2d9d101d95958c",
+      "title": "派大星",
+      "description": "A deep, playful male voice with a slow and animated delivery, mimicking a goofy character style in Mandarin. It is well-suited for entertainment and character-driven narratives.",
+      "gender": "male",
+      "task_count": 384,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "呃，海绵宝宝，我今天试着数自己的手指头。一二三四五，咦，另一只手也是一样多诶。这太神奇了！等等，我是不是忘记了什么重要的事情？算了，我要去看看我的肚子是不是在唱歌。",
+          "task_id": "8845038f2cf546bc98922292db77160b",
+          "audio_url": "https://platform.r2.fish.audio/task/8845038f2cf546bc98922292db77160b.mp3"
+        }
+      ]
+    },
+    {
+      "id": "563e4322bbb34197aaecb66c9da130b5",
+      "title": "大雄声音",
+      "description": "This is a youthful and expressive male voice with an animated, slightly pleading quality, reminiscent of a classic cartoon character. It is well-suited for storytelling and entertainment purposes.",
+      "gender": "male",
+      "task_count": 384,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "静香，你说我为什么总是考试不及格呢？我真的很努力学习了啊。要是有一个神奇道具可以让我变聪明就好了。哆啦A梦，你能帮帮我吗？我只想要及格而已。",
+          "task_id": "e5cbb66070a54c1bbd702779ab87dd53",
+          "audio_url": "https://platform.r2.fish.audio/task/e5cbb66070a54c1bbd702779ab87dd53.mp3"
+        }
+      ]
+    },
+    {
+      "id": "12e3c399a00a4238aa84880f6291537b",
+      "title": "清甜御姐",
+      "description": "A gentle and intimate young female voice with a soft, breathy quality. The tone is romantic and highly expressive, ideal for character-driven storytelling or emotional narration.",
+      "gender": "male",
+      "task_count": 382,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "亲爱的，我好想告诉你，每次看到你的笑容，我的心就会融化。想牵着你的手漫步在街头，想依偎在你怀里听着你的心跳。这样的感觉，真的让我着迷。你知道吗，我真的很喜欢你。",
+          "task_id": "d15805b45e31443490643e803c5eaa51",
+          "audio_url": "https://platform.r2.fish.audio/task/d15805b45e31443490643e803c5eaa51.mp3"
+        }
+      ]
+    },
+    {
+      "id": "759a534610174c689209fc9221447d32",
+      "title": "大帝修仙云泽",
+      "description": "A deep, authoritative male voice with a calm and measured delivery, conveying a sense of wisdom and gravity. It is well-suited for character roles in fantasy settings, particularly for narration or dramatic storytelling.",
+      "gender": "male",
+      "task_count": 380,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "万物皆有其轨迹，在这修行的道路上，我看透了太多虚妄。一次次轮回，一次次求证，终究明白了真相所在。这便是天道的玄妙之处，不可强求，只可顺应。",
+          "task_id": "28f060b680474d8f888a0a4d7184e3c1",
+          "audio_url": "https://platform.r2.fish.audio/task/28f060b680474d8f888a0a4d7184e3c1.mp3"
+        }
+      ]
+    },
+    {
+      "id": "94db02d2a5674f93b5e8890420684e51",
+      "title": "小女孩",
+      "description": "小女孩声音",
+      "gender": "unknown",
+      "task_count": 379,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "妈妈今天带我去公园玩了，好开心呀！我和小朋友一起荡秋千，还看到好多小蝴蝶在花丛里飞来飞去。最喜欢的是吃了草莓味的冰淇淋，甜甜的，真好吃！",
+          "task_id": "1a7aff6165174d2ea5cf77f83d8f0019",
+          "audio_url": "https://platform.r2.fish.audio/task/1a7aff6165174d2ea5cf77f83d8f0019.mp3"
+        }
+      ]
+    },
+    {
+      "id": "0da1e00b71164d8cb3761c714b11da64",
+      "title": "小团团",
+      "description": "A young female voice with a high-pitched, energetic, and playful tone, characteristic of an anime character or social media influencer. Her delivery is expressive, animated, and conversational in Mandarin Chinese.",
+      "gender": "male",
+      "task_count": 373,
+      "samples": [
+        {
+          "id": "",
+          "title": "测试",
+          "text": "诶呀，你们怎么才来看我直播呀！我等得都快睡着了，臭猪们！今天我们一起打游戏哦，虽然我很菜，但是很可爱啊！不准嫌弃我，不然我就生气啦！来来来，排位开始咯，都给我认真点！",
+          "task_id": "c070199df03449de8ab7b27b9d8eb2b9",
+          "audio_url": "https://platform.r2.fish.audio/task/c070199df03449de8ab7b27b9d8eb2b9.mp3"
+        },
+        {
+          "id": "",
+          "title": "测试2",
+          "text": "童年的那些经典游戏（十二）",
+          "task_id": "36217b8f224e4521bfdb0f7730b511e2",
+          "audio_url": "https://platform.r2.fish.audio/task/36217b8f224e4521bfdb0f7730b511e2.mp3"
+        },
+        {
+          "id": "",
+          "title": "测试3",
+          "text": "60秒介绍一款好玩的FC游戏1 ",
+          "task_id": "eceeceba4d454e20ab77d21bc95677a1",
+          "audio_url": "https://platform.r2.fish.audio/task/eceeceba4d454e20ab77d21bc95677a1.mp3"
+        }
+      ]
+    },
+    {
+      "id": "6e5f8d8be1474229bfd13cfbc08f33ce",
+      "title": "宋晚凝（女主）",
+      "description": "A smooth and expressive young female voice with a somber, dramatic tone. The delivery is calm yet emotionally charged, featuring a slightly breathy quality suitable for storytelling or cinematic character roles.",
+      "gender": "male",
+      "task_count": 372,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "真讽刺啊，我费尽心思打造的完美婚姻，到头来却要用另一个自己来维系。纪言彻，你真的分得清楚吗？记忆可以复制，但那些深夜里的泪水和心痛，她永远不会懂。就让这场戏继续演下去吧。",
+          "task_id": "18786b0d0c9a46aba814294ecdca2d7f",
+          "audio_url": "https://platform.r2.fish.audio/task/18786b0d0c9a46aba814294ecdca2d7f.mp3"
+        }
+      ]
+    },
+    {
+      "id": "7769073f03574b97ab173a4a15b6bf5d",
+      "title": "皇上（严厉）",
+      "description": "A powerful and authoritative male voice with a deep, resonant tone, characteristic of a high-ranking historical figure. The delivery is stern, measured, and highly dramatic, making it ideal for cinematic storytelling and character roles.",
+      "gender": "male",
+      "task_count": 372,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "朕今日召你来，是要问问这宫里近来的风言风语。太子行事荒唐，朝中大臣议论纷纷，你身为大臣，可知内情？若有人胆敢蒙蔽朕，定斩不饶！你且好好想想再回话。",
+          "task_id": "66ca6fd015a64c138e8b860c74943a93",
+          "audio_url": "https://platform.r2.fish.audio/task/66ca6fd015a64c138e8b860c74943a93.mp3"
+        }
+      ]
+    },
+    {
+      "id": "054612fa1d904136a309ebeb68553a9b",
+      "title": "酒吧妹妹",
+      "description": "A calm and professional young female voice speaking Mandarin with a clear and measured delivery. The tone is smooth and authoritative, making it ideal for educational narration or instructional videos.",
+      "gender": "male",
+      "task_count": 370,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "酒吧灯光的两种设计方案，\n决定了酒吧审美上限。\n\n第一种层次分明，\n可以参考杭州这家酒吧，\n把软膜灯和吧台平行垂直，\n营造出柔和的环境光，\n配合水泥墙面，\n形成冷暖、明暗的对比，\n在龙头区域嵌入式灯带，\n照亮饮品出品区，\n让金属酒龙头的质感也呈现出来。\n\n 第二种控制灯光颜色，\n灯光颜色总共不超过三种，\n避免灯光过多显得杂乱。\n在三种颜色选择上可大胆采用撞色设计，\n既能突出品牌色，",
+          "task_id": "86c995c8aad04e498a0c7aeb3a0e97f1",
+          "audio_url": "https://platform.r2.fish.audio/task/86c995c8aad04e498a0c7aeb3a0e97f1.mp3"
+        }
+      ]
+    },
+    {
+      "id": "497283d50b314e81b349a4f1e5520b9c",
+      "title": "阿狸才不是受",
+      "description": "This is a youthful female voice with a high-pitched and energetic tone. It sounds playful and expressive, making it well-suited for character roles or casual social media narration.",
+      "gender": "male",
+      "task_count": 368,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "才不是因为想玩游戏才熬夜的呢！只是刚好有很多事情要处理而已啦～而且我可是很认真在打排位的，不像某些人只会坑队友。哼，反正我今天一定要上钻石！",
+          "task_id": "e6e3eaad3df9477e9d6d902bb11a91df",
+          "audio_url": "https://platform.r2.fish.audio/task/e6e3eaad3df9477e9d6d902bb11a91df.mp3"
+        }
+      ]
+    },
+    {
+      "id": "048e822f374f4088be7970125ac2d70f",
+      "title": "尘白禁区-安卡希雅",
+      "description": "A calm and serious female voice with a mature, steady tone and a cool, mysterious quality. It is well-suited for dramatic storytelling or sophisticated character roles in Mandarin.",
+      "gender": "male",
+      "task_count": 360,
+      "samples": [
+        {
+          "id": "",
+          "title": "我叫安卡希雅，仅此而已",
+          "text": "我叫安卡希雅，仅此而已",
+          "task_id": "3f925fedb02540d2933018e3c3081cb7",
+          "audio_url": "https://platform.r2.fish.audio/task/3f925fedb02540d2933018e3c3081cb7.wav"
+        }
+      ]
+    },
+    {
+      "id": "5b329a6724d446f58ce3d075f3da7d9c",
+      "title": "瞪眼赌神反派",
+      "description": "A deep and commanding middle-aged male voice with a serious and dramatic tone, perfect for intense storytelling. The voice is authoritative and confident, delivered in Mandarin Chinese.",
+      "gender": "male",
+      "task_count": 360,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "你觉得自己能赢？就凭这点筹码也敢在我面前耍威风？一亿美金，我现在就放在这里。你敢不敢跟？让我看看你到底有多大的胆量和实力。",
+          "task_id": "19dc383d11f94e52af317a7be7eff771",
+          "audio_url": "https://platform.r2.fish.audio/task/19dc383d11f94e52af317a7be7eff771.mp3"
+        }
+      ]
+    },
+    {
+      "id": "49bb324aa65b4403901436121d79c1b4",
+      "title": "曹焱兵",
+      "description": "A mature and authoritative male voice in Mandarin Chinese, characterized by a deep, calm, and measured delivery. It carries a sense of wisdom and discipline, making it ideal for educational content or character roles like a mentor or coach.",
+      "gender": "male",
+      "task_count": 357,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "修行之道，重在坚持。不要只追求表面的招式变化，而要领悟其中的真意。今日的困境，正是明日的机遇。静心凝神，方能见微知著。记住，实力的提升，来自内心的修炼。",
+          "task_id": "0db9ae7424a041c393a92906fe9915e6",
+          "audio_url": "https://platform.r2.fish.audio/task/0db9ae7424a041c393a92906fe9915e6.mp3"
+        }
+      ]
+    },
+    {
+      "id": "2ab054bfc76e4c0da98113bbf80a02a6",
+      "title": "瞪眼无间道梁朝伟",
+      "description": "A mature male voice with an authoritative and serious tone, delivered with a calm and measured pace in Mandarin. It is well-suited for dramatic character roles, storytelling, or professional narration.",
+      "gender": "male",
+      "task_count": 354,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "你以为我不知道你在想什么？做警察这一行，看人很准的。你现在觉得自己很聪明，但是我告诉你，在这个位置坐久了，什么都瞒不住。给你一个机会，说实话。",
+          "task_id": "4ecb331bed834074828e2a150021dea7",
+          "audio_url": "https://platform.r2.fish.audio/task/4ecb331bed834074828e2a150021dea7.mp3"
+        }
+      ]
+    },
+    {
+      "id": "1923b72f51734f15b2c94e8230f928dc",
+      "title": "中年女医生",
+      "description": "A mature, middle-aged male voice with a calm and professional tone, ideal for health-related educational content or informative advertisements. The delivery is clear, measured, and authoritative, conveying a sense of expertise and reliability.",
+      "gender": "male",
+      "task_count": 341,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "很多人都在问我高血压的问题。你是不是天天吃降压药，可血压还是居高不下？其实血压高主要是因为血管堵塞，血液循环不畅。光吃药物控制是治标不治本的。我今天教大家一个方法，很多患者用了都说特别有效。",
+          "task_id": "4dcfcc4276e64898afd60c27c7d1263b",
+          "audio_url": "https://platform.r2.fish.audio/task/4dcfcc4276e64898afd60c27c7d1263b.mp3"
+        }
+      ]
+    },
+    {
+      "id": "6d02ffed57bd44c48ee70ebe493d25f0",
+      "title": "画渣花小烙  副音一",
+      "description": "A gentle and warm young female voice with a friendly, conversational tone. She speaks Mandarin with a clear and smooth delivery, sounding caring and encouraging.",
+      "gender": "male",
+      "task_count": 340,
+      "samples": [
+        {
+          "id": "",
+          "title": "Default Sample",
+          "text": "熬夜玩手机的小伙伴们，眼睛都快瞎掉了还不休息啊？我知道追剧很上头，但也要为自己的身体考虑一下。现在放下手机去睡觉，明天精神会好很多哦。",
+          "task_id": "22f259b3a8b646b68f0ea6f8c3a16c2d",
+          "audio_url": "https://platform.r2.fish.audio/task/22f259b3a8b646b68f0ea6f8c3a16c2d.mp3"
+        }
+      ]
+    }
+  ]
+}
