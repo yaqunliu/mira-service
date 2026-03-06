@@ -1,7 +1,7 @@
 """make novel_id chapter_id nullable in creations
 
 Revision ID: make_nullable_001
-Revises: 20251230_add_audio_video_url
+Revises: d6cc165dc7f0
 Create Date: 2026-02-27 16:00:00.000000
 
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision = 'make_nullable_001'
-down_revision = '20251230_add_audio_video_url'
+down_revision = 'd6cc165dc7f0'
 branch_labels = None
 depends_on = None
 
