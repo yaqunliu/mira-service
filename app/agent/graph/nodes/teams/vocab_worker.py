@@ -39,7 +39,13 @@ class VocabWorkerNode(ReActWorkerNode):
         self.all_shots = []
 
     def get_system_prompt(self, state: ComicDramaState) -> str:
-        return """你是英语单词视频生成专家。
+        # 获取当前任务的 creation_uuid
+        creation_uuid = state.get("creation_uuid", "")
+        
+        return f"""你是英语单词视频生成专家。
+
+### 当前任务信息
+- 任务ID (creation_uuid): {creation_uuid}
 
 ### 你的职责
 为每个单词创建视频分镜，包括：
@@ -496,28 +502,29 @@ class VocabWorkerNode(ReActWorkerNode):
             return {"success": False, "message": "task_id not set"}
         
         @tool
-        async def export_final_video(creation_uuid: str = None, shot_ids: List[int] = None) -> Dict:
+        async def export_final_video(shot_ids: List[int]) -> Dict:
             """
             导出最终视频
             
             Args:
-                creation_uuid: 创建项目UUID
                 shot_ids: 分镜ID列表
+                
+            注意：creation_uuid 会自动从系统上下文获取，不需要手动传入
             """
             logger.info(f"[VocabWorker] 导出最终视频")
             
             from app.agent.tools.export_video_tool import export_final_video
             
             result = await export_final_video.ainvoke({
-                "creation_uuid": creation_uuid or self.creation_uuid,
-                "shot_ids": shot_ids or [s["shot_id"] for s in self.all_shots],
+                "creation_uuid": self.creation_uuid,
+                "shot_ids": shot_ids,
             })
             
             if self.task_id:
                 try:
                     from app.agent.triggers.vocab_trigger import _update_creation_status
                     video_url = result.get("video_url", "")[:100] if result.get("video_url") else "无"
-                    status_msg = f"调用工具 export_final_video: shot_ids={shot_ids or [s['shot_id'] for s in self.all_shots]}, video_url={video_url}"
+                    status_msg = f"调用工具 export_final_video: shot_ids={shot_ids}, video_url={video_url}"
                     await _update_creation_status(
                         creation_id=self.task_id,
                         current_step="导出视频",
