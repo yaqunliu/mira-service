@@ -14,7 +14,14 @@ from app.core.celery_app import celery_app
 from app.core.logger import logger
 
 
-@celery_app.task(bind=True, name="agent.generate_video")
+@celery_app.task(
+    bind=True, 
+    name="agent.generate_video",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
 def agent_generate_video_task(
     self,
     creation_uuid: str,
@@ -434,7 +441,16 @@ def _generate_video_by_mode(
     return video_url
 
 
-@celery_app.task(bind=True, name="agent_generate_single_shot_video", soft_time_limit=1800, time_limit=1900)
+@celery_app.task(
+    bind=True, 
+    name="agent_generate_single_shot_video", 
+    soft_time_limit=1800, 
+    time_limit=1900,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
 def agent_generate_single_shot_video_task(
     self,
     shot_id: int,

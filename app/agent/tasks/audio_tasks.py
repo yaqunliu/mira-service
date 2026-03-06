@@ -4,7 +4,14 @@ from app.core.celery_app import celery_app
 from app.core.logger import logger
 
 
-@celery_app.task(bind=True, name="agent.generate_audio")
+@celery_app.task(
+    bind=True, 
+    name="agent.generate_audio",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
 def agent_generate_audio_task(
     self,
     creation_uuid: str,
@@ -98,7 +105,14 @@ def agent_generate_audio_task(
         }
 
 
-@celery_app.task(bind=True, name="agent.generate_shot_audio_batch")
+@celery_app.task(
+    bind=True, 
+    name="agent.generate_shot_audio_batch",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
 def agent_generate_shot_audio_batch_task(
     self,
     creation_uuid: str,

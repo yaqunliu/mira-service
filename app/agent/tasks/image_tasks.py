@@ -202,7 +202,14 @@ def _download_and_upload_shot_image(
 
 # ==================== 角色图片生成 ====================
 
-@celery_app.task(bind=True, name="agent.generate_character_image")
+@celery_app.task(
+    bind=True, 
+    name="agent.generate_character_image",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
 def agent_generate_character_image_task(
     self,
     creation_uuid: str,
@@ -349,7 +356,14 @@ def agent_generate_character_image_task(
 
 # ==================== 场景图片生成 ====================
 
-@celery_app.task(bind=True, name="agent.generate_scene_image")
+@celery_app.task(
+    bind=True, 
+    name="agent.generate_scene_image",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
 def agent_generate_scene_image_task(
     self,
     creation_uuid: str,
@@ -722,7 +736,14 @@ def agent_generate_single_shot_image_task(
 
 # ==================== 批量分镜图片生成 ====================
 
-@celery_app.task(bind=True, name="agent_generate_shot_images_task")
+@celery_app.task(
+    bind=True, 
+    name="agent_generate_shot_images_task",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
 def agent_generate_shot_images_task(self, creation_uuid: str) -> Dict[str, Any]:
     """
     批量生成分镜图片

@@ -70,6 +70,26 @@ class ReActWorkerNode(ABC):
         Returns:
             更新后的状态
         """
+        import asyncio
+        
+        max_attempts = 3
+        delay_seconds = 3.0
+        
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await self._run_impl(state)
+            except Exception as e:
+                if attempt < max_attempts:
+                    logger.warning(f"[{self.node_name}] 第 {attempt} 次执行失败: {e}，{delay_seconds}秒后重试...")
+                    await asyncio.sleep(delay_seconds)
+                else:
+                    logger.error(f"[{self.node_name}] 重试 {max_attempts} 次后仍失败: {e}")
+                    raise
+    
+    async def _run_impl(self, state: ComicDramaState) -> Dict[str, Any]:
+        """
+        ReAct 循环的实际实现
+        """
         logger.info(f"[{self.node_name}] 开始执行 (ReAct={self.USE_REACT})")
         
         try:
@@ -201,10 +221,29 @@ class ReActWorkerNode(ABC):
     
     async def _execute_tool(self, tools: List, tool_name: str, tool_args: Dict[str, Any]) -> Any:
         """执行指定的工具"""
+        import json
+        
+        # 预处理参数：解析 JSON 字符串
+        processed_args = {}
+        for key, value in tool_args.items():
+            if isinstance(value, str):
+                # 处理转义字符：将 \\n 替换为 \n
+                processed_value_str = value.replace('\\n', '\n')
+                
+                # 尝试解析 JSON 字符串
+                try:
+                    processed_value = json.loads(processed_value_str)
+                    processed_args[key] = processed_value
+                except (json.JSONDecodeError, TypeError):
+                    # 不是 JSON 字符串，保持原值
+                    processed_args[key] = value
+            else:
+                processed_args[key] = value
+        
         for tool in tools:
             if tool.name == tool_name:
                 try:
-                    result = await tool.ainvoke(tool_args)
+                    result = await tool.ainvoke(processed_args)
                     return result
                 except Exception as e:
                     logger.error(f"[{self.node_name}] 工具 {tool_name} 执行失败: {e}")

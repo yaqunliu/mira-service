@@ -9,6 +9,7 @@ Vocab Worker - 英语单词视频生成 Worker (ReAct Agent 版本)
 5. 导出最终视频
 """
 
+import asyncio
 from typing import Dict, Any, List, Optional
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -87,7 +88,7 @@ class VocabWorkerNode(ReActWorkerNode):
 ```
 4【重要】图片提示词格式：
 绚烂的多彩背景，没有固定主体，只有颜色交织。
-**文字位置**：中心位置用白色非衬线体单词写着【英文单词】，单词下面是翻译。
+**文字位置**：中心位置用白色非衬线体单词写着「英文单词」，单词下面是翻译。
 【如果是名词，右上角出现圆圈（白色背景），圆圈中是具体的名词物品简笔画】。
 文字全程固定出现在视频中，不要消失或移动。
 
@@ -98,12 +99,12 @@ class VocabWorkerNode(ReActWorkerNode):
 
 画面：详细描述整个视频的画面内容，包括角色动作、表情、场景变化等。
 
-背景音：描述背景音乐风格，如欢快钢琴曲、梦幻音乐等。
+背景音：描述背景音乐风格，如欢快钢琴曲、梦幻音乐等。背景音不高，不要超过 50% 音量。不要盖过朗读音量。
 
 旁白朗读：单词朗读在视频开始时立即出现。格式：
-- 单词第1遍：如 "Monday"
-- 单词第2遍：如 "Monday"
-- 翻译：如 "星期一"
+- 单词第1遍：如 「Monday」
+- 单词第2遍：如 「Monday」
+- 翻译：如 "星期一" 只读一遍就好，不要重复朗读。
 ```
 
 #### 分镜2：句子场景图 (sentence_scene)
@@ -114,7 +115,7 @@ class VocabWorkerNode(ReActWorkerNode):
 图片内容描述：详细描述出现的场景、地点、人物、动作等。
 
 【重要】视频提示词格式：
-**文字位置**：句子 "..." 固定显示在视频顶部，全程不消失。
+**文字位置**：句子 「...」 出现并固定显示在视频顶部，全程不消失。
 
 全局氛围：明亮欢快学校场景，蓝天白云，动漫风格，迪士尼/皮克斯风格。
 
@@ -128,6 +129,7 @@ class VocabWorkerNode(ReActWorkerNode):
 ### 重要提示
 - 单词展示视频时长固定为 4 秒
 - 句子场景视频时长 4 秒
+- 书写提示词的时候 单词和句子用 「...」 包裹
 - 必须使用卡通/动画风格（如迪士尼/皮克斯风格），不要写实风格
 - 组句子时：根据单词含义选择正确的动词搭配，确保语法正确
 - 星期、月份等词前不加冠词
@@ -201,12 +203,12 @@ class VocabWorkerNode(ReActWorkerNode):
             }
         
         @tool
-        async def create_shots_batch(shots_data: List[Dict]) -> Dict:
+        async def create_shots_batch(shots_data) -> Dict:
             """
             批量创建分镜
             
             Args:
-                shots_data: 分镜数据列表，每个包含:
+                shots_data: 分镜数据列表（可以是 JSON 字符串或列表），每个包含:
                     - word: 单词
                     - translation: 中文翻译
                     - sentence: 英文句子
@@ -220,6 +222,7 @@ class VocabWorkerNode(ReActWorkerNode):
             Returns:
                 {"success": True, "shot_ids": [1,2,3...], "count": N}
             """
+            # 解析 JSON 字符串
             if isinstance(shots_data, str):
                 try:
                     import json
@@ -228,6 +231,10 @@ class VocabWorkerNode(ReActWorkerNode):
                 except Exception as e:
                     logger.error(f"[VocabWorker] 解析 shots_data 失败: {e}")
                     return {"error": f"解析 shots_data 失败: {e}"}
+            
+            # 确保是列表
+            if not isinstance(shots_data, list):
+                return {"error": f"shots_data 必须是列表类型"}
             
             logger.info(f"[VocabWorker] 批量创建分镜: {len(shots_data)} 个")
             
@@ -270,12 +277,12 @@ class VocabWorkerNode(ReActWorkerNode):
             return {"success": True, "shot_ids": shot_ids, "count": len(shot_ids)}
         
         @tool
-        async def save_image_prompts_batch(shots_data: List[Dict]) -> Dict:
+        async def save_image_prompts_batch(shots_data) -> Dict:
             """
             批量保存图片提示词
             
             Args:
-                shots_data: 提示词数据列表，每个包含:
+                shots_data: 提示词数据列表（可以是 JSON 字符串或列表），每个包含:
                     - shot_id: 分镜ID
                     - image_type: 图片类型 (word_display 或 sentence_scene)
                     - prompt: 图片提示词
@@ -289,6 +296,9 @@ class VocabWorkerNode(ReActWorkerNode):
                     shots_data = json.loads(shots_data)
                 except Exception as e:
                     return {"error": f"解析 shots_data 失败: {e}"}
+            
+            if not isinstance(shots_data, list):
+                return {"error": f"shots_data 必须是列表类型"}
             
             logger.info(f"[VocabWorker] 批量保存图片提示词: {len(shots_data)} 个")
             
@@ -360,12 +370,12 @@ class VocabWorkerNode(ReActWorkerNode):
             return {"success": True, "count": len(shot_ids)}
         
         @tool
-        async def save_video_prompts_batch(shots_data: List[Dict]) -> Dict:
+        async def save_video_prompts_batch(shots_data) -> Dict:
             """
             批量保存视频提示词
             
             Args:
-                shots_data: 提示词数据列表，每个包含:
+                shots_data: 提示词数据列表（可以是 JSON 字符串或列表），每个包含:
                     - shot_id: 分镜ID
                     - prompt: 视频提示词
             
@@ -378,6 +388,9 @@ class VocabWorkerNode(ReActWorkerNode):
                     shots_data = json.loads(shots_data)
                 except Exception as e:
                     return {"error": f"解析 shots_data 失败: {e}"}
+            
+            if not isinstance(shots_data, list):
+                return {"error": f"shots_data 必须是列表类型"}
             
             logger.info(f"[VocabWorker] 批量保存视频提示词: {len(shots_data)} 个")
             
