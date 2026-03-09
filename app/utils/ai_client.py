@@ -1398,6 +1398,8 @@ class AIClient:
         if not self.sora2_api_key or not self.sora2_base_url:
             raise ValueError("Sora2 API配置未设置")
 
+        if not image_url:
+            raise ValueError("图片链接不存在")
         # 验证duration参数
         if duration not in [4, 8, 12]:
             logger.warning(f"不支持的视频时长 {duration}秒，使用默认值 4秒")
@@ -1531,9 +1533,9 @@ class AIClient:
             except requests.exceptions.RequestException as e:
                 logger.warning(f"查询Sora2任务状态失败: {str(e)}，将重试")
                 status_query_retries += 1
-                if status_query_retries >= 5:
+                if status_query_retries >= 7:
                     logger.error(f"查询Sora2任务状态失败超过5次，任务ID: {task_id}")
-                    raise Exception(f"查询Sora2任务状态失败（已重试5次）: {str(e)}")
+                    raise Exception(f"查询Sora2任务状态失败（已重试7次）: {str(e)}")
                 time.sleep(self.sora2_retry_delay)
                 continue
 

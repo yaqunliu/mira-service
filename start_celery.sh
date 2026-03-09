@@ -56,7 +56,7 @@ echo ""
 # worker 启动 worker 进程
 # -l INFO 设置日志级别为 INFO
 # --pool=solo 使用单进程模式（可选，如果需要多进程可以改为 prefork）
-uv run celery -A app.core.celery_app.app worker -l INFO
+uv run celery -A app.core.celery_app.app worker -l INFO --pool=prefork --concurrency=4
 
 # 如果 worker 正常退出，执行清理
 cleanup

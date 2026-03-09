@@ -419,14 +419,14 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
         db.close()
 
 
-@celery_app.task(bind=True, name="generate_single_shot_video_task", soft_time_limit=1800, time_limit=1900)
+@celery_app.task(bind=True, name="generate_single_shot_video_task", soft_time_limit=3600, time_limit=3700)
 def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None, model_name: str = None, last_frame_image_url: str = None, separate_audio: bool = None):
     """
     单个分镜视频生成任务
 
     时间限制：
-    - soft_time_limit: 1800秒 (30分钟) - 超时后抛出SoftTimeLimitExceeded异常
-    - time_limit: 1900秒 (约32分钟) - 硬性终止任务
+    - soft_time_limit: 3600秒 (1小时) - 超时后抛出SoftTimeLimitExceeded异常
+    - time_limit: 3700秒 (约1小时) - 硬性终止任务
 
     Args:
         shot_id: 分镜ID
@@ -909,14 +909,14 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
         db.close()
 
 
-@celery_app.task(bind=True, name="generate_all_videos_task", soft_time_limit=7200, time_limit=7300)
+@celery_app.task(bind=True, name="generate_all_videos_task", soft_time_limit=10800, time_limit=10900)
 def generate_all_videos_task(self, creation_id: int, user_id: int):
     """
     为作品中所有分镜批量生成视频
 
     时间限制：
-    - soft_time_limit: 7200秒 (2小时) - 超时后抛出SoftTimeLimitExceeded异常
-    - time_limit: 7300秒 (约2小时) - 硬性终止任务
+    - soft_time_limit: 10800秒 (3小时) - 超时后抛出SoftTimeLimitExceeded异常
+    - time_limit: 10900秒 (约3小时) - 硬性终止任务
 
     流程：
     1. 检查每个shot是否有video_prompt，没有则先生成

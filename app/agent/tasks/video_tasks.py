@@ -444,8 +444,8 @@ def _generate_video_by_mode(
 @celery_app.task(
     bind=True, 
     name="agent_generate_single_shot_video", 
-    soft_time_limit=1800, 
-    time_limit=1900,
+    soft_time_limit=3600, 
+    time_limit=3700,
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_backoff_max=60,

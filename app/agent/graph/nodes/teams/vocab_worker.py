@@ -69,6 +69,61 @@ class VocabWorkerNode(ReActWorkerNode):
 - update_task_progress: 更新任务进度
 - export_final_video: 导出最终视频
 
+### 失败重试和重新生成工具
+- get_shot_status: 获取所有分镜的生成状态（查看哪些成功/失败）
+- retry_failed_shots: 重试失败的分镜（stage="image" 或 "video"）
+- regenerate_shot_image: 重新生成指定分镜的图片（可提供新提示词）
+- regenerate_shot_video: 重新生成指定分镜的视频（可提供新提示词）
+- continue_from_current_stage: 断点续传（从当前阶段继续执行）
+
+### 失败处理流程
+
+**当用户说"图片生成失败了"、"视频生成失败了"、"重试"、"继续生成"时：**
+
+1. **首先调用 get_shot_status 查看当前分镜状态**
+2. **根据状态决定下一步：**
+   - 如果有失败的图片 → 调用 retry_failed_shots(stage="image")
+   - 如果有失败的视频 → 调用 retry_failed_shots(stage="video")
+   - 如果不确定状态 → 调用 continue_from_current_stage 自动继续
+
+**情况1：图片生成失败**
+```
+用户: "图片生成失败了" 或 "重试失败的图片"
+AI: 
+  1. 调用 get_shot_status 查看状态
+  2. 调用 retry_failed_shots(stage="image") 重试
+  3. 返回结果给用户
+```
+
+**情况2：视频生成失败**
+```
+用户: "视频生成失败了" 或 "重试失败的视频"
+AI:
+  1. 调用 get_shot_status 查看状态
+  2. 调用 retry_failed_shots(stage="video") 重试
+  3. 返回结果给用户
+```
+
+**情况3：流程中断后继续**
+```
+用户: "继续生成" 或 "从当前阶段继续"
+AI:
+  调用 continue_from_current_stage 自动从当前阶段继续执行
+  - 如果有分镜但没有图片 → 生成图片
+  - 如果有图片但没有视频 → 生成视频
+  - 如果有视频 → 导出最终视频
+```
+
+**情况4：用户对某个分镜不满意**
+```
+用户: "重新生成第3个分镜的图片" 或 "第5个分镜视频不好看"
+AI:
+  调用 regenerate_shot_image(shot_id=3) 或 regenerate_shot_video(shot_id=5)
+  可以提供新的提示词来改进生成效果
+```
+
+**重要：不要直接显示配置卡片让用户重新配置参数，而是使用重试工具解决问题！**
+
 ### 图片生成提示词格式
 
 #### 单词展示图 (word_display)
@@ -90,12 +145,12 @@ class VocabWorkerNode(ReActWorkerNode):
 绚烂的多彩背景，没有固定主体，只有颜色交织。
 **文字位置**：中心位置用白色非衬线体单词写着「英文单词」，单词下面是翻译。
 【如果是名词，右上角出现圆圈（白色背景），圆圈中是具体的名词物品简笔画】。
-文字全程固定出现在视频中，不要消失或移动。
+文字全程固定出现在视频中，不要消失或移动。纯文字格式无括号
 
 【重要】视频提示词格式：
 **文字位置**：单词和翻译固定显示在视频中央，全程不消失。
 
-全局氛围：绚烂多彩背景，梦幻渐变色调，迪士尼/皮克斯动画风格。
+全局氛围：绚烂多彩背景，梦幻渐变色调，迪士尼/皮克斯动画风格。画面多彩的背景变换，但是亮度要稳定，不要闪烁。
 
 画面：详细描述整个视频的画面内容，包括角色动作、表情、场景变化等。
 
@@ -118,7 +173,7 @@ class VocabWorkerNode(ReActWorkerNode):
 
 全局氛围：明亮欢快学校场景，蓝天白云，动漫风格，迪士尼/皮克斯风格。
 
-画面：详细描述整个视频的画面内容如：什么人物在做什么事情。包括场景、人物、动作、表情变化等。不要描述成静态画面。
+画面：详细描述整个视频的画面内容如：什么人物在做什么事情。包括场景、人物、动作、表情变化等。不要描述成静态画面。还有画面需要人物动作流畅。
 
 背景音：描述背景音乐和环境音，如学校环境音、欢快钢琴背景音乐等。
 
@@ -549,6 +604,290 @@ class VocabWorkerNode(ReActWorkerNode):
             
             return result
         
+        @tool
+        async def get_shot_status() -> Dict:
+            """
+            获取所有分镜的生成状态
+            
+            Returns:
+                {"shots": [{"shot_id": 1, "word": "apple", "status": "completed", "image_url": "...", "video_url": "..."}]}
+            """
+            from app.db.base import _get_async_session_factory
+            from app.models.shot import Shot
+            from sqlalchemy import select
+            
+            db = _get_async_session_factory()()
+            try:
+                result = await db.execute(
+                    select(Shot).where(Shot.creation_id == self.creation_id)
+                )
+                shots = result.scalars().all()
+                
+                shot_list = []
+                for s in shots:
+                    extra = s.extra_data or {}
+                    shot_list.append({
+                        "shot_id": s.shot_id,
+                        "word": extra.get("word", ""),
+                        "translation": extra.get("translation", ""),
+                        "shot_type": extra.get("shot_type", ""),
+                        "status": s.status,
+                        "has_image": bool(s.image_url),
+                        "has_video": bool(s.video_url),
+                        "image_url": s.image_url,
+                        "video_url": s.video_url,
+                    })
+                
+                logger.info(f"[VocabWorker] 获取分镜状态: {len(shot_list)} 个分镜")
+                
+                return {"shots": shot_list, "count": len(shot_list)}
+            finally:
+                await db.close()
+        
+        @tool
+        async def retry_failed_shots(stage: str = "image") -> Dict:
+            """
+            重试失败的分镜
+            
+            Args:
+                stage: 重试阶段 ("image" 或 "video")
+            
+            Returns:
+                {"success": True, "retried_count": N, "shot_ids": [...]}
+            """
+            from app.db.base import _get_async_session_factory
+            from app.models.shot import Shot
+            from sqlalchemy import select
+            
+            db = _get_async_session_factory()()
+            try:
+                result = await db.execute(
+                    select(Shot).where(Shot.creation_id == self.creation_id)
+                )
+                shots = result.scalars().all()
+                
+                failed_shot_ids = []
+                for s in shots:
+                    if stage == "image":
+                        if not s.image_url or s.status == "failed":
+                            failed_shot_ids.append(s.shot_id)
+                            s.status = "pending"
+                            await db.commit()
+                    elif stage == "video":
+                        if not s.video_url or s.status == "failed":
+                            failed_shot_ids.append(s.shot_id)
+                            s.status = "pending"
+                            await db.commit()
+                
+                logger.info(f"[VocabWorker] 重试失败分镜: stage={stage}, count={len(failed_shot_ids)}")
+                
+                if not failed_shot_ids:
+                    return {"success": True, "retried_count": 0, "message": "没有失败的分镜"}
+                
+                if stage == "image":
+                    for shot_id in failed_shot_ids:
+                        from app.tasks.shot_task import generate_single_shot_image_task
+                        generate_single_shot_image_task.delay(
+                            shot_id=shot_id,
+                            creation_id=self.creation_id,
+                            frame_type="start"
+                        )
+                    await self._wait_images_generated(failed_shot_ids)
+                elif stage == "video":
+                    for shot_id in failed_shot_ids:
+                        from app.tasks.step8_video_gen_task import generate_single_shot_video_task
+                        generate_single_shot_video_task.delay(
+                            shot_id=shot_id,
+                            creation_id=self.creation_id,
+                            model_name=self.config.get("video_model", "sora-2"),
+                            separate_audio=False,
+                        )
+                    await self._wait_videos_generated(failed_shot_ids)
+                
+                return {"success": True, "retried_count": len(failed_shot_ids), "shot_ids": failed_shot_ids}
+            finally:
+                await db.close()
+        
+        @tool
+        async def regenerate_shot_image(shot_id: int, new_prompt: str = None) -> Dict:
+            """
+            重新生成指定分镜的图片
+            
+            Args:
+                shot_id: 分镜ID
+                new_prompt: 新的图片提示词（可选，不提供则使用原有提示词）
+            
+            Returns:
+                {"success": True, "shot_id": N}
+            """
+            from app.db.base import _get_async_session_factory
+            from app.models.shot import Shot
+            from sqlalchemy import select
+            
+            logger.info(f"[VocabWorker] 重新生成图片: shot_id={shot_id}")
+            
+            db = _get_async_session_factory()()
+            try:
+                result = await db.execute(
+                    select(Shot).where(Shot.shot_id == shot_id)
+                )
+                shot = result.scalar_one_or_none()
+                
+                if not shot:
+                    return {"success": False, "error": f"分镜不存在: shot_id={shot_id}"}
+                
+                if new_prompt:
+                    shot.image_prompt = new_prompt
+                    await db.commit()
+                
+                shot.status = "pending"
+                shot.image_url = None
+                await db.commit()
+                
+                from app.tasks.shot_task import generate_single_shot_image_task
+                generate_single_shot_image_task.delay(
+                    shot_id=shot_id,
+                    creation_id=self.creation_id,
+                    frame_type="start"
+                )
+                
+                await self._wait_images_generated([shot_id])
+                
+                return {"success": True, "shot_id": shot_id}
+            finally:
+                await db.close()
+        
+        @tool
+        async def regenerate_shot_video(shot_id: int, new_prompt: str = None, model: str = "sora-2") -> Dict:
+            """
+            重新生成指定分镜的视频
+            
+            Args:
+                shot_id: 分镜ID
+                new_prompt: 新的视频提示词（可选，不提供则使用原有提示词）
+                model: 视频生成模型
+            
+            Returns:
+                {"success": True, "shot_id": N}
+            """
+            from app.db.base import _get_async_session_factory
+            from app.models.shot import Shot
+            from sqlalchemy import select
+            from sqlalchemy.orm.attributes import flag_modified
+            
+            logger.info(f"[VocabWorker] 重新生成视频: shot_id={shot_id}")
+            
+            db = _get_async_session_factory()()
+            try:
+                result = await db.execute(
+                    select(Shot).where(Shot.shot_id == shot_id)
+                )
+                shot = result.scalar_one_or_none()
+                
+                if not shot:
+                    return {"success": False, "error": f"分镜不存在: shot_id={shot_id}"}
+                
+                if new_prompt:
+                    extra = shot.extra_data or {}
+                    extra["video_prompt"] = new_prompt
+                    shot.extra_data = extra
+                    flag_modified(shot, "extra_data")
+                
+                shot.status = "pending"
+                shot.video_url = None
+                await db.commit()
+                
+                from app.tasks.step8_video_gen_task import generate_single_shot_video_task
+                generate_single_shot_video_task.delay(
+                    shot_id=shot_id,
+                    creation_id=self.creation_id,
+                    model_name=model,
+                    separate_audio=False,
+                )
+                
+                await self._wait_videos_generated([shot_id])
+                
+                return {"success": True, "shot_id": shot_id}
+            finally:
+                await db.close()
+        
+        @tool
+        async def continue_from_current_stage() -> Dict:
+            """
+            从当前阶段继续执行（断点续传）
+            
+            根据当前分镜状态自动判断：
+            - 如果有分镜但没有图片 → 生成图片
+            - 如果有图片但没有视频 → 生成视频
+            - 如果有视频 → 导出最终视频
+            
+            Returns:
+                {"success": True, "stage": "image/video/export", "message": "..."}
+            """
+            from app.db.base import _get_async_session_factory
+            from app.models.shot import Shot
+            from sqlalchemy import select
+            
+            logger.info(f"[VocabWorker] 断点续传检查")
+            
+            db = _get_async_session_factory()()
+            try:
+                result = await db.execute(
+                    select(Shot).where(Shot.creation_id == self.creation_id)
+                )
+                shots = result.scalars().all()
+                
+                if not shots:
+                    return {"success": False, "error": "没有分镜，请先创建分镜"}
+                
+                shot_ids = [s.shot_id for s in shots]
+                shots_without_image = [s.shot_id for s in shots if not s.image_url]
+                shots_without_video = [s.shot_id for s in shots if not s.video_url]
+                
+                logger.info(f"[VocabWorker] 分镜状态: 总数={len(shots)}, 无图片={len(shots_without_image)}, 无视频={len(shots_without_video)}")
+                
+                if shots_without_image:
+                    logger.info(f"[VocabWorker] 继续生成图片: {len(shots_without_image)} 个")
+                    for shot_id in shots_without_image:
+                        from app.tasks.shot_task import generate_single_shot_image_task
+                        generate_single_shot_image_task.delay(
+                            shot_id=shot_id,
+                            creation_id=self.creation_id,
+                            frame_type="start"
+                        )
+                    await self._wait_images_generated(shots_without_image)
+                    return {"success": True, "stage": "image", "message": f"已生成 {len(shots_without_image)} 个图片"}
+                
+                if shots_without_video:
+                    logger.info(f"[VocabWorker] 继续生成视频: {len(shots_without_video)} 个")
+                    for shot_id in shots_without_video:
+                        from app.tasks.step8_video_gen_task import generate_single_shot_video_task
+                        generate_single_shot_video_task.delay(
+                            shot_id=shot_id,
+                            creation_id=self.creation_id,
+                            model_name=self.config.get("video_model", "sora-2"),
+                            separate_audio=False,
+                        )
+                    await self._wait_videos_generated(shots_without_video)
+                    
+                    logger.info(f"[VocabWorker] 视频生成完成，自动导出")
+                    from app.agent.tools.export_video_tool import export_final_video
+                    result = await export_final_video.ainvoke({
+                        "creation_uuid": self.creation_uuid,
+                        "shot_ids": shot_ids,
+                    })
+                    return {"success": True, "stage": "video", "message": f"已生成 {len(shots_without_video)} 个视频", "export_result": result}
+                
+                logger.info(f"[VocabWorker] 所有分镜已完成，导出最终视频")
+                from app.agent.tools.export_video_tool import export_final_video
+                result = await export_final_video.ainvoke({
+                    "creation_uuid": self.creation_uuid,
+                    "shot_ids": shot_ids,
+                })
+                return {"success": True, "stage": "export", "message": "导出完成", "export_result": result}
+            finally:
+                await db.close()
+        
         return [
             get_character_info,
             create_shots_batch,
@@ -558,6 +897,11 @@ class VocabWorkerNode(ReActWorkerNode):
             generate_videos_batch,
             update_task_progress,
             export_final_video,
+            get_shot_status,
+            retry_failed_shots,
+            regenerate_shot_image,
+            regenerate_shot_video,
+            continue_from_current_stage,
         ]
 
     async def _create_single_shot(self, shot_data: Dict) -> int:
@@ -831,6 +1175,7 @@ class VocabWorkerNode(ReActWorkerNode):
         """处理最终结果"""
         logger.info(f"[{self.node_name}] 处理最终结果")
         
+        # 检查是否有失败的工具调用
         failed_tools = []
         for result in tool_results:
             tool_result = result.get("result", {})
@@ -840,9 +1185,71 @@ class VocabWorkerNode(ReActWorkerNode):
                     "error": tool_result.get("error")
                 })
         
+        # 检查是否有失败的分镜（图片或视频生成失败）
+        has_failed_shots = False
+        failed_shots_info = []
+        
+        for result in tool_results:
+            tool_name = result.get("tool", "")
+            tool_result = result.get("result", {})
+            
+            # 检查 generate_images_batch 或 generate_videos_batch 的结果
+            if tool_name in ["generate_images_batch", "generate_videos_batch"]:
+                if tool_result.get("failed_count", 0) > 0 or tool_result.get("error"):
+                    has_failed_shots = True
+                    failed_shots_info.append({
+                        "stage": "image" if "image" in tool_name else "video",
+                        "count": tool_result.get("failed_count", 0),
+                        "error": tool_result.get("error", "")
+                    })
+        
+        # 如果有失败的分镜，返回失败状态并提示用户可以重试
+        if has_failed_shots:
+            logger.warning(f"[{self.node_name}] 有分镜生成失败: {failed_shots_info}")
+            
+            if self.task_id:
+                try:
+                    from app.agent.triggers.vocab_trigger import _update_creation_status
+                    await _update_creation_status(
+                        creation_id=self.task_id,
+                        status="failed",
+                        progress=0,
+                        current_step=f"部分分镜生成失败，可以使用重试工具继续",
+                    )
+                except Exception as e:
+                    logger.error(f"[{self.node_name}] 更新失败状态失败: {e}")
+            
+            # 构建失败信息
+            failed_stages = [info["stage"] for info in failed_shots_info]
+            has_image_failed = "image" in failed_stages
+            has_video_failed = "video" in failed_stages
+            
+            # 构建重试选项
+            retry_options = []
+            if has_image_failed:
+                retry_options.append({"id": "retry_image", "label": "🔄 重试失败的图片", "value": "重试失败的图片"})
+            if has_video_failed:
+                retry_options.append({"id": "retry_video", "label": "🔄 重试失败的视频", "value": "重试失败的视频"})
+            retry_options.append({"id": "continue", "label": "▶️ 继续生成", "value": "继续生成"})
+            retry_options.append({"id": "check_status", "label": "📊 查看分镜状态", "value": "查看分镜状态"})
+            
+            return {
+                "success": False,
+                "error": f"部分分镜生成失败: {failed_shots_info}",
+                "failed_shots": failed_shots_info,
+                "can_retry": True,
+                "retry_tools": ["retry_failed_shots", "continue_from_current_stage"],
+                "message": "部分分镜生成失败，请选择操作：",
+                "board_actions": [{
+                    "type": "retry_actions",
+                    "message": f"检测到 {len(failed_shots_info)} 个分镜生成失败。您可以选择重试失败的资源，或者继续生成流程。",
+                    "options": retry_options,
+                }],
+            }
+        
+        # 如果有工具执行失败
         if failed_tools and self.task_id:
             error_msg = "; ".join([f"{t['tool']}: {t['error'][:30]}" for t in failed_tools])
-            # current_step 字段最大100字符，需要截断
             error_msg = error_msg[:100]
             logger.error(f"[{self.node_name}] 有工具执行失败: {failed_tools}")
             
@@ -861,6 +1268,16 @@ class VocabWorkerNode(ReActWorkerNode):
                 "success": False,
                 "error": f"工具执行失败: {error_msg}",
                 "failed_tools": failed_tools,
+                "can_retry": True,
+                "message": "执行过程中出现错误，请选择操作：",
+                "board_actions": [{
+                    "type": "retry_actions",
+                    "message": f"执行过程中出现错误: {error_msg}。您可以尝试继续生成，或者查看分镜状态了解当前进度。",
+                    "options": [
+                        {"id": "continue", "label": "▶️ 继续生成", "value": "继续生成"},
+                        {"id": "check_status", "label": "📊 查看分镜状态", "value": "查看分镜状态"},
+                    ],
+                }],
             }
         
         video_url = ""
