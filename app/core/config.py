@@ -104,10 +104,10 @@ class Settings(BaseSettings):
     LLM_MODEL_PROMPT_GENERATION: str = "Qwen/Qwen-Plus"  # 提示词生成模型
 
     # 图片生成模型配置
-    IMAGE_MODEL_TEXT_TO_IMAGE: str = "doubao-seedream-4.5"  # 文生图模型（用于生成角色图片）
-    IMAGE_MODEL_IMAGE_TO_IMAGE: str = "doubao-seedream-4.5"  # 图生图模型（用于生成分镜图片）
+    IMAGE_MODEL_TEXT_TO_IMAGE: str = "doubao-seedream-5-0-260128"  # 文生图模型（用于生成角色图片）
+    IMAGE_MODEL_IMAGE_TO_IMAGE: str = "doubao-seedream-5-0-260128"  # 图生图模型（用于生成分镜图片）
     # 向后兼容：如果新配置未设置，使用旧配置
-    IMAGE_MODEL_NAME: str = "doubao-seedream-4.5"  # 旧配置（已废弃，保留用于向后兼容）
+    IMAGE_MODEL_NAME: str = "doubao-seedream-5-0-260128"  # 旧配置（已废弃，保留用于向后兼容）
     
     # 火山云AI配置
     ARK_API_KEY: str = ""  # 火山云AI API密钥
@@ -161,6 +161,9 @@ class Settings(BaseSettings):
     FISH_AUDIO_DEFAULT_VOICE_ID: str = ""  # 默认语音模型 ID，如 "54a5170264694bfc8e9ad98df7bd89c3" (丁真)
     FISH_AUDIO_DEFAULT_MODEL: str = "s1"  # 默认 TTS 模型，可选值：s1, speech-1.6, speech-1.5
     
+    # IndexTTS 配置（Modelverse 平台，使用 OPENAI_API_KEY 作为 API Key）
+    INDEX_TTS_DEFAULT_VOICE: str = "novel"  # 默认音色，内置音色：jack_cheng, sales_voice, crystla_liu, stephen_chow, xiaoyueyue, mkas, entertain, novel, movie
+    
     # 字体配置
     FONT_DIR: str = "static/fonts"  # 字体文件本地存储目录
     SUBTITLE_FONT_URL: str = "https://novel-agent.cn-sh2.ufileos.com/font/black.ttf"  # 字幕字体下载地址
@@ -195,7 +198,7 @@ class Settings(BaseSettings):
     
     # 模型价格配置（JSON格式字符串）
     MODEL_PRICES_LLM: str = '{"Qwen/Qwen-Plus": {"input": 0.8, "output": 2.0}}'  # LLM模型价格：输入/输出价格（元/百万tokens）
-    MODEL_PRICES_IMAGE: str = '{"gemini-3-pro-image-preview": 0.5, "gemini-2.5-flash-image": 0.1, "doubao-seedream-4.5": 0.5, "black-forest-labs/flux-kontext-pro/multi": 0.35}'  # 图片模型价格：元/张（Seedream 4.5: 0.5元/张）
+    MODEL_PRICES_IMAGE: str = '{"gemini-3-pro-image-preview": 0.5, "gemini-2.5-flash-image": 0.1, "doubao-seedream-5-0-260128": 0.5, "black-forest-labs/flux-kontext-pro/multi": 0.35}'  # 图片模型价格：元/张（Seedream 4.5: 0.5元/张）
     MODEL_PRICES_AUDIO: str = '{"s1": 120}'  # 音频模型价格：元/兆字节
     MODEL_PRICES_VIDEO: str = '''
     {

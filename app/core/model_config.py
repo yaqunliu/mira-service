@@ -125,6 +125,16 @@ class ModelConfigFactory:
             is_default=True,
             sort_order=1,
         ),
+        ModelConfig(
+            model_name="doubao-seedream-5-0-260128",
+            model_type="text_to_image",
+            display_name="豆包 Seedream 5.0",
+            description="字节跳动豆包 Seedream 5.0 图像生成模型",
+            config={"aspect_ratio": "16:9", "size": "2K", "languages": ["zh", "en"], "max_words": 300},
+            is_enabled=True,
+            is_default=True,
+            sort_order=1,
+        ),
     ]
     
     # 图生图模型配置
@@ -144,6 +154,16 @@ class ModelConfigFactory:
             model_type="image_to_image",
             display_name="豆包 Seedream 4.5",
             description="字节跳动豆包 Seedream 4.5 图像生成模型，支持单图或多图参考",
+            config={"aspect_ratio": "16:9", "size": "2K", "languages": ["zh", "en"], "max_words": 300},
+            is_enabled=True,
+            is_default=True,
+            sort_order=1,
+        ),
+        ModelConfig(
+            model_name="doubao-seedream-5-0-260128",
+            model_type="image_to_image",
+            display_name="豆包 Seedream 5.0",
+            description="字节跳动豆包 Seedream 5.0 图像生成模型，支持单图或多图参考",
             config={"aspect_ratio": "16:9", "size": "2K", "languages": ["zh", "en"], "max_words": 300},
             is_enabled=True,
             is_default=True,

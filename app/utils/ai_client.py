@@ -1026,8 +1026,8 @@ class AIClient:
             )
 
         # 检查是否为 豆包 Seedream 4.5 模型
-        if model == "doubao-seedream-4.5":
-            logger.info(f"使用 豆包 Seedream 4.5 API 进行文生图")
+        if model == "doubao-seedream-4.5" or model == "doubao-seedream-5-0-260128":
+            logger.info(f"使用 豆包 {model} API 进行文生图")
             
             # 根据 aspectRatio 映射对应的 size
             image_size = self._get_doubao_image_size(aspectRatio)
@@ -1036,7 +1036,8 @@ class AIClient:
             image_url = self._call_doubao_seedream_api(
                 prompt=prompt,
                 reference_images=[],
-                size=image_size
+                size=image_size,
+                model=model
             )
             
             return image_url
@@ -2335,7 +2336,8 @@ class AIClient:
         prompt: str,
         reference_images: List[str],
         size: str = "2k",
-        watermark: bool = False
+        watermark: bool = False,
+        model: str = "doubao-seedream-4.5"
     ) -> str:
         """
         调用 豆包 Seedream 4.5 API (Modelverse OpenAI 兼容版本)
@@ -2345,13 +2347,14 @@ class AIClient:
             reference_images: 参考图片列表 (URL)
             size: 图片分辨率，默认 "2k"
             watermark: 是否添加水印，默认 False
+            model: 模型名称，默认 "doubao-seedream-4.5"
             
         Returns:
             生成的图片 URL
         """
         # 构建请求体
         request_body = {
-            "model": "doubao-seedream-4.5",
+            "model": model,
             "prompt": prompt,
             "images": reference_images,
             "size": size,
@@ -2369,7 +2372,7 @@ class AIClient:
             "Content-Type": "application/json"
         }
         
-        logger.info(f"调用 Doubao Seedream API: {api_url}, model: doubao-seedream-4.5")
+        logger.info(f"调用 Doubao Seedream API: {api_url}, model: {model}")
         
         with httpx.Client(timeout=self.timeout) as client:
             response = client.post(api_url, json=request_body, headers=headers)
@@ -2414,10 +2417,10 @@ class AIClient:
                 aspect_ratio=aspect_ratio
             )
 
-        # 检查是否为 豆包 Seedream 4.5 模型
-        if model == "doubao-seedream-4.5":
+        # 检查是否为 豆包 Seedream 模型
+        if model == "doubao-seedream-4.5" or model == "doubao-seedream-5-0-260128":
             # 使用 Doubao Seedream API
-            logger.info(f"使用 豆包 Seedream 4.5 API 进行图生图")
+            logger.info(f"使用 豆包 {model} API 进行图生图")
             
             # 根据 aspect_ratio 映射 size
             image_size = self._get_doubao_image_size(aspect_ratio)
@@ -2425,7 +2428,8 @@ class AIClient:
             image_url = self._call_doubao_seedream_api(
                 prompt=prompt,
                 reference_images=reference_images,
-                size=image_size
+                size=image_size,
+                model=model
             )
             
             return image_url
