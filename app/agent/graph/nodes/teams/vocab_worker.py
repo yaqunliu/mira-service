@@ -40,13 +40,23 @@ class VocabWorkerNode(ReActWorkerNode):
         self.all_shots = []
 
     def get_system_prompt(self, state: ComicDramaState) -> str:
-        # 获取当前任务的 creation_uuid
+        config = state.get("vocab_config", {})
+        self.config = merge_vocab_config(config)
+        
+        word_repeat_count = self.config.get("word_repeat_count", 2)
+        translation_repeat_count = self.config.get("translation_repeat_count", 1)
+        voice_gender = self.config.get("voice_gender", "female")
+        voice_age = self.config.get("voice_age", "child")
+        
         creation_uuid = state.get("creation_uuid", "")
         
         return f"""你是英语单词视频生成专家。
 
 ### 当前任务信息
 - 任务ID (creation_uuid): {creation_uuid}
+- 单词朗读次数：{word_repeat_count} 次
+- 翻译朗读次数：{translation_repeat_count} 次
+- 音色要求：{voice_gender}声，{voice_age}音色
 
 ### 你的职责
 为每个单词创建视频分镜，包括：
@@ -55,11 +65,12 @@ class VocabWorkerNode(ReActWorkerNode):
 
 ### 新流程（必须按顺序执行）
 1. 翻译和分析每个单词
-2. 为每个单词生成2个分镜数据（包含 image_prompt 和 video_prompt）
-3. 调用 create_shots_batch 批量创建分镜（同时保存提示词）
-4. 调用 generate_images_batch 批量生成图片（等待完成）
-5. 调用 generate_videos_batch 批量生成视频（自动等待完成并导出最终视频）
-6. 任务完成
+2. **调用 get_character_info 获取角色信息（包含 image_url）**
+3. 为每个单词生成2个分镜数据（包含 image_prompt 和 video_prompt）
+4. 调用 create_shots_batch 批量创建分镜（**sentence_scene 必须传入 reference_images**）
+5. 调用 generate_images_batch 批量生成图片（等待完成）
+6. 调用 generate_videos_batch 批量生成视频（自动等待完成并导出最终视频）
+7. 任务完成
 
 ### 可用工具
 - get_character_info: 获取角色信息（用于图片生成时的角色参考）
@@ -69,8 +80,11 @@ class VocabWorkerNode(ReActWorkerNode):
 - update_task_progress: 更新任务进度
 - export_final_video: 导出最终视频
 
-### 失败重试和重新生成工具
+### 查询工具
 - get_shot_status: 获取所有分镜的生成状态（查看哪些成功/失败）
+- get_shot_by_word: 根据单词查询特定分镜的详细信息（用于回答用户关于特定单词的问题）
+
+### 失败重试和重新生成工具
 - retry_failed_shots: 重试失败的分镜（stage="image" 或 "video"）
 - regenerate_shot_image: 重新生成指定分镜的图片（可提供新提示词）
 - regenerate_shot_video: 重新生成指定分镜的视频（可提供新提示词）
@@ -122,17 +136,28 @@ AI:
   可以提供新的提示词来改进生成效果
 ```
 
+**情况5：查询特定单词的分镜状态**
+```
+用户: "noodles 分镜处理的结果是什么？" 或 "apple 这个单词的图片生成了吗？"
+AI:
+  1. 调用 get_shot_by_word(word="noodles") 查询该单词的所有分镜
+  2. 根据返回结果回答用户：
+     - 如果 found=True：告诉用户该单词有几个分镜，每个分镜的状态、是否有图片/视频
+     - 如果 found=False：告诉用户未找到该单词，并列出可用的单词
+```
+
 **重要：不要直接显示配置卡片让用户重新配置参数，而是使用重试工具解决问题！**
 
 ### 图片生成提示词格式
 
-#### 单词展示图 (word_display)
+#### 一张单词展示图 (word_display)
 - 绚烂多彩背景
-- 白色单词 + 黄色翻译
+- 白色单词 + 黄色翻译 文字不带有任何括号
 - 如果是名词，右上角显示物品简笔画
 
 #### 句子场景图 (sentence_scene)
 - 调用 get_character_info 获取角色
+- **【关键】必须将角色的 image_url 作为 reference_images 传入 create_shots_batch**
 - 图片中需要出现角色（使用角色的 image_url 作为参考图）
 - 图片内容要能展示句子含义
 - **重要：视频中必须朗读句子内容**
@@ -141,44 +166,78 @@ AI:
 
 #### 分镜1：单词展示图 (word_display)
 ```
-4【重要】图片提示词格式：
-绚烂的多彩背景，没有固定主体，只有颜色交织。
-**文字位置**：中心位置用白色非衬线体单词写着「英文单词」，单词下面是翻译。
+【重要】图片提示词格式：
+绚烂的多彩背景，有彩色泡泡在缓慢移动。没有固定主体。
+**文字位置**：中心位置用白色非衬线体单词写着无括号包裹的「英文单词」，单词下面是翻译。文字占据画面大半部分区域。
 【如果是名词，右上角出现圆圈（白色背景），圆圈中是具体的名词物品简笔画】。
 文字全程固定出现在视频中，不要消失或移动。纯文字格式无括号
 
 【重要】视频提示词格式：
 **文字位置**：单词和翻译固定显示在视频中央，全程不消失。
-
-全局氛围：绚烂多彩背景，梦幻渐变色调，迪士尼/皮克斯动画风格。画面多彩的背景变换，但是亮度要稳定，不要闪烁。
-
-画面：详细描述整个视频的画面内容，包括角色动作、表情、场景变化等。
-
-背景音：描述背景音乐风格，如欢快钢琴曲、梦幻音乐等。背景音不高，不要超过 50% 音量。不要盖过朗读音量。
-
-旁白朗读：单词朗读在视频开始时立即出现。格式：
-- 单词第1遍：如 「Monday」
-- 单词第2遍：如 「Monday」
-- 翻译：如 "星期一" 只读一遍就好，不要重复朗读。
+画面：详细描述整个视频的画面内容，包括角色动作、表情、场景变化等。画面稳定不闪烁。
+旁白朗读：根据当前配置「单词朗读{word_repeat_count}次，翻译朗读{translation_repeat_count}次」
 ```
 
 #### 分镜2：句子场景图 (sentence_scene)
 ```
+注意：画面内容完全符合英文句子大意，不能有任何偏差。而且动作要流畅自然。
 【重要】图片提示词格式：
-**文字位置**：句子 「...」 固定显示在图片顶部，文字颜色黑色。
 图片内容描述：详细描述出现的场景、地点、人物、动作等。
+图片中出现的文字：一行英文句子，黑色粗体带有白色边框，内容是 「...」 固定显示在图片顶部，居中显示。
 
 【重要】视频提示词格式：
-**文字位置**：句子 「...」 出现并固定显示在视频顶部，全程不消失。
-
-全局氛围：明亮欢快学校场景，蓝天白云，动漫风格，迪士尼/皮克斯风格。
-
+**文字位置**：一行英文句子，黑色粗体带有白色边框，内容是  「...」 出现并固定显示在视频顶部居中显示，持续4s(秒)，全程不消失。
 画面：详细描述整个视频的画面内容如：什么人物在做什么事情。包括场景、人物、动作、表情变化等。不要描述成静态画面。还有画面需要人物动作流畅。
+旁白朗读：**重要**：朗读在视频开始时立即出现，完整朗读句子内容。朗读音色符合画面中的人物。
 
-背景音：描述背景音乐和环境音，如学校环境音、欢快钢琴背景音乐等。
-
-旁白朗读：**重要**：朗读在视频开始时立即出现，完整朗读句子内容。
+【关键】创建 sentence_scene 分镜时，必须传入 reference_images！
+示例：
+create_shots_batch([
+    {{
+        "word": "food",
+        "shot_type": "sentence_scene",
+        "sentence": "I like food.",
+        "image_prompt": "...",
+        "video_prompt": "...",
+        "reference_images": ["https://novel-agent.cn-sh2.ufileos.com/test/custom_path/团子.png"]  // 使用角色的 image_url
+    }}
+])
 ```
+
+### 视频提示词中朗读内容的 Few-Shot 示例
+
+根据当前配置「单词朗读{word_repeat_count}次，翻译朗读{translation_repeat_count}次」，视频提示词中的朗读内容格式如下：
+
+**示例1：单词展示分镜（word_display）**
+- 单词：apple，翻译：苹果
+- 配置：单词读2次，翻译读1次
+- 视频提示词中的朗读内容：`视频中有一个温柔的人声朗读：apple, apple. 苹果。朗读速度中等，发音准确咬字清晰，接近播音员水平。`
+
+**示例2：单词展示分镜（word_display）**
+- 单词：dog，翻译：狗
+- 配置：单词读2次，翻译读2次
+- 视频提示词中的朗读内容：`视频中有一个温柔的人声朗读：dog, dog. 狗, 狗。朗读速度中等，发音准确咬字清晰，接近播音员水平。`
+
+**示例3：单词展示分镜（word_display）**
+- 单词：cat，翻译：猫
+- 配置：单词读3次，翻译读1次
+- 视频提示词中的朗读内容：`视频中有一个温柔的人声朗读：cat, cat, cat. 猫。朗读速度中等，发音准确咬字清晰，接近播音员水平。`
+
+**示例4：句子场景分镜（sentence_scene）**
+- 句子：I like dog!
+- 视频提示词中的朗读内容：`视频中有一个温柔的人声朗读句子：I like dog! 朗读速度中等，发音准确咬字清晰，接近播音员水平。`
+
+### 重要规则
+
+1. **朗读内容格式**：
+   - 单词展示分镜：`视频中有一个温柔的人声朗读：[单词重复N次], [翻译重复M次]。朗读速度中等，发音准确咬字清晰，接近播音员水平。`
+   - 句子场景分镜：`视频中有一个温柔的人声朗读句子：[完整句子] 朗读速度中等，发音准确咬字清晰，接近播音员水平。`
+
+2. **当前任务配置**（单词{word_repeat_count}次，翻译{translation_repeat_count}次）：
+   - 每个单词展示分镜的朗读内容必须遵循此配置
+   - 句子场景分镜直接朗读完整句子
+
+3. **音色要求**：使用{voice_gender}声，{voice_age}音色
 
 ### 重要提示
 - 单词展示视频时长固定为 4 秒
@@ -198,7 +257,10 @@ AI:
         sentence_level = self.config.get("sentence_level", "primary")
         voice_gender = self.config.get("voice_gender", "female")
         voice_age = self.config.get("voice_age", "child")
-        video_model = self.config.get("video_model", "sora-2")
+        # video_model = self.config.get("video_model", "viduq3-pro")
+        video_model = self.config.get("video_model", "")
+        word_repeat_count = self.config.get("word_repeat_count", 2)
+        translation_repeat_count = self.config.get("translation_repeat_count", 1)
         
         return f"""请为以下单词创建视频：
 
@@ -207,6 +269,8 @@ AI:
 - 句子难度：{sentence_level}
 - 声音：{voice_gender} {voice_age}
 - 视频模型：{video_model}
+- 单词朗读次数：{word_repeat_count} 次
+- 翻译朗读次数：{translation_repeat_count} 次
 
 请按照流程：
 1. 对每个单词进行翻译和分析
@@ -227,12 +291,27 @@ AI:
             """
             获取随机角色和场景信息
             
+            【重要】返回的角色信息包含 image_url，必须将其作为 reference_images 传入 create_shots_batch！
+            
+            使用示例：
+            1. 调用 get_character_info 获取角色
+            2. 从返回结果中提取 character.image_url
+            3. 创建 sentence_scene 分镜时，将 image_url 放入 reference_images 数组
+            
             Args:
                 sentence_level: 句子难度 (kindergarten, primary, middle)
                 gender: 声音性别偏好 (female, male, None表示随机)
             
             Returns:
-                角色和场景信息字典
+                {
+                    "character": {
+                        "id": "char_001",
+                        "name": "团子",
+                        "image_url": "https://...",  // 【重要】必须作为 reference_images 使用
+                        ...
+                    },
+                    "scene": {...}
+                }
             """
             logger.info(f"[VocabWorker] 获取角色信息: sentence_level={sentence_level}, gender={gender}")
             
@@ -261,6 +340,9 @@ AI:
             """
             批量创建分镜
             
+            【重要】sentence_scene 类型的分镜必须传入 reference_images！
+            reference_images 应该是角色的 image_url，用于保持角色一致性。
+            
             Args:
                 shots_data: 分镜数据列表（可以是 JSON 字符串或列表），每个包含:
                     - word: 单词
@@ -271,7 +353,7 @@ AI:
                     - duration: 视频时长(默认4秒)
                     - image_prompt: 图片生成提示词
                     - video_prompt: 视频生成提示词（必须提供，为所有分镜类型生成）
-                    - reference_images: 参考图片URL列表（仅 sentence_scene 需要）
+                    - reference_images: 参考图片URL列表（**sentence_scene 必须传入角色的 image_url**）
             
             Returns:
                 {"success": True, "shot_ids": [1,2,3...], "count": N}
@@ -645,6 +727,111 @@ AI:
                 await db.close()
         
         @tool
+        async def get_shot_by_word(word: str) -> Dict:
+            """
+            根据单词查询特定分镜的详细信息
+            
+            用于回答用户关于特定单词分镜的问题，如：
+            - "noodles 分镜处理的结果是什么？"
+            - "apple 这个单词的图片生成了吗？"
+            - "查看 banana 分镜的状态"
+            
+            Args:
+                word: 要查询的单词（英文）
+            
+            Returns:
+                {
+                    "found": True,
+                    "word": "noodles",
+                    "shots": [
+                        {
+                            "shot_id": 5,
+                            "shot_type": "word_display",
+                            "status": "completed",
+                            "image_url": "...",
+                            "video_url": "...",
+                            "image_prompt": "...",
+                            "video_prompt": "..."
+                        },
+                        {
+                            "shot_id": 6,
+                            "shot_type": "sentence_scene",
+                            "status": "completed",
+                            ...
+                        }
+                    ]
+                }
+            """
+            from app.db.base import _get_async_session_factory
+            from app.models.shot import Shot
+            from sqlalchemy import select, or_
+            
+            logger.info(f"[VocabWorker] 查询单词分镜: word={word}")
+            
+            db = _get_async_session_factory()()
+            try:
+                # 查询所有分镜，然后在 Python 中过滤（因为 word 存储在 extra_data JSON 中）
+                result = await db.execute(
+                    select(Shot).where(Shot.creation_id == self.creation_id)
+                )
+                shots = result.scalars().all()
+                
+                # 查找匹配的分镜
+                matching_shots = []
+                word_lower = word.lower().strip()
+                
+                for s in shots:
+                    extra = s.extra_data or {}
+                    shot_word = extra.get("word", "").lower().strip()
+                    
+                    # 匹配单词（支持部分匹配）
+                    if shot_word == word_lower or word_lower in shot_word or shot_word in word_lower:
+                        matching_shots.append({
+                            "shot_id": s.shot_id,
+                            "shot_type": extra.get("shot_type", ""),
+                            "word": extra.get("word", ""),
+                            "translation": extra.get("translation", ""),
+                            "sentence": extra.get("sentence", ""),
+                            "status": s.status,
+                            "image_url": s.image_url,
+                            "video_url": s.video_url,
+                            "image_prompt": s.image_prompt,
+                            "video_prompt": extra.get("video_prompt", ""),
+                            "has_image": bool(s.image_url),
+                            "has_video": bool(s.video_url),
+                        })
+                
+                if not matching_shots:
+                    # 如果没有精确匹配，返回所有分镜让用户查看
+                    all_words = list(set([s.extra_data.get("word", "") for s in shots if s.extra_data]))
+                    return {
+                        "found": False,
+                        "word": word,
+                        "message": f"未找到单词 '{word}' 的分镜",
+                        "available_words": all_words,
+                        "suggestion": f"可用的单词有: {', '.join(all_words[:10])}..." if all_words else "暂无分镜数据"
+                    }
+                
+                # 按 shot_type 排序（word_display 在前，sentence_scene 在后）
+                matching_shots.sort(key=lambda x: 0 if x["shot_type"] == "word_display" else 1)
+                
+                logger.info(f"[VocabWorker] 找到 {len(matching_shots)} 个分镜 for word={word}")
+                
+                return {
+                    "found": True,
+                    "word": word,
+                    "shots": matching_shots,
+                    "summary": {
+                        "total_shots": len(matching_shots),
+                        "has_all_images": all(s["has_image"] for s in matching_shots),
+                        "has_all_videos": all(s["has_video"] for s in matching_shots),
+                        "status": "completed" if all(s["has_video"] for s in matching_shots) else "in_progress"
+                    }
+                }
+            finally:
+                await db.close()
+        
+        @tool
         async def retry_failed_shots(stage: str = "image") -> Dict:
             """
             重试失败的分镜
@@ -898,6 +1085,7 @@ AI:
             update_task_progress,
             export_final_video,
             get_shot_status,
+            get_shot_by_word,
             retry_failed_shots,
             regenerate_shot_image,
             regenerate_shot_video,
@@ -1111,7 +1299,7 @@ AI:
         
         logger.error(f"[VocabWorker] 等待图片生成超时")
 
-    async def _wait_videos_generated(self, shot_ids: List[int], max_wait: int = 1800, interval: int = 10) -> None:
+    async def _wait_videos_generated(self, shot_ids: List[int], max_wait: int = 3600, interval: int = 10) -> None:
         """等待所有视频生成完成"""
         import asyncio
         from app.db.base import _get_async_session_factory

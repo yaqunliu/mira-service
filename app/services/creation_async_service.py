@@ -132,10 +132,18 @@ class CreationAsyncService:
         page_size: int = 20,
         status_filter: Optional[str] = None,
         title_filter: Optional[str] = None,
+        creation_type_filter: Optional[str] = None,
         order_by: str = "created_at",
         order: str = "desc"
     ) -> Tuple[List[Creation], int]:
-        """获取创作记录列表（支持分页）- 异步版本"""
+        """获取创作记录列表（支持分页）- 异步版本
+        
+        Args:
+            creation_type_filter: 创作类型筛选
+                - "chapter"/"script": 动漫创作（传统模式）
+                - "chat": AI智能创作（Agent 模式）
+                - None: 不筛选，返回所有类型
+        """
         base_query = select(Creation).where(
             Creation.owner_id == user_id,
             Creation.deleted_at.is_(None)
@@ -154,6 +162,15 @@ class CreationAsyncService:
         if title_filter:
             title_pattern = f"%{title_filter}%"
             query = query.where(Creation.title.like(title_pattern))
+        
+        # 创作类型筛选
+        if creation_type_filter:
+            if creation_type_filter in ["chapter", "script"]:
+                # 动漫创作：creation_type 为 chapter 或 script
+                query = query.where(Creation.creation_type.in_(["chapter", "script"]))
+            elif creation_type_filter == "chat":
+                # AI智能创作
+                query = query.where(Creation.creation_type == "chat")
         
         order_column = Creation.created_at
         if order_by == "updated_at":

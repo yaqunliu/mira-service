@@ -729,12 +729,21 @@ async def query_creation_data(creation_uuid: str) -> Optional[Dict[str, Any]]:
                     "narration": s.narration,
                     "image_url": s.image_url,
                     "video_url": s.video_url,
+                    "extra_data": s.extra_data or {},  # 包含 video_prompt 等
                 }
                 for s in shot_result.scalars().all()
             ]
         
         logger.info(f"[DB Helper] 创作数据加载完成: script={'有' if script_text else '无'}, "
                    f"characters={len(characters)}, scenes={len(scenes)}, shots={len(shots)}")
+        
+        # 获取视频模型配置
+        extra_data = creation.extra_data or {}
+        video_model = extra_data.get("video_model", "doubao-seedance-1-5-pro-251215")
+        
+        # 根据视频模型判断生成类型
+        from app.core.model_config import ModelConfigFactory
+        video_generation_type = ModelConfigFactory.get_video_generation_type(video_model)
         
         return {
             "creation_id": creation.creation_id,
@@ -746,7 +755,9 @@ async def query_creation_data(creation_uuid: str) -> Optional[Dict[str, Any]]:
             "characters": characters,
             "scenes": scenes,
             "shots": shots,
-            "final_video_url": creation.extra_data.get("final_video_url") if creation.extra_data else None,
+            "final_video_url": extra_data.get("final_video_url"),
+            "video_model": video_model,
+            "video_generation_type": video_generation_type,
         }
 
 

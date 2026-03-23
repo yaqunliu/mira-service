@@ -14,7 +14,7 @@ from app.core.logger import logger
 @tool
 async def submit_vocab_video_generation(
     shot_ids: List[int],
-    model: str = "viduq2",
+    model: str = "sora-2",
 ) -> Dict[str, Any]:
     """
     提交 Vocab 视频生成任务 - 每个分镜单独提交
@@ -22,9 +22,12 @@ async def submit_vocab_video_generation(
     Args:
         shot_ids: 分镜ID列表
         model: 视频模型，可选:
-            - viduq2 (Vidu 参考图生视频，默认)
-            - viduq2-pro (Vidu Pro)
-            - viduq2-turbo (Vidu Turbo)
+            - veo-3.1-fast-generate-001 (Veo 3.1 Fast，默认，生成速度快，支持音视频直出)
+            - veo-3.1-generate-001 (Veo 3.1，生成质量更高)
+            - viduq2-pro-fast (Vidu Pro Fast，价格触底、效果好，生成速度快)
+            - viduq2-pro (Vidu Pro，情感表达强，动态细节丰富)
+            - viduq2-turbo (Vidu Turbo，效果好，生成快)
+            - viduq3-pro (Vidu Q3 Pro，支持音画同步，支持生成分镜视频)
             - doubao-seedance-1-5-pro-251215 (Seedance 1.5 文生视频)
             - sora-2 (Sora2 文生视频)
 

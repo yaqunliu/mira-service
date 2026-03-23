@@ -39,14 +39,22 @@ class VideoPromptBuilderNode(ReActWorkerNode):
     def get_system_prompt(self, state: ComicDramaState) -> str:
         """
         加载系统提示词模板并注入动态上下文
+        
+        根据 video_generation_type 选择不同的模板：
+        - reference_to_video: 使用 video_prompt_builder.md（@引用方式）
+        - image_to_video: 使用 video_generation_v6.md（首尾帧文本描述方式）
         """
         creation_uuid = state.get("creation_uuid", "")
         characters = state.get("characters", [])
         scenes = state.get("scenes", [])
+        video_generation_type = state.get("video_generation_type", "image_to_video")
+        video_model = state.get("video_model", "未指定")
 
         logger.info("=" * 80)
         logger.info("[VIDEO_PROMPT_BUILDER] ========== 开始构建系统提示词 ==========")
         logger.info(f"[VIDEO_PROMPT_BUILDER] creation_uuid: {creation_uuid}")
+        logger.info(f"[VIDEO_PROMPT_BUILDER] video_generation_type: {video_generation_type}")
+        logger.info(f"[VIDEO_PROMPT_BUILDER] video_model: {video_model}")
         logger.info(f"[VIDEO_PROMPT_BUILDER] 角色数: {len(characters)}, 场景数: {len(scenes)}")
 
         # 构建角色列表文本
@@ -75,13 +83,24 @@ class VideoPromptBuilderNode(ReActWorkerNode):
         else:
             scene_list = "（暂无场景数据，请先通过 query_all_shots 获取）"
 
-        # 加载模板文件
+        # 根据 video_generation_type 选择模板文件
         from app.utils.file_utils import read_prompt_file
+
+        # 根据 video_generation_type 选择模板文件
+        if video_generation_type == "reference_to_video":
+            # 参考生视频模式：使用 @引用 语法
+            template_file = "video_prompt_builder.md"
+            logger.info(f"[VIDEO_PROMPT_BUILDER] 使用参考生视频模板: {template_file}")
+        else:
+            # 图生视频模式：使用首尾帧文本描述方式（不使用@引用）
+            template_file = "video_prompt_builder_image_to_video.md"
+            logger.info(f"[VIDEO_PROMPT_BUILDER] 使用图生视频模板: {template_file}")
+        
         try:
-            template = read_prompt_file("video_prompt_builder.md")
+            template = read_prompt_file(template_file)
         except FileNotFoundError:
-            logger.warning("[VIDEO_PROMPT_BUILDER] 模板文件不存在，使用内联模板")
-            template = self._get_fallback_prompt()
+            logger.warning(f"[VIDEO_PROMPT_BUILDER] 模板文件 {template_file} 不存在，使用内联模板")
+            template = self._get_fallback_prompt(video_generation_type)
 
         # 注入动态变量
         prompt = template.format(
@@ -94,9 +113,10 @@ class VideoPromptBuilderNode(ReActWorkerNode):
         logger.info("[VIDEO_PROMPT_BUILDER] 系统提示词构建完成")
         return prompt
 
-    def _get_fallback_prompt(self) -> str:
+    def _get_fallback_prompt(self, video_generation_type: str = "image_to_video") -> str:
         """内联备用提示词（模板文件不存在时使用）"""
-        return """# 视频提示词构建师
+        if video_generation_type == "reference_to_video":
+            return """# 视频提示词构建师（参考生视频模式）
 
 你的任务是为每个分镜构建带 @引用的视频提示词。
 
@@ -122,6 +142,35 @@ class VideoPromptBuilderNode(ReActWorkerNode):
 ## 模式
 - extend: 与前一分镜连续（同场景+角色重叠）→ 为@分镜N向后延长Xs，...
 - new: 场景变化/第一个分镜 → 把@角色名作为画面主体，场景参考@场景名，...
+"""
+        else:
+            return """# 视频提示词生成（图生视频模式）
+
+你是一位专业电影导演，负责基于首帧图片和尾帧图片生成视频提示词。
+
+创作 UUID: {creation_uuid}
+
+角色列表:
+{character_list}
+
+场景列表:
+{scene_list}
+
+## 流程
+1. 调用 query_all_shots 获取分镜数据（包含首帧/尾帧图片提示词）
+2. 按 shot_number 顺序处理每个分镜
+3. 基于首帧/尾帧图片提示词构建视频提示词
+4. 调用 save_video_prompt_result 保存
+
+## 三维度结构
+- 画面：[时间段] 景别+运镜。动作描述。cut [时间段] ...
+- 背景音：[时间段] 音效描述。
+- 对白：[时间段] 角色："台词"
+
+## 关键规则
+- 首帧一致：第一个镜头画面与首帧提示词一致
+- 尾帧匹配：最后一个镜头画面与尾帧提示词一致
+- 定格收尾：最后一个镜头以"定格"收尾
 """
 
     def get_tools(self) -> List:

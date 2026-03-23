@@ -128,7 +128,10 @@ class ProductionStage(StrEnum):
     STORYBOARD_GENERATING = "storyboard_generating"
     STORYBOARD_READY = "storyboard_ready"   # 分镜待确认（检查点）
 
-    
+    # 分镜图片生成阶段（仅 image_to_video 模式）
+    SHOTS_GENERATING = "shots_generating"
+    SHOTS_READY = "shots_ready"             # 分镜图片待确认（检查点）
+
     # 音频处理阶段
     AUDIO_PROCESSING = "audio_processing"
     AUDIO_READY = "audio_ready"             # 音频待确认（检查点）
@@ -252,6 +255,11 @@ class ComicDramaState(TypedDict, total=False):
     # ==================== 资产数据 ====================
     characters: List[CharacterState]  # 角色列表
     scenes: List[SceneState]  # 场景列表
+    
+    # ==================== 视频生成配置 ====================
+    video_generation_type: Optional[str]  # 视频生成类型: "image_to_video" 或 "reference_to_video"
+    video_model: Optional[str]  # 视频生成模型名称
+    
     # ==================== 错误处理 ====================
     errors: List[Dict[str, Any]]  # 错误记录
     error_message: Optional[str]  # 当前错误信息

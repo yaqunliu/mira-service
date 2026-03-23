@@ -1555,17 +1555,19 @@ class AIClient:
             last_frame_image_url=last_frame_image_url
         )
 
-    def generate_video_by_image_vidu(self, image_url: str, prompt: str = None, duration: int = 5, resolution: str = "1080p", model: str = "viduq2-pro", last_frame_image_url: str = None) -> str:
+    def generate_video_by_image_vidu(self, image_url: str, prompt: str = None, duration: int = 4, resolution: str = "720p", model: str = "viduq3-pro", last_frame_image_url: str = None, bgm: bool = False, audio: bool = True) -> str:
         """
         使用 Vidu 模型根据图片生成视频（图生视频）
 
         Args:
             image_url: 首帧图片URL
             prompt: 提示词，用于指导视频生成
-            duration: 视频生成时长（秒），默认为 5
-            resolution: 视频分辨率，可选值 540p, 720p, 1080p，默认为 1080p
-            model: 模型名称，viduq2-pro 或 viduq2-turbo
+            duration: 视频生成时长（秒），默认为 4
+            resolution: 视频分辨率，可选值 540p, 720p, 1080p，默认为 720p
+            model: 模型名称，默认 viduq3-pro，可选 viduq2-pro, viduq2-turbo, viduq3-pro
             last_frame_image_url: 尾帧图片URL（可选）
+            bgm: 是否添加背景音乐，默认 False
+            audio: 是否使用音视频直出能力，默认 True
 
         Returns:
             生成的视频URL
@@ -1573,7 +1575,7 @@ class AIClient:
         if not self.sora2_api_key or not self.sora2_base_url:
             raise ValueError("Vidu API配置未设置（复用 OpenAI 配置）")
 
-        logger.info(f"Vidu 图生视频开始，模型: {model}, 时长: {duration}秒, 分辨率: {resolution}, 有尾帧: {bool(last_frame_image_url)}")
+        logger.info(f"Vidu 图生视频开始，模型: {model}, 时长: {duration}秒, 分辨率: {resolution}, 有尾帧: {bool(last_frame_image_url)}, audio: {audio}")
         
         # 处理图片URL，如果是local://协议，转换为base64
         final_image_url = image_url
@@ -1610,11 +1612,107 @@ class AIClient:
                 "duration": duration,
                 "resolution": resolution,
                 "movement_amplitude": "auto",
-                "bgm": False
+                "bgm": bgm,
+                "audio": audio
             }
         }
 
         return self._generate_video_modelverse(payload, "Vidu")
+
+    def generate_video_by_image_veo(self, image_url: str, prompt: str, duration: int = 4, resolution: str = "720p", aspect_ratio: str = "16:9", model: str = "veo-3.1-fast-generate-001", last_frame_image_url: str = None, generate_audio: bool = True) -> str:
+        """
+        使用 Veo-3.1 模型根据图片生成视频（图生视频）
+
+        Args:
+            image_url: 首帧图片URL
+            prompt: 提示词，用于指导视频生成
+            duration: 视频生成时长（秒），支持 4, 6, 8，默认为 4
+            resolution: 视频分辨率，可选值 720p, 1080p，默认为 720p
+            aspect_ratio: 视频宽高比，可选值 16:9, 9:16，默认为 16:9
+            model: 模型名称，默认 veo-3.1-fast-generate-001，可选 veo-3.1-generate-001
+            last_frame_image_url: 尾帧图片URL（可选）
+            generate_audio: 是否生成音频，默认 True
+
+        Returns:
+            生成的视频URL
+        """
+        if not self.sora2_api_key or not self.sora2_base_url:
+            raise ValueError("Veo API配置未设置（复用 OpenAI 配置）")
+
+        logger.info(f"Veo 图生视频开始，模型: {model}, 时长: {duration}秒, 分辨率: {resolution}, 宽高比: {aspect_ratio}, 有尾帧: {bool(last_frame_image_url)}, 生成音频: {generate_audio}")
+        
+        def _url_to_base64(url: str) -> tuple:
+            if url.startswith("data:image"):
+                mime_match = re.match(r'data:(image/\w+);base64,(.+)', url)
+                if mime_match:
+                    return mime_match.group(2), mime_match.group(1)
+                return None, None
+            
+            if url.startswith("local://"):
+                local_path = url.replace("local://", "")
+                if os.path.exists(local_path):
+                    with open(local_path, 'rb') as f:
+                        img_data = base64.b64encode(f.read()).decode("utf-8")
+                    ext = os.path.splitext(local_path)[1].lower()
+                    mime_map = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp'}
+                    mime_type = mime_map.get(ext, 'image/jpeg')
+                    return img_data, mime_type
+                return None, None
+            
+            try:
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+                img_data = base64.b64encode(response.content).decode("utf-8")
+                content_type = response.headers.get('Content-Type', 'image/jpeg')
+                if content_type not in ['image/jpeg', 'image/png', 'image/webp']:
+                    content_type = 'image/jpeg'
+                return img_data, content_type
+            except Exception as e:
+                logger.warning(f"下载图片失败: {url}, error: {e}")
+                return None, None
+
+        input_data = {
+            "prompt": prompt or "make it move"
+        }
+        
+        if image_url:
+            base64_data, mime_type = _url_to_base64(image_url)
+            if base64_data:
+                input_data["image"] = {
+                    "bytesBase64Encoded": base64_data,
+                    "mimeType": mime_type
+                }
+        
+        if last_frame_image_url:
+            base64_data, mime_type = _url_to_base64(last_frame_image_url)
+            if base64_data:
+                input_data["last_frame"] = {
+                    "bytesBase64Encoded": base64_data,
+                    "mimeType": mime_type
+                }
+
+        if duration not in [4, 6, 8]:
+            logger.warning(f"不支持的时长 {duration}秒，使用默认值 4秒")
+            duration = 4
+
+        if resolution not in ["720p", "1080p"]:
+            resolution = "720p"
+
+        if aspect_ratio not in ["16:9", "9:16"]:
+            aspect_ratio = "16:9"
+
+        payload = {
+            "model": model,
+            "input": input_data,
+            "parameters": {
+                "duration": duration,
+                "resolution": resolution,
+                "aspect_ratio": aspect_ratio,
+                "generate_audio": generate_audio
+            }
+        }
+
+        return self._generate_video_modelverse(payload, "Veo")
 
     def generate_video_by_prompt_sora2(self, prompt: str, model: str = "sora-2", duration: int = 8, size: str = "1280x720") -> str:
         """
@@ -2081,26 +2179,39 @@ class AIClient:
         
         max_retries = 3
         task_id = None
-        # 找到图片  image_url 后者 url 为键的 如果是 base64 只显示前100
-        payload_input = []
-        for item in payload.get("input", {}).get("content", []):
-            if item["type"] == "text":
-                payload_input.append({"type": "text", "text": item["text"]})
-            if item["type"] == "image_url":
-                # 保留最多 150个字符
-                image_url_obj = item.get("image_url", {})
-                if isinstance(image_url_obj, dict):
-                    url = image_url_obj.get("url", "")
-                    payload_input.append({"type": "image_url", "image_url": f"{{'url': '{url[:150]}...'}}"})
-                elif isinstance(image_url_obj, str):
-                    payload_input.append({"type": "image_url", "image_url": image_url_obj[:150]})
-                else:
-                    payload_input.append({"type": "image_url", "image_url": str(image_url_obj)[:150]})
+        # 构建 debug 日志
+        payload_input = payload.get("input", {})
+        
+        # 获取 prompt（可能在顶层、input.prompt 或 input.content 中）
+        debug_prompt = payload.get("prompt") or payload_input.get("prompt")
+        if not debug_prompt and "content" in payload_input:
+            for item in payload_input.get("content", []):
+                if item.get("type") == "text":
+                    debug_prompt = item.get("text", "")[:200]
+                    break
+        
+        # 获取图片 URL（用于日志）
+        debug_image_url = None
+        if "first_frame_url" in payload_input:
+            url = payload_input.get("first_frame_url", "")
+            debug_image_url = url[:150] + "..." if len(url) > 150 else url
+        elif "subjects" in payload_input:
+            subjects = payload_input.get("subjects", [])
+            debug_image_url = f"{len(subjects)} 张参考图"
+        elif "content" in payload_input:
+            for item in payload_input.get("content", []):
+                if item.get("type") == "image_url":
+                    img_obj = item.get("image_url", {})
+                    if isinstance(img_obj, dict):
+                        url = img_obj.get("url", "")
+                        debug_image_url = url[:150] + "..." if len(url) > 150 else url
+                    break
+        
         debug_payload = {
             "model_name": payload.get("model"),
-            "prompt": payload.get("prompt"),
+            "prompt": debug_prompt,
+            "image_url": debug_image_url,
             "parameters": payload.get("parameters"),
-            "input": payload_input,
         }
         
         logger.info(f"[{model_name_log}] 准备提交任务，参数: {debug_payload}")
@@ -2410,50 +2521,41 @@ class AIClient:
         if settings.DEBUG_GENERATE_IMAGE:
             return settings.DEBUG_GENERATE_IMAGE_URL
 
-        # 检查是否为 Gemini 模型
-        if "gemini" in model.lower():
-            return self._call_gemini_image_api(
-                prompt=prompt,
-                model=model,
-                reference_images=reference_images,
-                aspect_ratio=aspect_ratio
-            )
+        # 重试逻辑
+        max_retries = 5
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                # 检查是否为 Gemini 模型
+                if "gemini" in model.lower():
+                    return self._call_gemini_image_api(
+                        prompt=prompt,
+                        model=model,
+                        reference_images=reference_images,
+                        aspect_ratio=aspect_ratio
+                    )
 
-        # 检查是否为 豆包 Seedream 模型
-        if model == "doubao-seedream-4.5" or model == "doubao-seedream-5-0-260128":
-            # 使用 Doubao Seedream API
-            logger.info(f"使用 豆包 {model} API 进行图生图")
-            
-            # 根据 aspect_ratio 映射 size
-            image_size = self._get_doubao_image_size(aspect_ratio)
-            # 调用 Doubao API
-            image_url = self._call_doubao_seedream_api(
-                prompt=prompt,
-                reference_images=reference_images,
-                size=image_size,
-                model=model
-            )
-            
-            return image_url
-        else:
-            # 使用原有的 OpenAI 兼容 API
-            # 构建extra_body参数
-            extra_body = {
-                "images": reference_images,
-                "aspect_ratio": aspect_ratio,
-                "guidance_scale": guidance_scale if guidance_scale else 3.5,
-                "negative_prompt": "bad hand, extra fingers, too dark, overexposed, color shift, monochromatic, ugly"
-            }
-            
-            response = self.ai_client.images.generate(
-                model=model,
-                prompt=prompt,
-                extra_body=extra_body,
-            )
-            
-            image_url = response.data[0].url
-            return image_url
-    
+                # 检查是否为 豆包 Seedream 模型
+                if model == "doubao-seedream-4.5" or model == "doubao-seedream-5-0-260128":
+                    # 使用 Doubao Seedream API
+                    logger.info(f"使用 豆包 {model} API 进行图生图")
+                    
+                    # 根据 aspect_ratio 映射 size
+                    image_size = self._get_doubao_image_size(aspect_ratio)
+                    # 调用 Doubao API
+                    image_url = self._call_doubao_seedream_api(
+                        prompt=prompt,
+                        reference_images=reference_images,
+                        size=image_size,
+                        model=model
+                    )
+                    
+                    return image_url
+            except Exception as e:
+                retry_count += 1
+                logger.error(f"豆包 Seedream API 调用失败 (尝试 {retry_count}/{max_retries}): {str(e)}")
+                if retry_count >= max_retries:
+                    raise Exception(f"豆包 Seedream API 调用失败 {max_retries} 次，最后一次错误: {str(e)}")
     def generate_image_by_reference(
         self, 
         prompt: str, 

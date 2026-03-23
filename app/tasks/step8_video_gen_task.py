@@ -419,7 +419,15 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
         db.close()
 
 
-@celery_app.task(bind=True, name="generate_single_shot_video_task", soft_time_limit=3600, time_limit=3700)
+@celery_app.task(
+    bind=True, 
+    name="generate_single_shot_video_task", 
+    soft_time_limit=3600, 
+    time_limit=3700,
+    autoretry_for=(Exception,),
+    retry_backoff=60,
+    max_retries=3
+)
 def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze_record_id: int = None, model_name: str = None, last_frame_image_url: str = None, separate_audio: bool = None):
     """
     单个分镜视频生成任务
@@ -681,7 +689,7 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
                     resolution=resolution,
                     last_frame_image_url=last_frame_image_url
                 )
-            elif video_model in ["viduq2-pro", "viduq2-turbo"]:
+            elif video_model in ["viduq2-pro", "viduq2-turbo", "viduq3-pro"]:
                 # 获取分辨率配置，默认为 1080p (注意 Vidu 是小写)
                 resolution = (shot.extra_data or {}).get('video_resolution', '1080p').lower()
                 video_url = ai_client.generate_video_by_image_vidu(
@@ -703,6 +711,12 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
                     aspect_ratio=aspect_ratio,
                     resolution=resolution,
                     last_frame_image_url=last_frame_image_url
+                )
+            elif video_model.startswith("veo"):
+                video_url = ai_client.generate_video_by_image_veo(
+                    image_url=shot.image_url,
+                    prompt=video_prompt,
+                    duration=video_duration,
                 )
             else:
                 # 调用 Sora2 图生视频 API（size参数留空使用API默认值）

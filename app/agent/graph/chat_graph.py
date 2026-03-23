@@ -206,8 +206,9 @@ async def vocab_worker_node(state: ChatState) -> Dict[str, Any]:
                 "status": "completed",
                 "video_url": video_url,
             },
-            "creation_id": creation_id,  # 设置 creation_id 让 runner 可以监控任务
-            "next_node": None,  # 完成后不再调度
+            "creation_id": creation_id,
+            "should_end_sse": True,  # 标记结束 SSE
+            "next_node": None,
         }
         
     except Exception as e:
@@ -219,7 +220,8 @@ async def vocab_worker_node(state: ChatState) -> Dict[str, Any]:
                 "status": "failed",
                 "error": str(e),
             },
-            "next_node": None,  # 出错也回到 Supervisor
+            "should_end_sse": True,  # 标记结束 SSE
+            "next_node": None,
         }
 
 

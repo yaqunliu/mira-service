@@ -138,28 +138,46 @@ class GraphRunner:
         history_messages: list,
         last_state: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """构建初始状态"""
+        """构建初始状态
+        
+        重要：user_message 和 creation_uuid 始终使用当前请求的值，不从 checkpoint 恢复
+        """
         state = {
-            "creation_uuid": self.creation_uuid,
+            "creation_uuid": self.creation_uuid,  # 始终使用当前请求的 creation_uuid
             "thread_id": self.thread_id,
             "user_id": self.user_id,
-            "user_message": user_message,
+            "user_message": user_message,  # 始终使用当前请求的 user_message
             "messages": history_messages,
             "updated_at": datetime.now().isoformat(),
             "video_type": None,
             "should_generate": False,
         }
-        # 如果有上一个检查点状态，恢复部分字段
+        
+        # 如果有上一个检查点状态，恢复部分字段（但不覆盖关键字段）
         if last_state:
-            state["current_stage"] = last_state.get("current_stage", "init")
-            state["pending_approval"] = last_state.get("pending_approval", False)
+            # 恢复生产阶段状态
+            state["production_stage"] = last_state.get("production_stage")
+            state["production_cache"] = last_state.get("production_cache", {})
+            # 恢复检查点状态
+            state["checkpoint_status"] = last_state.get("checkpoint_status")
+            state["checkpoint_data"] = last_state.get("checkpoint_data")
             # 恢复 Chat 模式的状态
             state["video_type"] = last_state.get("video_type")
             state["vocab_config"] = last_state.get("vocab_config", {})
             state["should_generate"] = last_state.get("should_generate", False)
-            # 优先使用 checkpoint 中的 creation_uuid
-            if last_state.get("creation_uuid"):
-                state["creation_uuid"] = last_state.get("creation_uuid")
+            # 恢复其他状态
+            state["current_stage"] = last_state.get("current_stage", "init")
+            state["pending_approval"] = last_state.get("pending_approval", False)
+            # 恢复角色、场景、分镜数据
+            state["characters"] = last_state.get("characters", [])
+            state["scenes"] = last_state.get("scenes", [])
+            state["shots"] = last_state.get("shots", [])
+            # 恢复视频生成配置
+            state["video_generation_type"] = last_state.get("video_generation_type")
+            state["video_model"] = last_state.get("video_model")
+            # 恢复剧本数据
+            state["script_text"] = last_state.get("script_text")
+            state["script_url"] = last_state.get("script_url")
         
         # 如果有用户操作
         if user_action:

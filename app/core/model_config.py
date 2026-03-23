@@ -178,7 +178,12 @@ class ModelConfigFactory:
             model_type="video",
             display_name="豆包 Seedance 1.5 Pro",
             description="火山引擎豆包图生视频模型，支持音频生成",
-            config={"aspect_ratio": "16:9", "resolutions": ["720p", "1080p"], "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12]},
+            config={
+                "aspect_ratio": "16:9",
+                "resolutions": ["720p", "1080p"],
+                "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12],
+                "generation_type": "image_to_video",
+            },
             is_enabled=True,
             is_default=True,
             sort_order=1,
@@ -188,21 +193,46 @@ class ModelConfigFactory:
             model_type="video",
             display_name="Sora",
             description="OpenAI Sora 图生视频模型，支持 4/8/12 秒时长",
-            config={"aspect_ratio": "16:9", "resolutions": ["1080p"], "durations": [4, 8, 12]},
+            config={
+                "aspect_ratio": "16:9",
+                "resolutions": ["1080p"],
+                "durations": [4, 8, 12],
+                "generation_type": "image_to_video",
+            },
             is_enabled=True,
             is_default=False,
             sort_order=2,
         ),
         ModelConfig(
-            model_name="Wan-AI/Wan2.6-I2V",
+            model_name="doubao-seedance-2-0",
             model_type="video",
-            display_name="Wan2.6 图生视频",
-            description="Wan-AI/Wan2.6-I2V 图生视频模型，支持 720P/1080P",
-            config={"aspect_ratio": "16:9", "resolutions": ["720P", "1080P"], "durations": [5, 10, 15]},
+            display_name="豆包 Seedance 2.0",
+            description="火山引擎豆包参考生视频模型，支持角色图+场景图+@引用提示词",
+            config={
+                "aspect_ratio": "16:9",
+                "resolutions": ["720p", "1080p"],
+                "durations": [4, 5, 6, 7, 8, 9, 10],
+                "generation_type": "reference_to_video",
+            },
             is_enabled=True,
             is_default=False,
-            sort_order=4,
+            sort_order=3,
         ),
+        # ModelConfig(
+        #     model_name="Wan-AI/Wan2.6-I2V",
+        #     model_type="video",
+        #     display_name="Wan2.6 图生视频",
+        #     description="Wan-AI/Wan2.6-I2V 图生视频模型，支持 720P/1080P",
+        #     config={
+        #         "aspect_ratio": "16:9",
+        #         "resolutions": ["720P", "1080P"],
+        #         "durations": [5, 10, 15],
+        #         "generation_type": "image_to_video",
+        #     },
+        #     is_enabled=True,
+        #     is_default=False,
+        #     sort_order=4,
+        # ),
     ]
 
     @classmethod
@@ -299,4 +329,21 @@ class ModelConfigFactory:
         if not model:
             return None
         return model.config or {}
+    
+    @classmethod
+    def get_video_generation_type(cls, model_name: str) -> str:
+        """
+        获取视频模型的生成类型
+        
+        Args:
+            model_name: 视频模型名称
+            
+        Returns:
+            生成类型: "image_to_video" 或 "reference_to_video"
+            默认返回 "image_to_video"
+        """
+        config = cls.get_model_config(model_name, "video")
+        if config:
+            return config.get("generation_type", "image_to_video")
+        return "image_to_video"
 

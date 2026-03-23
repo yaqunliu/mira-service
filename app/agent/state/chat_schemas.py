@@ -73,3 +73,11 @@ class ChatState(TypedDict, total=False):
     # 路由控制
     should_generate: bool  # 是否需要生成视频
     next_node: Optional[str]  # 下一个节点：vocab_worker / gaoxiao_worker / story_worker
+    
+    # SSE 结束控制
+    should_end_sse: bool  # 是否应该结束 SSE
+    worker_result: Optional[Dict[str, Any]]  # Worker 执行结果
+    
+    # 任务监控
+    task_id: Optional[int]  # 任务 ID
+    creation_id: Optional[int]  # Creation ID

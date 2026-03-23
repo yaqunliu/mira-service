@@ -20,7 +20,7 @@ from app.agent.state.schemas import ComicDramaState, ProductionStage
 
 # ==================== 类型定义 ====================
 
-WorkerType = Literal["script_analyst", "character_scene_generator", "storyboard_director", "video_prompt_builder", "video_generator", "audio_engineer", "asset_regenerator"]
+WorkerType = Literal["script_analyst", "character_scene_generator", "storyboard_director", "shot_generation", "video_prompt_builder", "video_generator", "audio_engineer", "asset_regenerator"]
 
 
 # ==================== 系统提示词 ====================
@@ -42,24 +42,56 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
 | script_analyst | 剧本分析 → 提取角色、场景 |
 | character_scene_generator | 角色场景生成 → 生成角色和场景的提示词+图片 |
 | storyboard_director | 分镜脚本创建 → 解析剧本生成分镜脚本 |
+| shot_generation | 分镜图片生成 → 生成分镜的首帧/尾帧图片（仅图生视频模型需要）|
 | video_prompt_builder | 视频提示词构建 → 为每个分镜构建带@引用的视频提示词 |
 | video_generator | 视频生成 → 调用视频生成API生成分镜视频 |
 | audio_engineer | 音频生成 → 生成语音和配音 |
 | asset_regenerator | 资产重新生成 → 重新生成指定的角色/场景/视频提示词/视频 |
 
+## 视频生成模式（关键！）
+
+根据 `video_generation_type` 决定流程：
+
+### image_to_video 模式（Seedance 1.5, Sora-2）
+需要生成分镜图片（首帧/尾帧），然后用图片生成视频：
+```
+storyboard_director（创建分镜脚本 + 生成首尾帧图片） → video_prompt_builder → video_generator
+```
+
+### reference_to_video 模式（Seedance 2.0）
+不需要分镜图片，直接用角色图+场景图作为参考：
+```
+storyboard_director（仅创建分镜脚本） → video_prompt_builder → video_generator
+```
+
+**判断方法**：检查 state 中的 `video_generation_type` 字段：
+- `"image_to_video"` → storyboard_director 会同时生成首尾帧图片
+- `"reference_to_video"` → storyboard_director 仅创建脚本，跳过 shot_generation
+
 ## 工作流指导规则
 
+### image_to_video 模式
 | 当前阶段 | 完成后行为 | 下一阶段 | board_action |
 |---------|-----------|----------|--------------|
 | script_analyst | 自动继续 | character_scene_generator | switch_view → characters |
 | character_scene_generator | 暂停确认 | storyboard_director | approve_reject |
-| storyboard_director | 自动继续 | video_prompt_builder | switch_view → storyboards |
+| storyboard_director | 暂停确认 | shot_generation | approve_reject |
+| shot_generation | 暂停确认 | video_prompt_builder | approve_reject |
 | video_prompt_builder | 暂停确认 | video_generator | approve_reject |
 | video_generator | 暂停确认 | - | approve_reject |
-| asset_regenerator | 暂停确认 | - | approve_reject |
+
+### reference_to_video 模式
+| 当前阶段 | 完成后行为 | 下一阶段 | board_action |
+|---------|-----------|----------|--------------|
+| script_analyst | 自动继续 | character_scene_generator | switch_view → characters |
+| character_scene_generator | 暂停确认 | storyboard_director | approve_reject |
+| storyboard_director | 暂停确认 | video_prompt_builder | approve_reject |
+| video_prompt_builder | 暂停确认 | video_generator | approve_reject |
+| video_generator | 暂停确认 | - | approve_reject |
 
 ## 完整创作流程
 
+### image_to_video 模式（需要分镜图片）
 ```
 1. script_analyst（剧本分析）
    ↓
@@ -67,7 +99,24 @@ SUPERVISOR_SYSTEM_PROMPT = """你是漫剧创作总导演，负责调度创作�
    ↓ 暂停确认
 3. storyboard_director（创建分镜脚本）
    ↓
-4. video_prompt_builder（构建视频提示词）
+4. shot_generation（生成分镜首帧/尾帧图片）
+   ↓
+5. video_prompt_builder（构建视频提示词）
+   ↓ 暂停确认
+6. video_generator（生成分镜视频）
+   ↓ 暂停确认
+7. 创作完成
+```
+
+### reference_to_video 模式（不需要分镜图片）
+```
+1. script_analyst（剧本分析）
+   ↓
+2. character_scene_generator（生成角色+场景 提示词+图片）
+   ↓ 暂停确认
+3. storyboard_director（创建分镜脚本）
+   ↓
+4. video_prompt_builder（构建视频提示词，使用@角色/@场景引用）
    ↓ 暂停确认
 5. video_generator（生成分镜视频）
    ↓ 暂停确认
@@ -144,20 +193,38 @@ supervisor_decision(
 | INIT / SCRIPT_UPLOADED | 调度到 script_analyst |
 | SCRIPT_ANALYZED | 调度到 character_scene_generator（生成角色+场景） |
 | ASSETS_READY | **必须**暂停等待用户确认（不要重复生成角色场景！）|
-| STORYBOARD_READY | 调度到 video_prompt_builder（构建视频提示词） |
-| VIDEO_READY | **必须**暂停等待用户确认（视频提示词刚完成，需确认后再生成视频）|
+| STORYBOARD_READY | **必须**暂停等待用户确认（分镜脚本已创建，等待生成首尾帧图片）|
+| SHOTS_READY | **必须**暂停等待用户确认分镜图片（让用户检查图片是否满意）|
+| VIDEO_READY | 根据用户消息判断：<br>- "继续"/"确认" → 调度 video_generator<br>- "导出视频" → 检查视频状态，已完成则导出，未完成则先生成视频 |
 | COMPLETED | **创作已完成** → 等待用户导出视频或结束 |
 
-### 2. 重要：用户说"继续"时
+### 2. 重要：根据 video_generation_type 决定流程
+
+**关键判断**：检查 state 中的 `video_generation_type` 字段
+
+**image_to_video 模式**：
+- `storyboard_director` 仅创建分镜脚本（不生成图片）
+- `STORYBOARD_READY` 阶段后需要调度 `shot_generation` 生成分镜图片
+- 图片生成后进入 `video_prompt_builder`
+
+**reference_to_video 模式**：
+- `storyboard_director` 仅创建分镜脚本（不生成图片）
+- `STORYBOARD_READY` 阶段后直接调度 `video_prompt_builder`（使用@引用）
+
+### 3. 重要：用户说"继续"时
 
 根据当前阶段决定：
 - ASSETS_READY + "继续" → 调度到 storyboard_director（创建分镜脚本）
-- STORYBOARD_READY + "继续" → 调度到 video_prompt_builder（构建视频提示词）
+- STORYBOARD_READY + "继续" → 根据 video_generation_type：
+  - image_to_video → 调度 shot_generation（生成分镜图片）
+  - reference_to_video → 调度 video_prompt_builder（构建视频提示词）
+- SHOTS_READY + "继续"/"确认" → 调度到 video_prompt_builder（构建视频提示词）**注意：不要重复调度 shot_generation！**
 - VIDEO_READY + "继续" → 调度到 video_generator（生成分镜视频）⚠️ **这是关键！**
 - COMPLETED + "继续"/"确认" → **创作已完成**，设置 needs_input=False，结束对话
 
+**重要提醒**：当 worker_result 显示某个 Worker 刚完成任务时，必须先暂停确认，不要根据用户旧消息中的"继续"直接调度下一步！
+
 **绝对不要**在 ASSETS_READY 阶段重复调度到 character_scene_generator 生成角色场景！
-**绝对不要**在 STORYBOARD_READY 阶段重复调度到 video_prompt_builder！
 
 ### 4. VIDEO_READY 阶段的正确处理（关键！）
 
@@ -185,6 +252,25 @@ if production_stage == "VIDEO_READY" and "继续" in user_message:
     )
 ```
 
+**情况C：用户说"导出视频"**
+```python
+if production_stage == "VIDEO_READY" and ("导出" in user_message or "导出视频" in user_message):
+    # 检查 production_cache 中的 video_generation 状态
+    video_status = production_cache.get("video_generation", {{}}).get("status", "pending")
+    if video_status == "completed":
+        # 视频已生成，可以导出
+        export_video(creation_uuid="xxx")
+    else:
+        # 视频未生成，需要先生成视频
+        supervisor_decision(
+            next_worker="video_generator",
+            needs_input=False,
+            board_actions=[{{"type": "switch_view", "target": "preview"}}],
+            response_text="视频正在生成中，生成完成后将自动导出。请稍候...",
+            task_params='{{"user_intent": "根据视频提示词生成分镜视频", "tasks": [{{"target": "shot_video", "actions": ["video"], "scope": "all"}}]}}'
+        )
+```
+
 **重要区分规则**：
 - 如果 worker_result 显示 video_prompt_builder 刚完成视频提示词构建 → **必须暂停确认**（情况A）
 - 如果用户主动说"继续"且没有 worker_result → 调度到 video_generator（情况B）
@@ -197,7 +283,8 @@ if production_stage == "VIDEO_READY" and "继续" in user_message:
 |------------|---------|
 | script_analyst | 自动继续 → 调度 character_scene_generator 生成角色+场景 |
 | character_scene_generator | **暂停确认** → needs_input=True, next_worker=None |
-| storyboard_director | 自动继续 → 调度 video_prompt_builder 构建视频提示词 |
+| storyboard_director | 根据 video_generation_type：<br>- image_to_video → 调度 shot_generation<br>- reference_to_video → 暂停确认 |
+| shot_generation | **暂停确认** → needs_input=True, next_worker=None（让用户确认分镜图片）|
 | video_prompt_builder | **暂停确认** → needs_input=True, next_worker=None |
 | video_generator | **暂停确认** → needs_input=True, next_worker=None |
 | asset_regenerator | **暂停确认** → needs_input=True, next_worker=None |
@@ -227,10 +314,12 @@ if production_stage == "VIDEO_READY" and "继续" in user_message:
 
 ## 当前状态
 
-**最重要的决策依据！必须首先检查 production_stage：**
+**最重要的决策依据！必须首先检查 production_stage 和 video_generation_type：**
 
 创作 UUID: {creation_uuid}
 当前阶段: {production_stage}
+视频生成类型: {video_generation_type}
+视频模型: {video_model}
 缓存: {production_cache}
 Worker 执行结果: {worker_result}
 
@@ -277,17 +366,17 @@ Worker 执行结果: {worker_result}
 
    **关键**：COMPLETED 阶段用户确认后，应该设置 needs_input=False，表示流程已结束，不要再询问用户！
 
-9. **用户要求导出视频（在 COMPLETED 阶段）**:
-   当 production_stage="COMPLETED" 且用户说"导出视频"、"导出"、"生成视频链接"时，需要调用 export_video 工具：
-   
+9. **用户要求导出视频（在 VIDEO_READY 或 COMPLETED 阶段）**:
+   当用户说"导出视频"、"导出"、"生成视频链接"时，需要调用 export_video 工具：
+
    首先调用 export_video 工具：
    ```
    export_video(creation_uuid="xxx")
    ```
    
-   工具返回后，根据结果返回决策：
-   - 导出成功: supervisor_decision(next_worker=None, needs_input=False, board_actions=[], response_text="视频导出完成！您的视频链接是：{video_url}")
-   - 导出失败: supervisor_decision(next_worker=None, needs_input=True, board_actions=[], response_text="视频导出失败，请稍后重试。错误信息：{error}")
+   export_video 工具会同步等待导出完成，返回结果中包含 video_url：
+   - 导出成功: 根据结果返回 supervisor_decision(next_worker=None, needs_input=False, board_actions=[], response_text="视频导出完成！您的视频链接是：{{video_url}}")
+   - 导出失败: supervisor_decision(next_worker=None, needs_input=True, board_actions=[], response_text="视频导出失败，请稍后重试。错误信息：{{error}}")
 
 10. **worker_result 显示 asset_regenerator 刚完成重新生成（关键！）**:
    当 worker_result.worker="asset_regenerator" 时，说明重新生成已完成，**必须暂停确认**：
@@ -394,6 +483,7 @@ async def export_video(
 ) -> Dict[str, Any]:
     """
     导出最终视频 - 将所有分镜的视频和音频合并，生成最终视频并上传到US3
+    同步等待导出完成后再返回
 
     Args:
         creation_uuid: 创作项目 UUID
@@ -401,21 +491,44 @@ async def export_video(
     Returns:
         导出结果，包含 video_url
     """
-    logger.info(f"[Supervisor] 触发视频导出: {creation_uuid}")
+    logger.info(f"[Supervisor] 触发视频导出（同步模式）: {creation_uuid}")
 
     try:
         from app.tasks.comic_drama_export import export_comic_drama_video_task
+        from celery.result import AsyncResult
 
         task = export_comic_drama_video_task.delay(creation_uuid)
-
         logger.info(f"[Supervisor] 导出任务已提交: task_id={task.id}")
 
-        return {
-            "success": True,
-            "action": "export_video",
-            "task_id": task.id,
-            "message": "视频导出任务已提交，请稍候..."
-        }
+        # 等待任务完成（同步等待）
+        max_wait_seconds = 600  # 最多等待10分钟
+        wait_interval = 2  # 每2秒检查一次
+
+        for _ in range(max_wait_seconds // wait_interval):
+            if task.ready():
+                break
+            logger.info(f"[Supervisor] 等待导出完成...")
+            import asyncio
+            await asyncio.sleep(wait_interval)
+
+        if task.ready():
+            result = task.get(timeout=30)
+            logger.info(f"[Supervisor] 导出任务完成: {result}")
+            return {
+                "success": True,
+                "action": "export_video",
+                "video_url": result.get("video_url") if isinstance(result, dict) else None,
+                "message": "视频导出完成！",
+                "result": result,
+            }
+        else:
+            logger.warning(f"[Supervisor] 导出任务超时: task_id={task.id}")
+            return {
+                "success": False,
+                "action": "export_video",
+                "error": "导出超时",
+                "message": "视频导出超时，请稍后重试"
+            }
 
     except Exception as e:
         logger.error(f"[Supervisor] 导出视频失败: {str(e)}")
@@ -482,7 +595,7 @@ async def route_to_worker(
     """
     logger.info(f"[Supervisor] 调度到 Worker: {worker}, task={task}")
     
-    valid_workers = ["script_analyst", "character_scene_generator", "storyboard_director", "video_prompt_builder", "video_generator", "audio_engineer", "asset_regenerator"]
+    valid_workers = ["script_analyst", "character_scene_generator", "storyboard_director", "shot_generation", "video_prompt_builder", "video_generator", "audio_engineer", "asset_regenerator"]
     
     if worker not in valid_workers:
         return {"success": False, "error": f"无效的 Worker: {worker}"}
@@ -625,6 +738,34 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
     else:
         logger.info(f"[SUPERVISOR] 无 Worker 返回（用户新消息）")
     
+    # ===== 特殊处理：用户要求导出视频 =====
+    # 直接调用 export_video 工具，不走 LLM 决策
+    if "导出" in user_message and "继续" not in user_message:
+        logger.info(f"[SUPERVISOR] 检测到导出视频请求，直接调用 export_video 工具")
+        tools = _get_supervisor_tools()
+        export_result = await _execute_supervisor_tool(
+            tools, 
+            "export_video", 
+            {"creation_uuid": creation_uuid}
+        )
+        
+        if export_result.get("success"):
+            video_url = export_result.get("video_url", "")
+            return {
+                "response_text": f"视频导出完成！您的视频链接是：{video_url}",
+                "needs_input": False,
+                "next_worker": None,
+                "board_actions": [],
+            }
+        else:
+            error = export_result.get("error", "未知错误")
+            return {
+                "response_text": f"视频导出失败，请稍后重试。错误信息：{error}",
+                "needs_input": True,
+                "next_worker": None,
+                "board_actions": [],
+            }
+    
     try:
         # ===== LLM 智能决策：分析 worker_result 并决定下一步 =====
         tools = _get_supervisor_tools()
@@ -670,6 +811,8 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
             production_cache=production_cache,
             worker_result=worker_result_str,
             user_message=context_message,
+            video_generation_type=state.get("video_generation_type", "image_to_video"),
+            video_model=state.get("video_model", "未指定"),
         )
         
         messages = [
@@ -728,6 +871,11 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
                     if worker_result and worker_result.get('worker') == 'asset_regenerator' and next_worker == 'asset_regenerator':
                         logger.warning(f"[SUPERVISOR] ⚠️ 警告: asset_regenerator 完成后又调度到 asset_regenerator，可能导致循环！")
 
+                    # 防止 shot_generation 被重复调度（关键保护）
+                    if worker_result and worker_result.get('worker') == 'shot_generation' and next_worker == 'shot_generation':
+                        logger.warning(f"[SUPERVISOR] ⚠️ 警告: shot_generation 完成后又调度到 shot_generation，改为调度 video_prompt_builder！")
+                        next_worker = "video_prompt_builder"
+
                     break
                     
                 elif tool_name == "query_production_status":
@@ -735,6 +883,19 @@ async def supervisor_node(state: ComicDramaState) -> Dict[str, Any]:
                     tool_result = await _execute_supervisor_tool(tools, tool_name, tool_args)
                     if isinstance(tool_result, dict):
                         updated_cache = tool_result
+
+                elif tool_name == "export_video":
+                    # 导出视频工具 - 同步等待完成后构建响应
+                    tool_result = await _execute_supervisor_tool(tools, tool_name, tool_args)
+                    if isinstance(tool_result, dict):
+                        if tool_result.get("success"):
+                            video_url = tool_result.get("video_url", "")
+                            final_response = f"视频导出完成！您的视频链接是：{video_url}"
+                            needs_input = False
+                        else:
+                            error = tool_result.get("error", "未知错误")
+                            final_response = f"视频导出失败，请稍后重试。错误信息：{error}"
+                            needs_input = True
         else:
             # 无工具调用 → 使用 LLM 的直接回复作为 response_text
             final_response = response.content.strip() or "请告诉我您需要什么帮助？"
@@ -848,6 +1009,7 @@ def route_from_supervisor(state: ComicDramaState) -> str:
             "script_analyst": "script_analysis",
             "character_scene_generator": "character_scene_generation",
             "storyboard_director": "storyboard_creation",
+            "shot_generation": "shot_generation",
             "video_prompt_builder": "video_prompt_builder",
             "video_generator": "video_generation",
             "audio_engineer": "audio_processing",

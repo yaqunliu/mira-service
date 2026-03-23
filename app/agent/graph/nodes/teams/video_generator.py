@@ -92,6 +92,7 @@ class VideoGeneratorNode(ReActWorkerNode):
         submit_count = 0
         success_count = 0
         failed_count = 0
+        pending_count = 0
 
         for result in tool_results:
             tool_name = result.get("tool", "")
@@ -99,8 +100,9 @@ class VideoGeneratorNode(ReActWorkerNode):
 
             if "batch_submit_video_generation" in tool_name:
                 submit_count = tool_result.get("total", 0)
-                success_count = tool_result.get("success_count", 0)
-                failed_count = tool_result.get("failed_count", 0)
+                completed_count = tool_result.get("completed", 0)
+                failed_count = tool_result.get("failed", 0)
+                pending_count = tool_result.get("pending", 0)
             elif "submit_video_generation" in tool_name:
                 submit_count += 1
                 if tool_result.get("success"):
@@ -111,18 +113,20 @@ class VideoGeneratorNode(ReActWorkerNode):
         response_text = f"视频生成完成！\n\n"
         response_text += f"统计：\n"
         response_text += f"- 提交生成: {submit_count} 个分镜\n"
-        response_text += f"- 成功: {success_count}\n"
+        response_text += f"- 成功: {completed_count}\n"
         response_text += f"- 失败: {failed_count}\n"
+        if pending_count > 0:
+            response_text += f"- 待处理: {pending_count}\n"
 
         result = {
-            "success": success_count > 0 and failed_count == 0,
+            "success": completed_count > 0,
             "response_text": response_text,
-            "generated_videos": success_count,
-            "production_stage": ProductionStage.COMPLETED if success_count > 0 else None,
+            "generated_videos": completed_count,
+            "production_stage": ProductionStage.VIDEO_READY if completed_count > 0 else None,
             "worker_result": {
                 "worker": "video_generator",
-                "summary": f"生成了 {success_count} 个分镜视频",
-                "success": success_count > 0,
+                "summary": f"生成了 {completed_count} 个分镜视频",
+                "success": completed_count > 0,
                 "completed": True,
                 "response_text": response_text,
             },

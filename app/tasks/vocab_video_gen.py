@@ -42,14 +42,19 @@ def download_video(url: str, temp_dir: str, model: str = None) -> str:
     return filepath
 
 
-@celery_app.task(bind=True)
-def generate_single_vocab_video_task(self, shot_id: int, model: str = "viduq2"):
+@celery_app.task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=60,
+    max_retries=3
+)
+def generate_single_vocab_video_task(self, shot_id: int, model: str = "viduq2-pro-fast"):
     """
     单个分镜视频生成任务
     
     Args:
         shot_id: 分镜ID
-        model: 视频模型
+        model: 视频模型，默认 viduq2-pro-fast
     """
     db: Session = _get_sync_session_factory()()
     ai_client = AIClient()
@@ -99,27 +104,51 @@ def generate_single_vocab_video_task(self, shot_id: int, model: str = "viduq2"):
                         duration=duration,
                         size="1280x720"
                     )
-                elif model.startswith("vidu") and reference_images:
-                    ref_urls = [ref.get("url", "") for ref in reference_images if ref.get("url")]
-                    image_url = ",".join(ref_urls)
-                    
-                    temp_url = ai_client.generate_video_by_reference_vidu(
-                        image_url=image_url,
-                        prompt=video_prompt,
-                        model=model,
-                        duration=duration,
-                        aspect_ratio="16:9",
-                        resolution="720p",
-                        audio=True
-                    )
+                elif model.startswith("veo"):
+                    if shot.image_url:
+                        temp_url = ai_client.generate_video_by_image_veo(
+                            image_url=shot.image_url,
+                            prompt=video_prompt,
+                            model=model,
+                            duration=4,
+                            resolution="720p",
+                            aspect_ratio="16:9",
+                            generate_audio=True
+                        )
+                    else:
+                        raise ValueError(f"Veo 模型需要首帧图片，shot_id={shot_id}")
                 elif model.startswith("vidu"):
-                    temp_url = ai_client.generate_video_by_prompt_vidu(
-                        prompt=video_prompt,
-                        model=model,
-                        duration=duration,
-                        aspect_ratio="16:9",
-                        resolution="720p"
-                    )
+                    if shot.image_url:
+                        temp_url = ai_client.generate_video_by_image_vidu(
+                            image_url=shot.image_url,
+                            prompt=video_prompt,
+                            model=model,
+                            duration=duration,
+                            resolution="720p",
+                            bgm=False,
+                            audio=True
+                        )
+                    elif reference_images:
+                        ref_urls = [ref.get("url", "") for ref in reference_images if ref.get("url")]
+                        image_url = ",".join(ref_urls)
+                        temp_url = ai_client.generate_video_by_reference_vidu(
+                            image_url=image_url,
+                            prompt=video_prompt,
+                            model=model,
+                            duration=duration,
+                            aspect_ratio="16:9",
+                            resolution="720p",
+                            bgm=False,
+                            audio=True
+                        )
+                    else:
+                        temp_url = ai_client.generate_video_by_prompt_vidu(
+                            prompt=video_prompt,
+                            model=model,
+                            duration=duration,
+                            aspect_ratio="16:9",
+                            resolution="720p"
+                        )
                 else:
                     temp_url = ai_client.generate_video_by_prompt_doubao_modelverse(
                         prompt=video_prompt,
@@ -256,13 +285,13 @@ def generate_single_vocab_video_task(self, shot_id: int, model: str = "viduq2"):
 
 
 @celery_app.task(bind=True)
-def generate_vocab_videos_task(self, shot_ids: List[int], model: str = "viduq2"):
+def generate_vocab_videos_task(self, shot_ids: List[int], model: str = "viduq2-pro-fast"):
     """
     Vocab 视频生成任务 - 批量生成（保留兼容）
     
     Args:
         shot_ids: 分镜ID列表
-        model: 视频模型
+        model: 视频模型，默认 viduq2-pro-fast
     """
     logger.warning("[VocabVideoGen] generate_vocab_videos_task 已弃用，请使用 generate_single_vocab_video_task")
     

@@ -119,38 +119,40 @@ async def submit_video_generation(
             logger.info(f"[VideoGenerator] ====== REFERENCES ======")
             logger.info(f"[VideoGenerator] {resolved_refs}")
 
-            # TODO: 替换为真实的 Seedance 2.0 API 调用
-            # 当前使用 DEBUG_GENERATE_VIDEO_URL 作为占位
-            video_url = settings.DEBUG_GENERATE_VIDEO_URL
-            logger.info(f"[VideoGenerator] 使用 DEBUG URL: {video_url}")
+            # 调用真实的视频生成 Celery 任务
+            from app.agent.tasks.video_tasks import agent_generate_single_shot_video_task
 
-            # 更新 shot 记录
-            shot.video_url = video_url
-            shot.video_status = "completed"
+            task = agent_generate_single_shot_video_task.delay(
+                shot_id=shot_id,
+                creation_uuid=creation_uuid,
+            )
+            logger.info(f"[VideoGenerator] 已提交视频生成任务: task_id={task.id}")
 
+            # 更新 shot 记录为 pending 状态
+            shot.video_status = "generating"
             if not shot.extra_data:
                 shot.extra_data = {}
             shot.extra_data["resolved_references"] = resolved_refs
+            shot.extra_data["video_task_id"] = task.id
             shot.extra_data["video_generated_at"] = datetime.utcnow().isoformat()
 
             if not shot.status_detail:
                 shot.status_detail = {}
-            shot.status_detail["video_status"] = "completed"
-            shot.status_detail["video_completed_at"] = datetime.utcnow().isoformat()
+            shot.status_detail["video_status"] = "generating"
+            shot.status_detail["video_task_id"] = task.id
+            shot.status_detail["video_started_at"] = datetime.utcnow().isoformat()
 
             flag_modified(shot, "extra_data")
             flag_modified(shot, "status_detail")
             await db.flush()
 
-            logger.info(f"[VideoGenerator] 视频生成成功: shot_id={shot_id}")
+            logger.info(f"[VideoGenerator] 视频生成任务已提交: shot_id={shot_id}, task_id={task.id}")
 
             return {
                 "success": True,
                 "shot_id": shot_id,
-                "video_url": video_url,
-                "generation_mode": prompt_params.get("generation_mode", "new"),
-                "references_count": len(resolved_refs),
-                "message": f"视频生成成功（{prompt_params.get('generation_mode', 'new')}模式）",
+                "task_id": task.id,
+                "message": f"视频生成任务已提交（task_id={task.id}），请等待完成",
             }
 
     except Exception as e:
@@ -217,32 +219,78 @@ async def batch_submit_video_generation(
                     "message": "没有需要生成视频的分镜（所有有提示词的分镜都已生成视频）",
                 }
 
-        # 逐个提交生成（使用 submit_video_generation 工具的底层逻辑）
-        results = []
-        for sid in shots_to_generate:
-            result = await submit_video_generation.ainvoke({
-                "shot_id": sid,
-                "creation_uuid": creation_uuid,
-            })
-            results.append({
-                "shot_id": sid,
-                "success": result.get("success", False),
-                "video_url": result.get("video_url", ""),
-                "error": result.get("error", ""),
-            })
+        # 调用真实的批量视频生成 Celery 任务
+        from app.agent.tasks.video_tasks import agent_generate_shot_videos_task
 
-        success_count = sum(1 for r in results if r["success"])
-        failed_count = len(results) - success_count
+        task = agent_generate_shot_videos_task.delay(creation_uuid=creation_uuid)
+        logger.info(f"[VideoGenerator] 已提交批量视频生成任务: task_id={task.id}")
 
-        logger.info(f"[VideoGenerator] 批量生成完成: {success_count} 成功, {failed_count} 失败")
+        # 同步等待任务完成
+        max_wait_seconds = 1800  # 最多等待30分钟
+        wait_interval = 10  # 每10秒检查一次
+        total_shots = len(shots_to_generate)
+
+        logger.info(f"[VideoGenerator] 开始轮询等待视频生成完成: total={total_shots}, max_wait={max_wait_seconds}s")
+
+        from app.agent.tools.async_db import get_async_session
+        from app.models.shot import Shot
+        from app.models.scene import Scene
+        from sqlalchemy import select
+
+        for _ in range(max_wait_seconds // wait_interval):
+            # 检查所有分镜的视频是否都已生成
+            async with get_async_session() as db:
+                shots_stmt = (
+                    select(Shot)
+                    .join(Scene)
+                    .where(Scene.creation_id == creation.creation_id)
+                    .order_by(Shot.shot_number)
+                )
+                shots_result = await db.execute(shots_stmt)
+                shots = shots_result.scalars().all()
+
+                completed_count = 0
+                failed_count = 0
+                for shot in shots:
+                    if shot.video_url:
+                        completed_count += 1
+                    elif shot.video_status == "failed":
+                        failed_count += 1
+
+                logger.info(f"[VideoGenerator] 轮询进度: completed={completed_count}/{total_shots}, failed={failed_count}")
+
+                if completed_count + failed_count >= total_shots:
+                    # 所有分镜都已完成
+                    logger.info(f"[VideoGenerator] 所有分镜视频生成完成: completed={completed_count}, failed={failed_count}")
+                    break
+
+            # 等待一段时间后继续轮询
+            import asyncio
+            await asyncio.sleep(wait_interval)
+
+        # 最终检查结果
+        async with get_async_session() as db:
+            shots_stmt = (
+                select(Shot)
+                .join(Scene)
+                .where(Scene.creation_id == creation.creation_id)
+                .order_by(Shot.shot_number)
+            )
+            shots_result = await db.execute(shots_stmt)
+            shots = shots_result.scalars().all()
+
+            completed_count = sum(1 for s in shots if s.video_url)
+            failed_count = sum(1 for s in shots if s.video_status == "failed")
+            pending_count = total_shots - completed_count - failed_count
 
         return {
-            "success": failed_count == 0,
-            "total": len(results),
-            "success_count": success_count,
-            "failed_count": failed_count,
-            "results": results,
-            "message": f"批量视频生成完成：{success_count} 成功，{failed_count} 失败",
+            "success": completed_count > 0,
+            "task_id": task.id,
+            "total": total_shots,
+            "completed": completed_count,
+            "failed": failed_count,
+            "pending": pending_count,
+            "message": f"批量视频生成完成：{completed_count} 成功，{failed_count} 失败，{pending_count} 待处理",
         }
 
     except Exception as e:

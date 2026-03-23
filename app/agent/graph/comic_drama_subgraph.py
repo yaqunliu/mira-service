@@ -28,13 +28,31 @@ def _infer_stage_from_data(data: dict) -> ProductionStage:
         return ProductionStage.COMPLETED
     if data.get("shots") and all(s.get("video_url") for s in data.get("shots", [])):
         return ProductionStage.VIDEO_READY
+
+    video_generation_type = data.get("video_generation_type", "image_to_video")
+
+    # 检查视频提示词是否全部生成（在 image_to_video 模式下）
+    if video_generation_type == "image_to_video":
+        shots = data.get("shots", [])
+        if shots and all(s.get("extra_data", {}).get("video_prompt") for s in shots):
+            # 视频提示词全部生成完成
+            return ProductionStage.VIDEO_READY
+
     # 分镜图片全部生成完成
     if data.get("shots") and all(s.get("image_url") for s in data.get("shots", [])):
-        return ProductionStage.STORYBOARD_READY
+        if video_generation_type == "reference_to_video":
+            # reference_to_video 模式：图片生成完成即可进入 VIDEO_READY（等待视频提示词构建）
+            # 视频提示词的构建由 supervisor 在 STORYBOARD_READY 阶段触发
+            return ProductionStage.STORYBOARD_READY
+        else:
+            # image_to_video 模式：图片生成完成，还需要生成视频提示词
+            # 进入 SHOTS_READY 阶段，让用户确认图片后再继续
+            return ProductionStage.SHOTS_READY
+
     # 有分镜但图片未全部生成
     if data.get("shots"):
         return ProductionStage.STORYBOARD_GENERATING
-    
+
     # 检查角色和场景是否都有图片
     characters = data.get("characters", [])
     scenes = data.get("scenes", [])
@@ -47,7 +65,7 @@ def _infer_stage_from_data(data: dict) -> ProductionStage:
         else:
             # 有角色和场景但图片未全部生成，处于已分析状态
             return ProductionStage.SCRIPT_ANALYZED
-    
+
     if data.get("script_text"):
         return ProductionStage.SCRIPT_UPLOADED
     return ProductionStage.INIT
@@ -149,9 +167,11 @@ async def stage_router_node(state: ComicDramaState) -> Dict[str, Any]:
                     "characters": creation_data.get("characters", []),
                     "scenes": creation_data.get("scenes", []),
                     "production_stage": inferred_stage,
-                    "production_progress": production_progress,  # 同步更新
+                    "production_progress": production_progress,
+                    "video_model": creation_data.get("video_model"),
+                    "video_generation_type": creation_data.get("video_generation_type"),
                 })
-                logger.info(f"[SubgraphNode] 从数据库加载创作数据成功，阶段: {inferred_stage}, progress: {production_progress}")
+                logger.info(f"[SubgraphNode] 从数据库加载创作数据成功，阶段: {inferred_stage}, video_model={creation_data.get('video_model')}, video_generation_type={creation_data.get('video_generation_type')}")
         except Exception as e:
             logger.error(f"[SubgraphNode] 加载创作数据失败: {e}")
     
@@ -536,6 +556,7 @@ def build_comic_drama_subgraph() -> StateGraph:
     workflow.add_node("script_analysis", script_analysis_node)
     workflow.add_node("character_scene_generation", character_scene_generation_node)
     workflow.add_node("storyboard_creation", storyboard_creation_node)
+    workflow.add_node("shot_generation", shot_generation_node)
     workflow.add_node("video_prompt_builder", video_prompt_builder_node)
     workflow.add_node("audio_processing", audio_processing_node)
     workflow.add_node("video_generation", video_generation_node)
@@ -558,6 +579,7 @@ def build_comic_drama_subgraph() -> StateGraph:
             "script_analysis": "script_analysis",
             "character_scene_generation": "character_scene_generation",
             "storyboard_creation": "storyboard_creation",
+            "shot_generation": "shot_generation",
             "video_prompt_builder": "video_prompt_builder",
             "audio_processing": "audio_processing",
             "video_generation": "video_generation",
@@ -572,6 +594,7 @@ def build_comic_drama_subgraph() -> StateGraph:
         "script_analysis",
         "character_scene_generation",
         "storyboard_creation",
+        "shot_generation",
         "video_prompt_builder",
         "audio_processing",
         "video_generation",

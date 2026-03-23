@@ -168,6 +168,7 @@ async def get_creations_service(
     page_size: int = Query(20, ge=1, le=100, description="每页数量，最大100"),
     status: Optional[str] = Query(None, description="过滤状态"),
     title: Optional[str] = Query(None, description="按标题筛选（模糊匹配）"),
+    creation_type: Optional[str] = Query(None, description="创作类型筛选: chapter/script(动漫创作), chat(AI智能创作)"),
     order_by: str = Query("created_at", description="排序字段"),
     order: str = Query("desc", description="排序方向"),
     db: AsyncSession = Depends(get_async_db),
@@ -175,6 +176,11 @@ async def get_creations_service(
 ):
     """
     获取创作项目列表（支持分页）
+    
+    creation_type 筛选说明：
+    - chapter/script: 动漫创作（传统模式，基于小说章节）
+    - chat: AI智能创作（Agent 模式，对话式创作）
+    - 不传: 返回所有类型
     """
     try:
         from app.services.creation_async_service import CreationAsyncService
@@ -185,6 +191,7 @@ async def get_creations_service(
             page_size=page_size,
             status_filter=status,
             title_filter=title,
+            creation_type_filter=creation_type,
             order_by=order_by,
             order=order,
         )

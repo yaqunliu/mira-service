@@ -298,7 +298,7 @@ class ShotGenerationWorkerNode(ReActWorkerNode):
         result = {
             "response_text": final_response,
             "production_progress": production_progress,
-            "production_stage": ProductionStage.VIDEO_READY,  # 分镜图片完成
+            "production_stage": ProductionStage.SHOTS_READY,
             "tool_usage_summary": {
                 "query_count": query_count,
                 "template_count": template_count,
@@ -310,9 +310,9 @@ class ShotGenerationWorkerNode(ReActWorkerNode):
                 "failed_count": failed_count,
             },
             "worker_result": {
-                "worker": "shot_generator",
+                "worker": "shot_generation",
                 "response_text": final_response,
-                "production_stage": ProductionStage.VIDEO_READY,
+                "production_stage": ProductionStage.SHOTS_READY,
             },
         }
 
