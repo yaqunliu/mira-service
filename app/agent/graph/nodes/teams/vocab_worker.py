@@ -550,7 +550,7 @@ create_shots_batch([
             return {"success": True, "count": len(shots_data)}
         
         @tool
-        async def generate_videos_batch(shot_ids: List[int], model: str = "sora-2") -> Dict:
+        async def generate_videos_batch(shot_ids: List[int], model: str = "viduq3-pro") -> Dict:
             """
             批量生成视频
             
@@ -886,7 +886,7 @@ create_shots_batch([
                         generate_single_shot_video_task.delay(
                             shot_id=shot_id,
                             creation_id=self.creation_id,
-                            model_name=self.config.get("video_model", "sora-2"),
+                            model_name=self.config.get("video_model", "viduq3-pro"),
                             separate_audio=False,
                         )
                     await self._wait_videos_generated(failed_shot_ids)
@@ -945,7 +945,7 @@ create_shots_batch([
                 await db.close()
         
         @tool
-        async def regenerate_shot_video(shot_id: int, new_prompt: str = None, model: str = "sora-2") -> Dict:
+        async def regenerate_shot_video(shot_id: int, new_prompt: str = None, model: str = "viduq3-pro") -> Dict:
             """
             重新生成指定分镜的视频
             
@@ -1052,7 +1052,7 @@ create_shots_batch([
                         generate_single_shot_video_task.delay(
                             shot_id=shot_id,
                             creation_id=self.creation_id,
-                            model_name=self.config.get("video_model", "sora-2"),
+                            model_name=self.config.get("video_model", "viduq3-pro"),
                             separate_audio=False,
                         )
                     await self._wait_videos_generated(shots_without_video)
@@ -1116,7 +1116,7 @@ create_shots_batch([
                     creation_type="chat",
                     status="processing",
                     owner_id=self.user_id or 1,
-                    extra_data={"video_model": self.config.get("video_model", "sora-2")}
+                    extra_data={"video_model": self.config.get("video_model", "viduq3-pro")}
                 )
                 db.add(creation)
                 await db.flush()

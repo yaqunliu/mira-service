@@ -14,7 +14,7 @@ from app.core.logger import logger
 @tool
 async def submit_vocab_video_generation(
     shot_ids: List[int],
-    model: str = "sora-2",
+    model: str = "viduq3-pro",
 ) -> Dict[str, Any]:
     """
     提交 Vocab 视频生成任务 - 每个分镜单独提交
