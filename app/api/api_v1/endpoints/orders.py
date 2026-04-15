@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_async_db, get_current_user
 from app.schemas.order import OrderCreate, Order as OrderSchema, OrderList
 from app.schemas.refund import RefundRequest, RefundResponse
-from app.services.order_service import OrderService
+from app.services.order_async_service import OrderAsyncService
 from app.models.user import User
 
 router = APIRouter()
@@ -15,7 +15,7 @@ async def create_order(
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user),
 ):
-    order = await OrderService.create_order(
+    order = await OrderAsyncService.create_order(
         db=db,
         user=user,
         product_uuid=body.product_uuid,
@@ -33,7 +33,7 @@ async def get_order(
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user),
 ):
-    order = await OrderService.get_order_by_uuid(db, user, order_uuid)
+    order = await OrderAsyncService.get_order_by_uuid(db, user, order_uuid)
     return order
 
 
@@ -43,11 +43,9 @@ async def query_order_status(
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user),
 ):
-    from app.services.order_query_service import OrderQueryService
-    
-    order = await OrderService.get_order_by_uuid(db, user, order_uuid)
-    result = await OrderQueryService.query_order_status(db, order)
-    
+    order = await OrderAsyncService.get_order_by_uuid(db, user, order_uuid)
+    result = await OrderAsyncService.query_order_status(db, order)
+
     return {
         "order_uuid": order.uuid,
         "status": result.get("status"),
@@ -65,7 +63,7 @@ async def list_orders(
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user),
 ):
-    items, total = await OrderService.list_orders(
+    items, total = await OrderAsyncService.list_orders(
         db=db,
         user=user,
         status_filter=status,
@@ -85,8 +83,8 @@ async def refund_order(
 ):
     if not getattr(user, "is_admin", False):
         raise HTTPException(status_code=403, detail="无权限")
-    order = await OrderService.get_order_by_uuid(db, user, order_uuid)
-    return await OrderService.refund_order(
+    order = await OrderAsyncService.get_order_by_uuid(db, user, order_uuid)
+    return await OrderAsyncService.refund_order(
         db=db,
         order=order,
         force=body.force,

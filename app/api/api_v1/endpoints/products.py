@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_async_db
 from app.schemas.product import ProductList
-from app.services.product_service import ProductService
+from app.services.product_async_service import ProductAsyncService
 
 router = APIRouter()
 
@@ -16,7 +16,7 @@ async def list_products(
     page_size: int = Query(20, ge=1, le=200),
     db: AsyncSession = Depends(get_async_db),
 ):
-    items, total = await ProductService.list_products(
+    items, total = await ProductAsyncService.list_products(
         db=db,
         language=language,
         billing_type=billing_type,

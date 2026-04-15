@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, Path, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_async_db, get_current_user
 from app.schemas.subscription import SubscriptionList, SubscriptionCancelRequest, Subscription as SubscriptionSchema
-from app.services.subscription_service import SubscriptionService
+from app.services.subscription_async_service import SubscriptionAsyncService
 from app.models.user import User
 from typing import List
 
@@ -16,13 +16,13 @@ async def list_subscriptions(
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user),
 ):
-    items, total = await SubscriptionService.list_subscriptions(db, user.user_id, page, page_size)
+    items, total = await SubscriptionAsyncService.list_subscriptions(db, user.user_id, page, page_size)
     subscriptions = []
     for item in items:
         creem_subscription_id = None
         if item.creem_subscription:
             creem_subscription_id = item.creem_subscription.creem_subscription_id
-        
+
         sub_dict = {
             "uuid": str(item.uuid) if item.uuid else None,
             "subscription_id": item.subscription_id,
@@ -55,13 +55,13 @@ async def get_active_subscriptions(
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user),
 ):
-    items = await SubscriptionService.get_active_subscriptions_by_product(db, user.user_id)
+    items = await SubscriptionAsyncService.get_active_subscriptions_by_product(db, user.user_id)
     subscriptions = []
     for item in items:
         creem_subscription_id = None
         if item.creem_subscription:
             creem_subscription_id = item.creem_subscription.creem_subscription_id
-        
+
         sub_dict = {
             "uuid": str(item.uuid) if item.uuid else None,
             "subscription_id": item.subscription_id,
@@ -95,7 +95,7 @@ async def get_subscription_portal_url(
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user),
 ):
-    portal_url = await SubscriptionService.get_customer_portal_url(
+    portal_url = await SubscriptionAsyncService.get_customer_portal_url(
         db=db,
         user_id=user.user_id,
         subscription_uuid=subscription_uuid,
@@ -110,17 +110,17 @@ async def cancel_subscription(
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user),
 ):
-    subscription = await SubscriptionService.get_by_uuid(db, user.user_id, subscription_uuid)
+    subscription = await SubscriptionAsyncService.get_by_uuid(db, user.user_id, subscription_uuid)
     if not subscription:
         raise HTTPException(status_code=404, detail="订阅不存在")
-    
+
     if subscription.payment_method == "wechat":
         raise HTTPException(
             status_code=400,
             detail="微信订阅不支持取消功能（手动续费，无需取消）"
         )
-    
-    subscription = await SubscriptionService.cancel_subscription(
+
+    subscription = await SubscriptionAsyncService.cancel_subscription(
         db=db,
         user_id=user.user_id,
         subscription_uuid=subscription_uuid,
@@ -129,7 +129,7 @@ async def cancel_subscription(
     creem_subscription_id = None
     if subscription.creem_subscription:
         creem_subscription_id = subscription.creem_subscription.creem_subscription_id
-    
+
     sub_dict = {
         "uuid": str(subscription.uuid) if subscription.uuid else None,
         "subscription_id": subscription.subscription_id,

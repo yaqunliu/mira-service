@@ -48,7 +48,7 @@ async def creem_webhook(
         logger.info("✅ [CREEM WEBHOOK] 签名验证成功")
 
     logger.info(f"🔄 [CREEM WEBHOOK] 开始处理事件...")
-    result = await WebhookService.process_event(db, payload)
+    result = await db.run_sync(lambda sync_session: WebhookService.process_event(sync_session, payload))
     logger.info(f"✅ [CREEM WEBHOOK] 事件处理完成: {result}")
     logger.info("=" * 80)
     return result
@@ -104,7 +104,7 @@ async def wechat_webhook(
             logger.info("✅ [WECHAT WEBHOOK] 签名验证成功")
     
     logger.info(f"🔄 [WECHAT WEBHOOK] 开始处理回调...")
-    result = await WechatWebhookService.process_callback(db, payload, body_str)
+    result = await db.run_sync(lambda sync_session: WechatWebhookService.process_callback(sync_session, payload, body_str))
     logger.info(f"✅ [WECHAT WEBHOOK] 回调处理完成: {result}")
     logger.info("=" * 80)
     
