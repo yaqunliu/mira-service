@@ -1,0 +1,83 @@
+# ============================================================
+# Docker 构建上下文排除清单
+#
+# 目的：把构建上下文从约 484MB 压到 10MB 量级
+#       .venv(456MB) + .git(14MB) + documents(3.8MB) 占了 97%
+#
+# ⚠️ 以下路径被 Dockerfile COPY，绝不能排除：
+#      pyproject.toml / app/ / alembic/ / alembic.ini
+#      README.md / start_celery.sh / stop_celery.sh
+# ⚠️ docs/ 不能排除：app/agent/tools/voice_selection_tools.py:22,24
+#      运行时读取 docs/finalfish.json 与 docs/FISH_AUDIO_VOICES_REAL.json
+# ⚠️ uv.lock 不排除：将来 Dockerfile 补上 COPY uv.lock 时要用
+# ============================================================
+
+# ---- 虚拟环境 ----
+# 最大头。当前仓库里那份是容器内 uv run 通过 ./:/app 挂载漏到宿主机的
+# Linux ARM64 产物，对构建毫无用处。
+.venv/
+venv/
+
+# ---- Python 缓存与工具产物 ----
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- 版本控制 ----
+.git/
+.gitignore
+.gitattributes
+
+# ---- 密钥与环境文件 ----
+# 绝不打进镜像。运行时由 compose 的 env_file 和 bind mount 提供。
+.env
+.env.*
+
+# ---- 运行时产物 ----
+uploads/
+logs/
+**/*.log
+chroma_db/
+celerybeat-schedule*
+
+# ---- 大体积且非构建依赖 ----
+documents/
+
+# ---- 测试与一次性本地脚本 ----
+tests/
+test_*.py
+setup_test_data.py
+demo_agent_conversation.py
+debug_vocab.py
+generate_test_token.py
+generate_long_token.py
+add_points.py
+script_sql.py
+fetch_fish_voices.py
+
+# ---- 文档 ----
+# 注意：Dockerfile 有 COPY README.md，必须用 ! 重新放行（顺序不能颠倒）
+*.md
+!README.md
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.cursor/
+.claude/
+.agent/
+.DS_Store
+*.swp
+*.swo
+
+# ---- 构建本身不需要的 ----
+Dockerfile
+.dockerignore
+docker-compose.yml
+voice_selector.html
+skills-lock.json

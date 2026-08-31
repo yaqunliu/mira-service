@@ -157,14 +157,28 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 ## 阶段 2：后端 `.dockerignore`
 
-当前后端**没有** `.dockerignore`，构建上下文会把以下内容全量发给 Docker daemon：
+实测仓库体积 **484MB**，其中 `.venv` 456MB、`.git` 14MB、`documents/` 3.8MB —— 占 97%，
+在没有 `.dockerignore` 的情况下全部会被发给 Docker daemon。
 
-- `.git/`
-- `.venv/`（几百 MB，且是从容器漏到宿主机的 Linux ARM64 venv）
-- `uploads/`、`logs/`、`chroma_db/`
-- `__pycache__/`、各类 `*.md` 与根目录测试脚本
+- [x] 新建 `.dockerignore`，构建上下文降到 10MB 量级
 
-- [ ] 新建 `.dockerignore`
+**两个排除时必须避开的坑（已核查）：**
+
+1. **`README.md` 不能被 `*.md` 连带排除** —— `Dockerfile:24` 有 `COPY README.md ./`，
+   排除了会导致构建直接失败。用 `*.md` 后紧跟 `!README.md` 放行（顺序不可颠倒）。
+2. **`docs/` 不能排除** —— `app/agent/tools/voice_selection_tools.py:22,24` 运行时读
+   `docs/finalfish.json` 与 `docs/FISH_AUDIO_VOICES_REAL.json`（音色选择，在演示链路上）。
+   `documents/` 无任何代码引用，可以安全排除。
+
+另外 `uv.lock` 也保留未排除，供将来 Dockerfile 补 `COPY uv.lock` 时使用。
+
+**验证**：本机 Docker daemon 未运行，无法跑真实 build。改用脚本按 Docker 的匹配语义
+（逐条匹配、后匹配者胜、`!` 为例外）对 15 条必须保留路径 + 13 条应排除路径做判定，全部符合预期。
+**真实 build 验证留到阶段 4 在服务器上做** —— 若 `.dockerignore` 有误，第一次 `docker compose build`
+会立即报 COPY 失败，很好定位。
+
+> 顺带发现：`docs/` 同样没有被 Dockerfile COPY，目前也是靠 `./:/app` 挂载兜住的。
+> 已补进下方「已知问题清单」。
 
 ---
 
@@ -257,7 +271,10 @@ DEBUG_GENERATE_IMAGE=True
 DEBUG_GENERATE_VIDEO=True
 ```
 
-- [ ] 产出 `.env` 模板
+- [x] 产出 `env.docker.example`（另建一份，不改动现有 `.env`）
+      服务器上执行 `cp env.docker.example .env` 后逐项填写。
+      模板中 `REDIS_PASSWORD` / `DATABASE_PASSWORD` 留空，在服务器上用
+      `openssl rand -base64 24` 生成。
 
 ### 3.2 部署脚本 `deploy.sh`
 
@@ -277,7 +294,24 @@ DEBUG_GENERATE_VIDEO=True
 
 > 现有的 `migrate-docker.sh` **在新版 Docker 上跑不起来** —— 它用的是 v1 的 `docker-compose ps` / `docker-compose exec` 命令，新版 Docker 只有 `docker compose` 子命令。迁移这步直接并进 `deploy.sh`，旧脚本不再使用。
 
-- [ ] 产出 `deploy.sh`
+- [x] 产出 `deploy.sh`（已 `chmod +x`，`bash -n` 语法通过）
+
+支持 `--no-pull` / `--no-build` / `--skip-migrate` 三个开关，幂等可重复执行。
+
+**内置的 5 类配置校验**（都对应「不拦住就会在启动后才暴露、且报错极具误导性」的坑）：
+
+1. 必填项非空
+2. `DATABASE_URL` 必须为空，否则会覆盖 `DATABASE_HOST`
+3. `DATABASE_HOST` / `REDIS_*` 不得指向 `localhost`
+4. `SUPABASE_URL` 不得带 `/rest/v1` 等路径后缀
+5. 实际请求一次 JWKS 端点，非 200 时告警（非致命）
+
+**实测结果**：用当前 `.env` 的错误形态跑，5 类问题全部被拦下并中止；
+改成正确配置后校验通过，且 JWKS 探测返回 200。
+
+**两个实现细节**：
+- 健康检查用 `python -c` 而非 `curl` —— 镜像里只装了 `gcc/g++/ffmpeg/fonts-wqy-zenhei`，**没有 curl**
+- 读取 `.env` 用 `grep` 提取而非 `source`，避免 `.env` 内容被当成命令执行
 
 ---
 
@@ -353,6 +387,7 @@ DEBUG_GENERATE_VIDEO=True
 |---|---|---|---|
 | Dockerfile 未 `COPY uv.lock` | `Dockerfile:20` | 构建不锁依赖版本，可能漂移 | 决策 ③，IP 版跑通后 |
 | Dockerfile 未 `COPY start_celery_beat.sh` | `Dockerfile:25-26` | 镜像不完整，现靠 bind mount 兜住 | 同上 |
+| Dockerfile 未 `COPY docs/` | `Dockerfile:20-26` | 音色选择的数据文件不在镜像里，现靠 bind mount 兜住 | 同上 |
 | `./:/app` 全量挂载 | `docker-compose.yml` | 容器实际跑宿主机代码，镜像形同虚设 | 同上 |
 | `migrate-docker.sh` 用 v1 命令 | 全文件 | 在新 Docker 上直接失败 | 已被 `deploy.sh` 取代 |
 | `README.md` 引用的 `DEPLOYMENT.md` 不存在 | 前端 README | 文档断链 | 低优先 |
