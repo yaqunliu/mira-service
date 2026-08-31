@@ -1,6 +1,20 @@
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import quote
 from pydantic import AnyHttpUrl, PostgresDsn, ConfigDict, field_validator, model_validator
 from pydantic_settings import BaseSettings
+
+
+def _urlsafe(value: str) -> str:
+    """把凭证转义成可安全嵌入 URL userinfo 的形式。
+
+    密码里含 URL 保留字符（/ @ : # ? 等）时，裸拼进连接串会破坏 URL 结构：
+    例如 "ab/cd" 会让 authority 在 "/" 处截断，host/port 解析错位，
+    表现为 pydantic 的 "invalid port number"，或 Redis 侧静默连不上。
+
+    safe='' 表示连 "/" 也一并编码。SQLAlchemy 的 make_url 与 redis-py、
+    kombu 在解析时都会对 userinfo 做 unquote，所以编码后语义不变。
+    """
+    return quote(value, safe="")
 
 
 class Settings(BaseSettings):
@@ -40,10 +54,12 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def assemble_db_connection(self) -> "Settings":
         if self.DATABASE_URL is None:
+            # PostgresDsn.build 不会对 username/password 做 percent-encode，
+            # 这里必须自己转义，否则含 "/" 等字符的密码会破坏 URL 结构。
             self.DATABASE_URL = PostgresDsn.build(
                 scheme="postgresql",
-                username=self.DATABASE_USER,
-                password=self.DATABASE_PASSWORD,
+                username=_urlsafe(self.DATABASE_USER),
+                password=_urlsafe(self.DATABASE_PASSWORD),
                 host=self.DATABASE_HOST,
                 port=self.DATABASE_PORT,
                 path=self.DATABASE_NAME,
@@ -72,11 +88,16 @@ class Settings(BaseSettings):
             import re
             url_pattern = re.compile(r"redis://(?:([^:@]+):([^@]+)@)?([^:/]+):(\d+)/(\d+)")
             
+            # 密码同样要转义：REDIS_URL 声明为 str，pydantic 不做 URL 校验，
+            # 拼坏了不会在启动时报错，会一路带到运行时表现为
+            # 「worker 日志 ready 但任务永不执行」，比直接崩更难排查。
+            pw = _urlsafe(self.REDIS_PASSWORD)
+
             def build_redis_url_with_password(url: str) -> str:
                 match = url_pattern.match(url)
                 if match:
                     _, _, host, port, db = match.groups()
-                    return f"redis://:{self.REDIS_PASSWORD}@{host}:{port}/{db}"
+                    return f"redis://:{pw}@{host}:{port}/{db}"
                 return url
             
             self.REDIS_URL = build_redis_url_with_password(self.REDIS_URL)

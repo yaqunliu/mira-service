@@ -74,10 +74,21 @@ for k in DATABASE_HOST DATABASE_PORT DATABASE_USER DATABASE_PASSWORD DATABASE_NA
   fi
 done
 
-# 2.2 DATABASE_URL 必须为空，否则会覆盖 DATABASE_HOST 等字段
-if [ -n "$(getenv DATABASE_URL)" ]; then
-  err "DATABASE_URL 非空。config.py 会优先使用它并忽略 DATABASE_HOST，"
-  err "  导致即使 DATABASE_HOST=postgres 也依然连不上数据库。请清空这一项。"
+# 2.2 DATABASE_URL 必须整行注释掉（既不能有值，也不能是空值）
+#
+# 旧版本这里只拦「非空」，把真正会崩的「空值」放过去了 —— 空值不是安全的
+# 中间态，它比填错更糟：DATABASE_URL= 会让 pydantic 去解析空串并直接失败。
+if grep -qE '^[[:space:]]*DATABASE_URL=' .env; then
+  if [ -z "$(getenv DATABASE_URL)" ]; then
+    err "DATABASE_URL= 是空值。声明类型为 Optional[PostgresDsn]（config.py:38），"
+    err "  Optional 指可以是 None，不是可以是空字符串。空串会解析失败："
+    err "    ValidationError: Input should be a valid URL, input is empty"
+  else
+    err "DATABASE_URL 非空。assemble_db_connection（config.py:41）只在它为 None"
+    err "  时才自动拼装，非空会直接生效并忽略 DATABASE_HOST，"
+    err "  导致即使 DATABASE_HOST=postgres 也依然连不上数据库。"
+  fi
+  err "  修复：把 .env 里这一行整行注释掉（前面加 #），连接串会自动拼装。"
   FATAL=1
 fi
 
@@ -100,10 +111,117 @@ if echo "$SB_URL" | grep -qE '/(rest|auth|storage|realtime)/v[0-9]'; then
   FATAL=1
 fi
 
+# 2.5 密码字符集
+#
+# 两个密码都会被「裸拼」进连接 URL，代码里不做 percent-encode：
+#   config.py:42-49   PostgresDsn.build(password=self.DATABASE_PASSWORD, ...)
+#   config.py:79      f"redis://:{self.REDIS_PASSWORD}@{host}:{port}/{db}"
+#
+# 因此密码含 URL 保留字符时会出问题，且两者的表现完全不同：
+#   - DATABASE_PASSWORD 含 "/" → authority 被截断，host/port 解析错位，
+#     启动即报 ValidationError: invalid port number（好查）
+#   - REDIS_PASSWORD 同样被截断，但 REDIS_URL 在 config.py:61 声明为 str，
+#     pydantic 不做 URL 校验，错误会一路带到运行时 —— 表现为
+#     「worker 起来了、日志也 ready，但任务永远不执行」（极难查）
+#
+# 所以这里对 Redis 密码和数据库密码用同一套标准，宁严勿松。
+# 生成安全密码：openssl rand -hex 32
+#
+# 注：根治办法是在 config.py 两处对密码做 urllib.parse.quote_plus()，
+#     那样任意密码都能用。本检查是在代码修好之前的前置拦截。
+PW_FATAL_RE='[/@:#?%]|[[:space:]]'      # 确定会破坏 URL 结构
+PW_UNRESERVED_RE='^[A-Za-z0-9._~-]+$'   # RFC 3986 unreserved，最安全的集合
+
+for k in DATABASE_PASSWORD REDIS_PASSWORD; do
+  v="$(getenv "$k")"
+  [ -z "$v" ] && continue               # 空值已由 2.1 拦截，不重复报
+  if printf '%s' "$v" | grep -qE "$PW_FATAL_RE"; then
+    err "$k 含会破坏 URL 结构的字符（/ @ : # ? % 或空白）"
+    err "  该密码会被裸拼进连接 URL（见本节注释），不做转义。"
+    err "  修复：openssl rand -hex 32   然后更新 .env"
+    if [ "$k" = "DATABASE_PASSWORD" ]; then
+      err "  ⚠️ 改 DATABASE_PASSWORD 后必须重建数据卷才生效"
+      err "     （POSTGRES_PASSWORD 只在卷为空时初始化一次）："
+      err "       无数据：docker compose down -v"
+      err "       有数据：先 pg_dump 导出，重建后再导入"
+    fi
+    FATAL=1
+  elif ! printf '%s' "$v" | grep -qE "$PW_UNRESERVED_RE"; then
+    warn "$k 含 RFC 3986 unreserved 之外的字符（如 + & = , ; ! \$ 等）"
+    warn "  目前多数驱动能容忍，但不保证；建议换成 openssl rand -hex 32 生成的值"
+  fi
+done
+
+# 2.6 通用兜底：空值 + 非 str 类型
+#
+# 前面 2.2 / 2.5 拦的是已知的具体坑。这一条是通用规则，config.py 以后新增
+# Optional/List/int/bool 字段时自动覆盖，不用再回来加规则。
+#
+# 规则来源：.env 里的 «KEY=» 表示「值是空字符串」，不是「未设置」。
+# 只有声明为 str 的字段能接受空串；其余类型都会在启动时解析失败：
+#   List[...]  → SettingsError（json.loads 阶段，field_validator 来不及执行）
+#   Optional[X]、int、bool → ValidationError
+# 要表达「不设置」，必须把整行注释掉。
+if [ -f app/core/config.py ]; then
+  # 第一遍读 config.py 建「字段 → 声明类型」表，第二遍扫 .env 的空值键。
+  # DATABASE_URL 已由 2.2 给出更具体的提示，这里跳过避免重复报错。
+  EMPTY_BAD=$(awk '
+    FNR==NR {
+      if (match($0, /^[ \t]+[A-Z][A-Z0-9_]*[ \t]*:/)) {
+        name = substr($0, 1, index($0, ":") - 1); gsub(/[ \t]/, "", name)
+        rest = substr($0, index($0, ":") + 1)
+        eq = index(rest, "=")
+        if (eq > 0) rest = substr(rest, 1, eq - 1)
+        gsub(/^[ \t]+|[ \t]+$/, "", rest)
+        if (rest != "") type[name] = rest
+      }
+      next
+    }
+    /^[A-Z][A-Z0-9_]*=/ {
+      key = substr($0, 1, index($0, "=") - 1)
+      if (key == "DATABASE_URL") next
+      t = type[key]
+      if (t == "") next
+      val = substr($0, index($0, "=") + 1)
+      gsub(/^[ \t]+|[ \t\r]+$/, "", val)
+      if (val == "") {
+        if (t != "str" && t != "Optional[str]") printf "%s|%s|EMPTY\n", key, t
+      } else if (t ~ /^(List|Set|Tuple)/) {
+        # 复杂类型的值必须是合法 JSON。这里只做括号形状的近似判断 ——
+        # 足以拦住 «ALLOWED_HOSTS=*» 和 «CORS=http://x,http://y» 这两类真实写法。
+        if (val !~ /^\[.*\]$/) printf "%s|%s|NOTJSON\n", key, t
+      } else if (t ~ /^Dict/) {
+        if (val !~ /^\{.*\}$/) printf "%s|%s|NOTJSON\n", key, t
+      }
+    }
+  ' app/core/config.py .env)
+
+  if [ -n "$EMPTY_BAD" ]; then
+    while IFS='|' read -r key typ reason; do
+      [ -z "$key" ] && continue
+      if [ "$reason" = "EMPTY" ]; then
+        err "$key= 是空值，但 config.py 声明为 $typ —— 空字符串无法通过验证"
+        case "$typ" in
+          List*|Set*|Tuple*|Dict*)
+            err "  要么整行注释掉，要么填合法 JSON，例如 [\"http://x\"] / [\"*\"]" ;;
+          *)
+            err "  «KEY=» 是空字符串而非未设置。请把整行注释掉以使用默认值。" ;;
+        esac
+      else
+        err "$key 的值不是合法 JSON，但 config.py 声明为 $typ"
+        err "  pydantic-settings 对复杂类型会先做 json.loads，裸值/逗号分隔都会失败："
+        err "    正确：$key=[\"*\"]        错误：$key=*"
+        err "    正确：$key=[\"http://a\",\"http://b\"]   错误：$key=http://a,http://b"
+      fi
+      FATAL=1
+    done <<< "$EMPTY_BAD"
+  fi
+fi
+
 [ "$FATAL" -eq 0 ] || { echo; err "配置校验未通过，已中止。"; exit 1; }
 ok ".env 校验通过"
 
-# 2.5 JWKS 连通性（非致命，但登录能否成功全看它）
+# 2.7 JWKS 连通性（非致命，但登录能否成功全看它）
 if command -v curl >/dev/null 2>&1; then
   JWKS="${SB_URL%/}/auth/v1/.well-known/jwks.json"
   CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$JWKS" || echo 000)

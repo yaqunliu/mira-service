@@ -203,6 +203,15 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 | 3 | `REDIS_URL` / `REDIS_BROKER_URL` / `REDIS_BACKEND_URL` | `redis://localhost:6379/N` | `redis://redis:6379/N` | 🔴 Celery 任务全不执行 |
 | 4 | `REDIS_PASSWORD` | 空 | 强密码 | 🔴 compose `:?` 直接拒绝启动 |
 | 5 | `DEBUG` | `True` | `False` | 🟡 会开放 `/points/test/add-points` |
+| 6 | `DATABASE_URL` | `=`（空值） | **整行注释掉** | 🔴 `Optional[PostgresDsn]` 解析空串失败，启动即崩 |
+| 7 | `BACKEND_CORS_ORIGINS` | `=`（空值） | **整行注释掉** | 🔴 `List` 类型先做 `json.loads`，空串非法 JSON |
+| 8 | `ALLOWED_HOSTS` | `*` | `["*"]` | 🔴 同上，裸值非法 JSON |
+| 9 | 两个密码 | `openssl rand -base64` 生成 | `openssl rand -hex 32` | 🔴 `/` 截断连接 URL；Redis 侧还是静默失败 |
+
+> **6-9 是实际部署时新踩到的**，`env.docker.example` / `deploy.sh` / `config.py` 均已修。
+> 统一的认知：`.env` 里 `KEY=` 是「空字符串」而非「未设置」——
+> 只有声明为 `str` 的字段能接受空串，`Optional[X]` / `List[X]` / `int` / `bool` 都会解析失败。
+> `deploy.sh` 的 2.6 已加通用兜底检查，`config.py` 以后新增此类字段会被自动覆盖。
 
 **#1 的细节**：多带了 `/rest/v1/` 后缀（那是 Data API 地址，不是 Project URL）。已实测：
 
@@ -247,11 +256,34 @@ SUPABASE_JWT_SECRET=
 **CORS / DEBUG**
 ```
 DEBUG=False
-BACKEND_CORS_ORIGINS=
+# BACKEND_CORS_ORIGINS=["http://example.com"]
+ALLOWED_HOSTS=["*"]
 ```
-方案 B 下浏览器只与前端同源通信，**不需要配 CORS**，留空即可。
-（若将来改回方案 A 直连，必须填 `http://45.130.164.189:8001`，否则 `DEBUG=False` + 空值时
-`app/main.py` 根本不装载 CORS 中间件，只打一句 `UserWarning`，浏览器侧全被拦却查不出原因。）
+
+> 🔴 **实际部署时踩到的坑（已修，记录原因）**：这两个字段声明为
+> `List[AnyHttpUrl]` / `List[str]`（`config.py:20-21`），pydantic-settings 对复杂类型
+> 会**先做 `json.loads`**，因此：
+>
+> | 写法 | 结果 |
+> |---|---|
+> | `BACKEND_CORS_ORIGINS=` | 🔴 空串非法 JSON → `SettingsError`，启动失败 |
+> | `ALLOWED_HOSTS=*` | 🔴 裸值非法 JSON → 同上 |
+> | `BACKEND_CORS_ORIGINS=http://a,http://b` | 🔴 逗号分隔也非法 JSON → 同上 |
+> | 整行注释掉 | ✅ 用类定义的默认值 |
+> | `ALLOWED_HOSTS=["*"]` | ✅ |
+>
+> 关键认知：**`.env` 里的 `KEY=` 表示「值是空字符串」，不是「未设置」。**
+> 要表达「不设置」必须整行注释。`config.py:23` 那个 `mode="before"` 的
+> field_validator 是按 pydantic v1 语义写的，在 v2 下对环境变量输入已失效
+> （报错发生在配置源层，validator 来不及执行）。
+>
+> `ALLOWED_HOSTS` 保持 `["*"]`：方案 B 下后端收到的 `Host` 是 `mira-api:8100`，
+> 公网 IP 它看不到，收紧成公网地址会把所有请求拦掉。
+
+方案 B 下浏览器只与前端同源通信，**不需要配 CORS**（注释掉即可）。
+若将来改回方案 A 直连，必须填成 **JSON 数组** `["http://45.130.164.189:8001"]`——
+否则 `DEBUG=False` + 未配置时 `app/main.py` 根本不装载 CORS 中间件，
+只打一句 `UserWarning`，浏览器侧全被拦却查不出原因。
 
 `DEBUG` 保持 `False`：设为 `True` 会额外开放 `/points/test/add-points`（可给任意用户加积分）。
 注册自动送 10000 积分，演示够用。
@@ -274,7 +306,12 @@ DEBUG_GENERATE_VIDEO=True
 - [x] 产出 `env.docker.example`（另建一份，不改动现有 `.env`）
       服务器上执行 `cp env.docker.example .env` 后逐项填写。
       模板中 `REDIS_PASSWORD` / `DATABASE_PASSWORD` 留空，在服务器上用
-      `openssl rand -base64 24` 生成。
+      **`openssl rand -hex 32`** 生成。
+      > ⚠️ 不要用 `openssl rand -base64` —— 字符集含 `/` `+` `=`，密码里的 `/`
+      > 会截断连接 URL 的 authority，导致 `invalid port number`（数据库侧启动即崩），
+      > 或 Redis 侧静默连不上（`REDIS_URL` 声明为 `str` 不做校验，
+      > 表现为「worker 日志 ready 但任务永不执行」）。
+      > `config.py` 现已对密码做 percent-encode（`_urlsafe()`），但 `-hex` 更省事。
 
 ### 3.2 部署脚本 `deploy.sh`
 
@@ -402,6 +439,8 @@ DEBUG_GENERATE_VIDEO=True
 | Dockerfile 未 `COPY docs/` | `Dockerfile:20-26` | 音色选择的数据文件不在镜像里，现靠 bind mount 兜住 | 同上 |
 | `./:/app` 全量挂载 | `docker-compose.yml` | 容器实际跑宿主机代码，镜像形同虚设 | 同上 |
 | `migrate-docker.sh` 用 v1 命令 | 全文件 | 在新 Docker 上直接失败 | 已被 `deploy.sh` 取代 |
+| ~~密码未 URL 编码~~ | `config.py:42-49` / `:79` | ~~含 `/` 的密码破坏连接 URL~~ | ✅ 已修：新增 `_urlsafe()` |
+| `assemble_cors_origins` 是死代码 | `config.py:23-30` | `mode="before"` 在 pydantic v2 下收不到环境变量原值（报错发生在配置源层），逗号分隔语法实际不可用 | 低优先，删掉或改用 `NoDecode` 注解 |
 | `README.md` 引用的 `DEPLOYMENT.md` 不存在 | 前端 README | 文档断链 | 低优先 |
 | `waitForSupabaseToken` 是死函数 | 前端 utils | 无人调用 | 低优先 |
 | 前端 74 条既有 TS 类型错误 | 全项目 | 被 `ignoreBuildErrors: true` 绕过 | 低优先 |
@@ -445,8 +484,9 @@ git pull origin master
 cp env.docker.example .env
 
 # 生成两个强密码填进 .env 的 DATABASE_PASSWORD / REDIS_PASSWORD
-openssl rand -base64 24
-openssl rand -base64 24
+# 必须用 -hex：-base64 的字符集含 / + = ，"/" 会破坏连接 URL
+openssl rand -hex 32
+openssl rand -hex 32
 
 vi .env
 #   必填：DATABASE_PASSWORD / REDIS_PASSWORD
