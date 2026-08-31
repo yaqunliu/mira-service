@@ -1,37 +1,42 @@
-version: '3.8'
-
 services:
   # PostgreSQL数据库
   postgres:
     image: postgres:15
     container_name: video_generator_db
     environment:
-      POSTGRES_DB: video_generator
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      # 全部从 .env 读取，且缺失时直接启动失败（:? 语法），避免悄悄用弱密码起来
+      POSTGRES_DB: ${DATABASE_NAME:?DATABASE_NAME 未在 .env 中设置}
+      POSTGRES_USER: ${DATABASE_USER:?DATABASE_USER 未在 .env 中设置}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD 未在 .env 中设置}
       TZ: Asia/Shanghai
     ports:
-      - "5432:5432"
+      # 只绑本机：容器间通过 video_generator_network 互访，不需要暴露到公网
+      # 需要本地调试时用 SSH 隧道：ssh -L 5432:127.0.0.1:5432 user@server
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     networks:
       - video_generator_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
   # Redis缓存 (Celery Broker/Backend)
   redis:
     image: redis:7-alpine
     container_name: video_generator_redis
-    env_file:
-      - .env
     environment:
       TZ: Asia/Shanghai
-      # Redis 密码从 .env 文件中的 REDIS_PASSWORD 读取
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # 密码必填：不再保留「无密码启动」的分支
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD 未在 .env 中设置}
     ports:
-      - "6379:6379"
+      # 只绑本机，理由同 postgres
+      - "127.0.0.1:6379:6379"
     volumes:
       # Redis 数据持久化到命名卷
       - redis_data:/data
@@ -39,25 +44,24 @@ services:
       - /etc/timezone:/etc/timezone:ro
     networks:
       - video_generator_network
-    restart: unless-stopped
-    # Redis 启动命令：启用 AOF 持久化并设置密码
-    # 从环境变量 REDIS_PASSWORD 读取密码
+    # 启用 AOF 持久化并强制设置密码
     command: >
-      sh -c "
-      if [ -n \"$$REDIS_PASSWORD\" ]; then
-        redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\"
-      else
-        echo '警告: Redis 未设置密码，仅适用于开发环境！'
-        redis-server --appendonly yes
-      fi
-      "
+      sh -c "redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
 
   # FastAPI应用
   api:
     build: .
     container_name: video_generator_api
     ports:
-      - "8100:8100"
+      # 不对公网暴露：前端通过共享网络 mira-net 以 http://mira-api:8100 访问
+      # 需要调试时用 SSH 隧道：ssh -L 8100:127.0.0.1:8100 user@server
+      - "127.0.0.1:8100:8100"
     env_file:
       - .env
     environment:
@@ -66,8 +70,10 @@ services:
       - PYTHONIOENCODING=utf-8
       - TZ=Asia/Shanghai
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       # - ./uploads:/app/uploads
       # - ./logs:/app/logs
@@ -76,41 +82,44 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     networks:
-      - video_generator_network
+      video_generator_network:
+      # 前端容器所在的共享网络；别名 mira-api 供前端 rewrites 使用
+      mira_shared:
+        aliases:
+          - mira-api
     command: uvicorn app.main:app --host 0.0.0.0 --port 8100
     restart: unless-stopped
-      
-  # Celery定时任务调度器 Beat 服务（只启动一个实例）
-  celery_beat:
-    build: .
-    container_name: video_generator_celery_beat
-    env_file:
-      - .env
-    environment:
-      # 保持与 API 相同的语言环境配置
-      - LANG=C.UTF-8
-      - LC_ALL=C.UTF-8
-      - PYTHONIOENCODING=utf-8
-      - TZ=Asia/Shanghai
-    # Celery Beat 依赖于 Redis (作为 Broker) 和 PostgreSQL (如果任务需要访问数据库)
-    depends_on:
-      - postgres
-      - redis
-    volumes:
-      # 挂载卷以访问上传文件和日志
-      # - ./uploads:/app/uploads
-      # - ./logs:/app/logs
-      - ./:/app
-      - /tmp:/tmp
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
-    networks:
-      - video_generator_network
-    # 启动 Celery Beat 的命令（定时任务调度器）
-    command: bash start_celery_beat.sh
-    restart: unless-stopped
 
-  # Celery任务处理 Worker 服务（可以启动多个实例）
+  # Celery定时任务调度器 Beat 服务
+  # 演示期已关闭：其定时任务全部是积分过期 / 订阅续费 / 订单轮询，
+  # 暂不接支付时用不到，关闭可省约 300MB 内存（2C4G 机器上很关键）。
+  # 需要恢复时取消注释即可。
+  # celery_beat:
+  #   build: .
+  #   container_name: video_generator_celery_beat
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - LANG=C.UTF-8
+  #     - LC_ALL=C.UTF-8
+  #     - PYTHONIOENCODING=utf-8
+  #     - TZ=Asia/Shanghai
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./:/app
+  #     - /tmp:/tmp
+  #     - /etc/localtime:/etc/localtime:ro
+  #     - /etc/timezone:/etc/timezone:ro
+  #   networks:
+  #     - video_generator_network
+  #   command: celery -A app.core.celery_app.app beat -l INFO
+  #   restart: unless-stopped
+
+  # Celery任务处理 Worker 服务
   celery_worker:
     build: .
     container_name: video_generator_celery_worker
@@ -122,10 +131,11 @@ services:
       - LC_ALL=C.UTF-8
       - PYTHONIOENCODING=utf-8
       - TZ=Asia/Shanghai
-    # Celery 依赖于 Redis (作为 Broker) 和 PostgreSQL (如果任务需要访问数据库)
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       # 挂载卷以访问上传文件和日志
       # - ./uploads:/app/uploads
@@ -136,8 +146,13 @@ services:
       - /etc/timezone:/etc/timezone:ro
     networks:
       - video_generator_network
-    # 启动 Celery Worker 的命令
-    command: bash start_celery.sh
+    # 直接调用 celery，不再走 start_celery.sh：
+    #   1) 该脚本含 read -p 交互确认，容器无 TTY 时会读到空值并 exit 1，
+    #      在 restart: unless-stopped 下会进入重启循环
+    #   2) 脚本用的是 uv run，会在挂载的宿主机目录里生成 .venv
+    # 并发从 4 降到 2：2C4G 机器上 prefork 每个子进程都要完整加载 langchain/chromadb，
+    # concurrency=4 会把内存顶到 OOM。内存仍紧张时可继续降到 1。
+    command: celery -A app.core.celery_app.app worker -l INFO --pool=prefork --concurrency=2
     restart: unless-stopped
 
 volumes:
@@ -151,3 +166,7 @@ volumes:
 networks:
   video_generator_network:
     driver: bridge
+  # 与前端共享的外部网络，需先手工创建：docker network create mira-net
+  mira_shared:
+    external: true
+    name: mira-net
