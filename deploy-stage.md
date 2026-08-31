@@ -331,26 +331,38 @@ DEBUG_GENERATE_VIDEO=True
 
 ## 阶段 5：前端
 
-- [ ] `package.json` 增加 `"packageManager": "pnpm@10.25.0"`
-      理由：Dockerfile 用了 `corepack enable`，但 `package.json` 无 `packageManager` 字段；lockfile 是 `lockfileVersion: '9.0'`，需 pnpm 9+。若 corepack 解析到 pnpm 8，`--frozen-lockfile` 会直接构建失败。
-- [ ] **修两个硬编码兜底页面**（见 0.5 节 B）：`|| 'http://localhost:8000'` → `|| ''`
-- [ ] `Dockerfile` builder 阶段加 `ARG BACKEND_URL` / `ENV BACKEND_URL`（见 0.5 节 A）
-- [ ] `docker-compose.yml`：
-      - 加入 external 网络 `mira-net`
-      - build args 增加 `BACKEND_URL=http://mira-api:8100`
-      - **`NEXT_PUBLIC_API_URL` 显式置空并删掉那个默认值**
-        （现值 `${NEXT_PUBLIC_API_URL:-https://api-creator.mira-studio.ai}` 是 `:-` 形式，
-        把变量设成空字符串仍会回落到默认值，而该域名已确认 NXDOMAIN）
-      - Supabase 两个变量改用 `:?` 形式，缺失时构建直接失败，避免把 `undefined` 烘进产物
-- [ ] 写 `.env.docker`：
-      ```
-      PORT=8001
-      NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
-      NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
-      ```
+### 5.1 代码改动（本机已完成）
+
+- [x] `package.json` 增加 `"packageManager": "pnpm@10.25.0"`
+      理由：Dockerfile 用了 `corepack enable`，但原先没有 `packageManager` 字段；lockfile 是
+      `lockfileVersion: '9.0'` 需 pnpm 9+。若 corepack 解析到 pnpm 8，`--frozen-lockfile` 直接构建失败。
+- [x] **修两个硬编码兜底页面**（见 0.5 节 B）：`|| 'http://localhost:8000'` → `|| ''`
+      - `src/app/[locale]/create-dynamic-comic/page.tsx:19`
+      - `src/app/[locale]/dynamic-comic-editor/page.tsx:57`
+      已确认这两页的请求全部形如 `${API_BASE_URL}/api/v1/...`，正好落在 rewrites 覆盖范围内。
+- [x] `Dockerfile`：builder 阶段加 `ARG/ENV BACKEND_URL`（默认 `http://mira-api:8100`），
+      并把 `NEXT_PUBLIC_API_URL` 的死域名默认值改为空串
+- [x] `docker-compose.yml` 重写：
+      - 接入 external 网络 `mira_shared` → `mira-net`
+      - build args 增加 `BACKEND_URL`
+      - `NEXT_PUBLIC_API_URL` **写死空串**（不再从环境变量取 —— `${VAR:-default}` 在变量为
+        空字符串时仍回落到默认值，这个坑绕不过去，只能写死）
+      - Supabase 两个变量改 `:?`，缺失时构建直接失败
+      - **顺手修掉一个端口错配隐患**：原 `PORT: ${PORT:-8001}` 配合 `ports "${PORT}:8001"`，
+        一旦 `PORT=9000`，容器会监听 9000 而端口映射目标仍是 8001。现改为容器内固定 8001，
+        `PORT` 只控制宿主机端口。
+- [x] `.env.docker.example` 重写为方案 B 版本
+
+**验证**：`docker compose config` 渲染正确（`BACKEND_URL: http://mira-api:8100`、
+`NEXT_PUBLIC_API_URL: ""`、`mira-net` external、容器端口固定 8001）；缺 Supabase 变量时按预期拒绝；
+`tsc --noEmit` 错误数 74，与改动前基线一致，无新增。
+
+### 5.2 服务器上执行
+
+- [ ] `cp .env.docker.example .env.docker`，填两个 Supabase 值
 - [ ] **构建前先停掉 celery worker 腾内存**：后端目录 `docker compose stop celery_worker`
 - [ ] `docker compose --env-file .env.docker up -d --build`
-- [ ] 构建完成后恢复 worker：`docker compose start celery_worker`
+- [ ] 构建完成后恢复 worker：后端目录 `docker compose start celery_worker`
 
 > 🔴 **本阶段最容易踩的坑**：`NEXT_PUBLIC_*` 和 `BACKEND_URL` 都是 **构建时** 固化的，不是运行时读取。
 > 改了任何一个之后，**必须 `--build` 重新构建**，光重启容器无效。
@@ -395,6 +407,118 @@ DEBUG_GENERATE_VIDEO=True
 | 前端 74 条既有 TS 类型错误 | 全项目 | 被 `ignoreBuildErrors: true` 绕过 | 低优先 |
 | `ENV` 变量在 Python 代码中完全未使用 | `config.py` | 无 | 低优先 |
 | `SECRET_KEY` / `ALGORITHM` 为遗留死配置 | `config.py` / `security.py` | 认证已全走 Supabase，可留空 | 低优先 |
+
+---
+
+## 附录：服务器执行手册
+
+以下命令在服务器上按顺序执行。`<BE>` = 后端仓库路径，`<FE>` = 前端仓库路径。
+
+### A. 一次性准备
+
+```bash
+# 1. 确认 Docker（必须是 compose v2 子命令）
+docker --version && docker compose version
+
+# 2. 建 4GB swap（2C4G 机器上是前端构建和内存尖峰的保命绳）
+sudo fallocate -l 4G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+free -h
+
+# 3. 防火墙：只放行 SSH 与前端端口
+#    后端 8100 走容器内部网络，不需要对外
+sudo ufw allow 22/tcp && sudo ufw allow 8001/tcp
+sudo ufw enable && sudo ufw status
+
+# 4. 创建前后端共享网络
+docker network create mira-net
+```
+
+### B. 后端
+
+```bash
+cd <BE>
+git pull origin master
+
+cp env.docker.example .env
+
+# 生成两个强密码填进 .env 的 DATABASE_PASSWORD / REDIS_PASSWORD
+openssl rand -base64 24
+openssl rand -base64 24
+
+vi .env
+#   必填：DATABASE_PASSWORD / REDIS_PASSWORD
+#         SUPABASE_URL（Project URL，不带 /rest/v1）/ SUPABASE_ANON_KEY
+#   出片还需要：OPENAI_API_KEY / OPENAI_BASE_URL / FISH_AUDIO_API_KEY / US3_*
+#   先跑通链路建议保留 DEBUG_GENERATE_IMAGE=True / DEBUG_GENERATE_VIDEO=True
+
+./deploy.sh
+```
+
+`deploy.sh` 会自己校验配置、建网络、构建、启动、等就绪、跑迁移、健康检查。
+配置有问题会在构建前就中止并说明原因。
+
+### C. 前端
+
+```bash
+cd <FE>
+git pull origin master
+
+cp .env.docker.example .env.docker
+vi .env.docker      # 填 NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
+                    # 必须与后端 .env 是同一个 Supabase 项目
+
+# 构建吃约 2GB 内存，先把 worker 停掉让路
+(cd <BE> && docker compose stop celery_worker)
+
+docker compose --env-file .env.docker up -d --build
+
+# 构建完恢复 worker
+(cd <BE> && docker compose start celery_worker)
+
+docker compose logs -f mira-fe
+```
+
+### D. 验证
+
+```bash
+# 后端健康（8100 不对外，从容器内查）
+cd <BE> && docker compose exec -T api python -c \
+  "import urllib.request;print(urllib.request.urlopen('http://localhost:8100/health').read().decode())"
+
+# 前端能否通过共享网络访问后端 —— 这是方案 B 的关键链路
+cd <FE> && docker compose exec mira-fe node -e \
+  "fetch('http://mira-api:8100/health').then(r=>r.text()).then(console.log).catch(e=>console.error('FAIL',e.message))"
+
+# 内存占用（关注总量是否接近 4G）
+docker stats --no-stream
+
+# 浏览器打开
+#   http://45.130.164.189:8001
+```
+
+浏览器里重点看 Network 面板：`/api/v1/*` 请求应发往 `45.130.164.189:8001`（同源）
+并返回 200 —— 若发往别的地址，说明 `NEXT_PUBLIC_API_URL` 没有正确置空，需重新 `--build`。
+
+### E. 常用运维
+
+```bash
+cd <BE>
+docker compose logs -f api
+docker compose logs -f celery_worker
+docker compose ps
+./deploy.sh --no-pull --no-build     # 只重启并重跑迁移
+./deploy.sh --skip-migrate           # 跳过迁移
+
+# 内存吃紧时把并发降到 1：编辑 docker-compose.yml 的 --concurrency=2 → 1
+docker compose up -d celery_worker
+
+# 需要临时调后端接口时开隧道，本地即可访问 Swagger
+# ssh -L 8100:127.0.0.1:8100 <user>@45.130.164.189
+# 然后本地浏览器打开 http://localhost:8100/docs
+```
 
 ---
 
