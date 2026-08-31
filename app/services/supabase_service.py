@@ -1,33 +1,10 @@
 import os
-import base64
 from typing import Optional, Dict, Any
 from supabase import create_client, Client
 from jose import jwt, JWTError
 from app.core.config import settings
 from app.core.logger import logger
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.backends import default_backend
-
-
-def _get_supabase_ec_public_key():
-    """获取 Supabase 的 EC P-256 公钥用于 ES256 验证
-    
-    JWK 格式的坐标是 Base64URL 编码的，需要正确解码
-    """
-    x_b64url = "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4"
-    y_b64url = "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ"
-    
-    x_bytes = base64.urlsafe_b64decode(x_b64url + "==")
-    y_bytes = base64.urlsafe_b64decode(y_b64url + "==")
-    
-    uncompressed_point = b"\x04" + x_bytes + y_bytes
-    
-    public_key = ec.EllipticCurvePublicKey.from_encoded_point(
-        ec.SECP256R1(),
-        uncompressed_point
-    )
-    
-    return public_key
+from app.core.jwks import ASYMMETRIC_ALGORITHMS, verify_asymmetric_token
 
 
 class SupabaseService:
@@ -53,21 +30,24 @@ class SupabaseService:
         验证 Supabase JWT token
         返回解码后的 payload，如果无效则返回 None
         
-        自动检测 token 的算法（HS256 或 ES256）并使用对应的验证方式
+        自动检测 token 的算法并使用对应的验证方式：
+        - ES256 / RS256（Supabase 云项目默认）：从 JWKS 端点动态获取公钥验签，
+          只依赖 SUPABASE_URL，不需要 SUPABASE_JWT_SECRET
+        - HS256（本地 supabase CLI 或 legacy 共享密钥）：使用 SUPABASE_JWT_SECRET
         """
         try:
-            if not self.supabase_jwt_secret:
-                logger.warning("未配置 SUPABASE_JWT_SECRET，无法验证 token")
-                logger.warning("请运行 'supabase status --output json' 获取 JWT_SECRET 值")
-                return None
-            
             alg = self._get_token_algorithm(token)
             # logger.info(f"检测到 token 算法: {alg}")
-            
-            if alg == "ES256":
-                return self._verify_token_es256(token)
-            else:
-                return self._verify_token_hs256(token)
+
+            if alg in ASYMMETRIC_ALGORITHMS:
+                return verify_asymmetric_token(token)
+
+            if not self.supabase_jwt_secret:
+                logger.warning(f"token 使用 {alg} 算法，但未配置 SUPABASE_JWT_SECRET，无法验证")
+                logger.warning("本地开发请运行 'supabase status --output json' 获取 JWT_SECRET 值")
+                return None
+
+            return self._verify_token_hs256(token)
         except JWTError as e:
             logger.error(f"Token 验证失败: {str(e)}")
             return None
@@ -82,26 +62,6 @@ class SupabaseService:
             return header.get("alg", "HS256")
         except Exception:
             return "HS256"
-    
-    def _verify_token_es256(self, token: str) -> Optional[Dict[str, Any]]:
-        """使用 ES256 验证 JWT token"""
-        try:
-            public_key = _get_supabase_ec_public_key()
-            
-            payload = jwt.decode(
-                token,
-                public_key,
-                algorithms=["ES256"],
-                options={
-                    "verify_exp": True,
-                    "verify_aud": False
-                }
-            )
-            logger.debug("Token 验证成功（ES256）")
-            return payload
-        except JWTError as e:
-            logger.error(f"ES256 Token 验证失败: {str(e)}")
-            return None
     
     def _verify_token_hs256(self, token: str) -> Optional[Dict[str, Any]]:
         """使用 HS256 验证 JWT token"""
