@@ -3,10 +3,18 @@
 # Mira 后端部署脚本（Docker）
 #
 # 用法：
-#   ./deploy.sh                # 完整流程：拉代码 → 构建 → 启动 → 迁移 → 健康检查
-#   ./deploy.sh --no-pull      # 跳过 git pull（本地有改动、或不想动代码时）
+#   git pull origin master && ./deploy.sh     ← 标准用法
+#
+#   ./deploy.sh                # 校验 → 构建 → 启动 → 迁移 → 健康检查
 #   ./deploy.sh --no-build     # 跳过镜像构建（只改了 .env / compose 配置时）
 #   ./deploy.sh --skip-migrate # 跳过数据库迁移
+#
+# ⚠️ 本脚本不拉代码，git pull 由你显式执行。原因：
+#    bash 是边读边执行的（分块读取，不是一次性载入）。脚本内部的 git pull
+#    如果更新了 deploy.sh 自身，正在运行的 shell 会读到新旧混杂的内容，
+#    表现为中途莫名的语法错误或静默跳步 —— 这类故障极难定位。
+#    显式两步还有个好处：git pull 的输出（这次拉了哪些 commit）直接呈现在
+#    眼前，而不是混在部署日志中间被忽略。
 #
 # 幂等：可重复执行。
 #
@@ -24,13 +32,15 @@ warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 err()     { echo -e "${RED}[FAIL]${NC} $1"; }
 section() { echo; echo "=========================================="; echo " $1"; echo "=========================================="; }
 
-DO_PULL=1; DO_BUILD=1; DO_MIGRATE=1
+DO_BUILD=1; DO_MIGRATE=1
+DEPRECATED_NOPULL=0
 for arg in "$@"; do
   case "$arg" in
-    --no-pull)      DO_PULL=0 ;;
     --no-build)     DO_BUILD=0 ;;
     --skip-migrate) DO_MIGRATE=0 ;;
-    -h|--help)      sed -n '2,20p' "$0"; exit 0 ;;
+    # 兼容旧习惯：脚本已不再拉代码，这个参数成了空操作，接受但提示一次
+    --no-pull)      DEPRECATED_NOPULL=1 ;;
+    -h|--help)      sed -n '2,26p' "$0"; exit 0 ;;
     *) err "未知参数: $arg"; exit 1 ;;
   esac
 done
@@ -246,20 +256,29 @@ else
 fi
 
 # ------------------------------------------------------------
-# 4. 拉取代码
+# 4. 代码版本（只报告，不拉取）
+#
+# 拉代码由操作者显式执行（见文件头说明）。这里把「本次部署的到底是哪份代码」
+# 打出来，因为构建用的是当前工作区内容 —— 工作区脏的话，镜像与仓库不一致。
 # ------------------------------------------------------------
-section "4/7 拉取代码"
+section "4/7 代码版本"
 
-if [ "$DO_PULL" -eq 1 ] && [ -d .git ]; then
-  BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$DEPRECATED_NOPULL" -eq 1 ]; then
+  warn "--no-pull 已无意义：脚本不再内置 git pull（保留该参数仅为兼容旧习惯）"
+fi
+
+if [ -d .git ]; then
+  info "分支    : $(git rev-parse --abbrev-ref HEAD)"
+  info "commit  : $(git log -1 --pretty='%h %s')"
+  info "提交时间: $(git log -1 --pretty=%cd --date=iso)"
   if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-    warn "工作区有未提交改动，跳过 git pull（如需强制拉取请先手工处理）"
+    warn "工作区有未提交改动 —— 构建出的镜像与仓库内容不一致："
+    git status --short --untracked-files=no | sed 's/^/         /'
   else
-    git pull --ff-only origin "$BRANCH"
-    ok "已更新到 origin/$BRANCH"
+    ok "工作区干净"
   fi
 else
-  info "跳过 git pull"
+  info "非 git 仓库，跳过版本信息"
 fi
 
 # ------------------------------------------------------------

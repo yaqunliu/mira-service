@@ -389,6 +389,16 @@ DEBUG_GENERATE_VIDEO=True
         一旦 `PORT=9000`，容器会监听 9000 而端口映射目标仍是 8001。现改为容器内固定 8001，
         `PORT` 只控制宿主机端口。
 - [x] `.env.docker.example` 重写为方案 B 版本
+- [x] **改名 `.env.docker` → `.env`**（模板同步改名为 `.env.example`）
+      理由：compose 默认只读 `.env` 做插值，文件叫 `.env.docker` 时**每一条** compose
+      命令都得带 `--env-file .env.docker`（不只是 `up`，`ps` / `logs` / `exec` / `restart`
+      全都要，因为任何子命令都要先完整插值 compose 文件）。实际部署时就漏在了
+      `exec` 上，报 `required variable NEXT_PUBLIC_SUPABASE_URL is missing a value`。
+      改名后前端命令与后端完全一致，`docker compose ps` 直接可用。
+      安全性已核查：`.dockerignore:15-16` 是 `.env*` + `!.env.example`，所以 `.env`
+      不进构建上下文，`next build` 也读不到它，不存在与 build args 冲突或密钥进镜像；
+      `.gitignore:35-36` 同为 `.env*` + `!.env*.example`，`.env` 不会被提交。
+- [x] 新增前端 `deploy.sh`（不内置 `git pull`，见下）
 
 **验证**：`docker compose config` 渲染正确（`BACKEND_URL: http://mira-api:8100`、
 `NEXT_PUBLIC_API_URL: ""`、`mira-net` external、容器端口固定 8001）；缺 Supabase 变量时按预期拒绝；
@@ -396,13 +406,57 @@ DEBUG_GENERATE_VIDEO=True
 
 ### 5.2 服务器上执行
 
-- [ ] `cp .env.docker.example .env.docker`，填两个 Supabase 值
-- [ ] **构建前先停掉 celery worker 腾内存**：后端目录 `docker compose stop celery_worker`
-- [ ] `docker compose --env-file .env.docker up -d --build`
-- [ ] 构建完成后恢复 worker：后端目录 `docker compose start celery_worker`
+首次：
+
+```bash
+cd <FE>
+cp .env.example .env
+vi .env                    # 填 NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
+                           # 必须与后端 .env 的 SUPABASE_* 是同一个项目
+./deploy.sh
+```
+
+以后每次改了前端：
+
+```bash
+cd <FE> && git pull origin master && ./deploy.sh
+```
+
+`deploy.sh` 做的事（6 段）：
+
+| 段 | 内容 |
+|---|---|
+| 1 | docker / compose v2 / daemon 可用性 |
+| 2 | `.env` 校验：两个 Supabase 值非空、URL 无路径后缀、**与后端 `.env` 项目一致性核对** |
+| 3 | `mira-net` 网络存在（不存在则创建）+ 打印当前 commit、工作区是否干净 |
+| 4 | 打印内存 → 停掉后端 `celery_worker` 腾内存（`trap EXIT` 保证异常退出也恢复） |
+| 5 | `docker compose up -d --build` |
+| 6 | 容器 running → `BACKEND_URL` 固化检查 → 前端→后端连通 → 同源代理生效判定 |
+
+参数：`--no-build`（只重启）、`--keep-worker`（不动 worker）。
+后端路径默认取 `../mira-service`，否则 `/opt/mira-service`，可用 `BACKEND_DIR=/path` 覆盖。
+
+**为什么不内置 `git pull`**：bash 是边读边执行的（分块读取），脚本内部的 `git pull` 若更新了
+`deploy.sh` 自身，正在运行的 shell 会读到新旧混杂内容，表现为中途莫名语法错误或静默跳步。
+显式两步还能让「本次部署了哪些 commit」直接呈现，而不是混在部署日志中被忽略。
+后端 `deploy.sh` 同步移除了内置 `git pull`（原第 4 段改为只报告代码版本）。
+
+**为什么 worker 恢复必须挂 `trap EXIT`**：构建失败时脚本会退出，若恢复动作写在末尾就不会执行。
+那样你在排查构建问题的同时，后端任务正在静默地不执行 —— 极易被误判成两个不相干的故障。
+脚本还会记录 worker 原本是否在运行，本来就停着的话结束时不会擅自启动它。
 
 > 🔴 **本阶段最容易踩的坑**：`NEXT_PUBLIC_*` 和 `BACKEND_URL` 都是 **构建时** 固化的，不是运行时读取。
 > 改了任何一个之后，**必须 `--build` 重新构建**，光重启容器无效。
+> 前端**没有** bind mount（对比后端的 `./:/app`），所以改前端代码同样必须重新构建 ——
+> 这是前后端部署方式最主要的差异：后端 `git pull` + `restart` 即可，前端必须 `--build`。
+
+**同源代理的验证方法**（`deploy.sh` 6.4 已自动做）：请求一个不存在的 `/api/v1/xxx`，看 content-type。
+两种情况 HTTP 状态码都是 404，只有 content-type 能区分请求有没有出前端容器：
+
+| content-type | 含义 |
+|---|---|
+| `application/json` | ✅ FastAPI 返回的 404，代理生效 |
+| `text/html` | ❌ Next 自己的 404 页面，rewrites 未生效 |
 
 ---
 
@@ -506,20 +560,17 @@ vi .env
 cd <FE>
 git pull origin master
 
-cp .env.docker.example .env.docker
-vi .env.docker      # 填 NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
-                    # 必须与后端 .env 是同一个 Supabase 项目
+cp .env.example .env
+vi .env      # 填 NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
+             # 必须与后端 .env 是同一个 Supabase 项目（deploy.sh 会自动核对）
 
-# 构建吃约 2GB 内存，先把 worker 停掉让路
-(cd <BE> && docker compose stop celery_worker)
-
-docker compose --env-file .env.docker up -d --build
-
-# 构建完恢复 worker
-(cd <BE> && docker compose start celery_worker)
+./deploy.sh
 
 docker compose logs -f mira-fe
 ```
+
+`deploy.sh` 已经把「停 worker → 构建 → 恢复 worker → 验证代理」全包了，
+worker 的停/恢复不用手动管（恢复挂在 `trap EXIT`，构建失败也会执行）。
 
 ### D. 验证
 
