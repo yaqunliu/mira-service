@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import asc, desc
+from sqlalchemy import asc, desc, or_
 from typing import Tuple, Optional, List
 from app.models.novel import Novel
 from app.models.chapter import Chapter
@@ -32,6 +32,38 @@ class CreationService:
         "videoGeneration"
     ]
     
+    @staticmethod
+    def get_creation_scenes(db: Session, creation: Creation) -> List[Scene]:
+        """
+        获取创作项目的场景列表（同步会话）
+
+        场景归属有两个来源，必须取并集：
+        - creation.scene_ids：场景分析写入，包含跨章节复用的场景。复用分支
+          （creation_task 中 historical_scenes 命中时）不会改写场景的
+          creation_id，这些场景的 creation_id 仍指向首次创建它的创作。
+        - Scene.creation_id：外键。手动新建场景（POST /scenes/）只写这里，
+          不会登记进 scene_ids。
+
+        只查任意一边都会漏数据，口径与 GET /creations/{uuid} 详情接口一致。
+
+        Args:
+            db: 数据库会话
+            creation: 创作对象
+
+        Returns:
+            按 scene_id 升序排列的场景列表（已排除软删除）
+        """
+        scene_ids = creation.scene_ids if isinstance(creation.scene_ids, list) else []
+
+        ownership = [Scene.creation_id == creation.creation_id]
+        if scene_ids:
+            ownership.append(Scene.scene_id.in_(scene_ids))
+
+        return db.query(Scene).filter(
+            or_(*ownership),
+            Scene.deleted_at.is_(None)
+        ).order_by(Scene.scene_id).all()
+
     @staticmethod
     def update_creation_step_status(
         db: Session,

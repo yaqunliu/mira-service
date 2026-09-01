@@ -65,15 +65,12 @@ def batch_generate_scene_images_task(self, creation_id: int, force_regenerate: b
             task_id=self.request.id
         )
 
-        scenes = db.query(Scene).filter(Scene.creation_id == creation_id).all()
+        # 走统一入口：兼容跨章节复用的场景（其 creation_id 指向原创作）
+        scenes = CreationService.get_creation_scenes(db, creation)
         if not scenes:
-            CreationService.update_creation_step_status(
-                db=db,
-                creation_id=creation_id,
-                step_name="sceneImageGeneration",
-                status="success"
-            )
-            return {"status": "success", "message": "No scenes found"}
+            # 查不到场景说明前置步骤没跑通，必须失败。以前这里标记 success 直接返回，
+            # 问题会一路静默滑到分镜拆解才暴露。
+            raise Exception("未找到场景数据，请先进行场景分析")
 
         # 筛选需要生成的场景
         scenes_to_generate = []

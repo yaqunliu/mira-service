@@ -826,7 +826,8 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
             chapter_content = f.read()
 
         # 准备数据：场景列表
-        scenes = db.query(Scene).filter(Scene.creation_id == creation_id).order_by(Scene.scene_id).all()
+        # 走统一入口：兼容跨章节复用的场景（其 creation_id 指向原创作）
+        scenes = CreationService.get_creation_scenes(db, creation)
         if not scenes:
             raise Exception("未找到场景数据，请先进行场景分析")
             
