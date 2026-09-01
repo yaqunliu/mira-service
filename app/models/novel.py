@@ -17,7 +17,7 @@ class Novel(Base):
     title = Column(String(200), nullable=False, index=True)
     author = Column(String(100))
     chapter_count = Column(Integer, default=0)
-    status = Column(String(20), default="uploaded")  # uploaded, processing, completed
+    status = Column(String(20), default="uploaded")  # uploaded, processing, completed, partial, failed
     type = Column(String(20), default="novel", nullable=False) # novel: 小说项目, script: 剧本/文案项目
     task_id = Column(String(100), nullable=True, index=True)  # Celery任务ID，用于关联任务状态查询
     

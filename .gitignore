@@ -195,3 +195,4 @@ note.md
 cert/*
 
 chroma_db/
+local_storage/

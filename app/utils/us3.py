@@ -7,6 +7,7 @@ UCloud US3 文件管理客户端
 
 import os
 import time
+import shutil
 import hashlib
 import httpx
 from typing import Dict, Any, Optional, List, Union
@@ -721,6 +722,23 @@ def download_file_smart(
         包含下载结果的字典
     """
     try:
+        # 优先判断是否是本地存储引用（US3 降级方案）
+        # 命中时直接读文件系统，不走网络，也就不依赖服务自身的 URL 可达性
+        from app.utils.local_storage import local_storage
+
+        local_path = local_storage.locate(url_or_key)
+        if local_path:
+            logger.info(f"检测到本地存储文件: {local_path}")
+            os.makedirs(os.path.dirname(os.path.abspath(save_file)), exist_ok=True)
+            shutil.copyfile(local_path, save_file)
+            return {
+                "success": True,
+                "save_file": save_file,
+                "file_size": os.path.getsize(save_file),
+                "storage_backend": "local",
+                "message": "本地存储文件读取成功"
+            }
+
         # 判断是否是 US3 链接
         if US3Client.is_us3_url(url_or_key):
             logger.info(f"检测到 US3 链接: {url_or_key}")

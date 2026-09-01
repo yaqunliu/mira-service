@@ -777,9 +777,17 @@ async def _download_text_content(url: str) -> Optional[str]:
     from functools import partial
     
     try:
+        # 本地存储引用（US3 降级方案）：直接读文件系统
+        from app.utils.local_storage import local_storage
+
+        local_path = local_storage.locate(url)
+        if local_path:
+            logger.info(f"[DB Helper] 从本地存储读取文本文件: {local_path}")
+            return local_path.read_text(encoding="utf-8", errors="ignore")
+
         # 使用 httpx 异步下载
         import httpx
-        
+
         logger.info(f"[DB Helper] 开始下载文本文件: {url}")
         
         timeout_config = httpx.Timeout(

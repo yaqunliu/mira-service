@@ -102,6 +102,16 @@ if grep -qE '^[[:space:]]*DATABASE_URL=' .env; then
   FATAL=1
 fi
 
+# 2.2.1 对象存储：不配不致命（会自动降级到本地磁盘），但必须让人知道
+#
+# 这里之前完全没校验，导致 US3 空着也能部署成功，故障只表现为「小说上传后
+# 章节列表是空的」——因为章节文本上传失败后被静默跳过，一个都没落库。
+if [ -z "$(getenv US3_PUBLIC_KEY)" ] || [ -z "$(getenv US3_PRIVATE_KEY)" ]; then
+  warn "US3 公私钥未配置，文件存储将降级到本地磁盘（LOCAL_STORAGE_DIR）。"
+  warn "  演示环境可以这样跑；正式环境请配置 US3，否则文件只存在于该台机器上，"
+  warn "  容器重建或换机器会丢。"
+fi
+
 # 2.3 容器内 localhost 指容器自己，必须用 compose 服务名
 if echo "$(getenv DATABASE_HOST)" | grep -qE '^(localhost|127\.0\.0\.1)$'; then
   err "DATABASE_HOST=$(getenv DATABASE_HOST)，Docker 中应为服务名 postgres"; FATAL=1

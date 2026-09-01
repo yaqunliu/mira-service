@@ -78,6 +78,19 @@ video_flow_dir = current_dir / "video_generation_flow"
 if video_flow_dir.exists():
     app.mount("/static", StaticFiles(directory=str(video_flow_dir)), name="static")
 
+# 挂载本地存储目录（US3 未开通时的降级方案，见 app/utils/local_storage.py）
+# 仅在配置了 PUBLIC_BASE_URL 时才有实际用途：此时 content_url 是 HTTP 地址，
+# 需要这个挂载点来提供访问。未配置时 content_url 存的是绝对路径，走文件系统读取。
+from app.utils.local_storage import local_storage, use_local_storage
+
+if use_local_storage():
+    local_storage.base_dir.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        local_storage.url_prefix,
+        StaticFiles(directory=str(local_storage.base_dir)),
+        name="local_storage",
+    )
+
 
 
 @app.get("/")

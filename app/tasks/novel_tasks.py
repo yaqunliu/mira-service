@@ -299,7 +299,15 @@ def process_novel_upload_task(
         )
         
         # 步骤5: 更新小说状态
-        novel.status = "completed"
+        # 按实际落库的章节数判定，不能一律标 completed：
+        # 存储后端不可用时会导致每个章节都上传失败，此时小说是一个 0 章节的空壳，
+        # 标成 completed 会让这类故障在接口上完全看不出来（只表现为章节列表为空）。
+        if success_count == 0:
+            novel.status = "failed"
+        elif error_count > 0:
+            novel.status = "partial"
+        else:
+            novel.status = "completed"
         novel.chapter_count = success_count
         db.commit()
         

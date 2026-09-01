@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 from app.core.config import settings
 from app.core.logger import logger
 from app.utils.us3 import US3Client, US3UploadError
+from app.utils.local_storage import local_storage, use_local_storage
 
 
 class UploadHelper:
@@ -186,13 +187,17 @@ class UploadHelper:
         try:
             # 生成上传路径
             put_key = self.generate_upload_path(user_uuid, file_type, filename, time_str)
-            
+
+            # US3 未配置时降级到本地存储
+            if use_local_storage():
+                return local_storage.save_file(local_file=local_file, put_key=put_key)
+
             # 创建使用内网地址的US3客户端实例（线程安全）
             us3_client = US3Client(
                 upload_suffix=self.internal_upload_suffix,
                 download_suffix=self.internal_download_suffix
             )
-            
+
             # 上传文件
             upload_result = us3_client.upload_file(
                 local_file=local_file,
@@ -256,13 +261,17 @@ class UploadHelper:
         try:
             # 生成上传路径
             put_key = self.generate_upload_path(user_uuid, file_type, filename, time_str)
-            
+
+            # US3 未配置时降级到本地存储
+            if use_local_storage():
+                return local_storage.save_bytes(data=file_data, put_key=put_key)
+
             # 创建使用内网地址的US3客户端实例（线程安全）
             us3_client = US3Client(
                 upload_suffix=self.internal_upload_suffix,
                 download_suffix=self.internal_download_suffix
             )
-            
+
             # 根据文件扩展名推断 Content-Type
             content_type = None
             if filename.lower().endswith('.png'):

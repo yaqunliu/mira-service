@@ -177,6 +177,23 @@ class Settings(BaseSettings):
     INTERNAL_DOWNLOAD_SUFFIX: str = ""  # 内网下载后缀（用于实际下载）
     INTERNAL_UPLOAD_SUFFIX: str = ""  # 内网上传后缀（用于实际上传）
 
+    # 本地存储配置（US3 的降级方案，用于尚未开通 US3 的开发/演示环境）
+    #
+    # 生效条件：LOCAL_STORAGE_ENABLED=true，或 US3 公私钥任一为空时自动降级。
+    # 因此买了 US3 之后只要把 US3_PUBLIC_KEY/US3_PRIVATE_KEY 填上，就会自动切回 US3，
+    # 不需要改代码。
+    LOCAL_STORAGE_ENABLED: bool = False
+    # 文件落盘目录。docker-compose 中 api 与 celery_worker 都挂载了 ./:/app，
+    # 所以放在项目目录下时，worker 写的文件 api 能直接读到。
+    LOCAL_STORAGE_DIR: str = "./local_storage"
+    # 静态访问路径前缀（app/main.py 中挂载）
+    LOCAL_STORAGE_URL_PREFIX: str = "/uploads"
+    # 对外可访问的服务根地址，如 http://45.130.164.189:8001。
+    # 留空时 content_url 直接存绝对路径，下载走本地文件系统、完全不依赖网络可达性，
+    # 这是演示环境最省事的默认值。只有当浏览器需要直接访问这些文件时才需要配置它
+    # （同时要让前端把该路径前缀反代到后端）。
+    PUBLIC_BASE_URL: str = ""
+
     # Fish Audio 配置
     FISH_AUDIO_API_KEY: str = ""
     FISH_AUDIO_DEFAULT_VOICE_ID: str = ""  # 默认语音模型 ID，如 "54a5170264694bfc8e9ad98df7bd89c3" (丁真)
