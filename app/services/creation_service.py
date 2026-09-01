@@ -12,6 +12,7 @@ from app.tasks.creation_task import character_analysis_task
 from app.core.logger import logger
 from app.core.exceptions import NotFoundError, DatabaseError, PermissionError, AlreadyExistsError
 from app.utils.us3 import US3Client
+from app.utils.local_storage import get_storage_client
 from app.core.config import settings
 import uuid
 import time
@@ -772,20 +773,21 @@ class CreationService:
         title = f"文本创作 - {title_prefix}..."
         logger.info(f"通过文本内容创建创作记录: title={title}, user_id={user_id}")
         
-        # 将文本内容上传到US3
-        us3_client = US3Client()
+        # 将文本内容上传到US3（US3 未配置时自动降级到本地存储）
+        us3_client = get_storage_client()
         put_key = f"texts/{uuid.uuid4()}.txt"
         upload_result = us3_client.upload_file_stream(
             file_stream=text_content.encode('utf-8'),
             put_key=put_key,
             content_type='text/plain'
         )
-        
+
         if not upload_result.get('success'):
-            raise DatabaseError(detail=f"文本内容上传US3失败: {upload_result.get('message')}")
-        
-        # 构建US3访问URL
-        text_content_url = f"https://{upload_result.get('bucket')}.{settings.DOWNLOAD_SUFFIX}/{put_key}"
+            raise DatabaseError(detail=f"文本内容上传失败: {upload_result.get('message')}")
+
+        # 由客户端生成访问地址：本地存储没有 bucket/DOWNLOAD_SUFFIX 的概念，
+        # 手工拼 US3 域名会得到一个访问不到的地址。
+        text_content_url = us3_client.get_file_url(put_key)
         
         # 初始化步骤元数据
         creation_extra_data = CreationService._init_steps_metadata(extra_data)

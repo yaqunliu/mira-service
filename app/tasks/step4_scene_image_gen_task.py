@@ -16,6 +16,7 @@ from app.utils.task_types import TaskType
 from app.utils.ai_client import AIClient
 from app.utils.file_utils import read_prompt_file
 from app.utils.us3 import US3Client
+from app.utils.local_storage import get_storage_client
 from app.utils.upload_helper import upload_helper
 from app.core.config import settings
 from app.models.user import User
@@ -211,7 +212,7 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
         style_description = STYLE_MAPPING.get(visual_style, STYLE_MAPPING["anime"])
 
         ai_client = AIClient(llm_model_name=llm_model, text_to_image_model=text_to_image_model)
-        us3_client = US3Client()
+        us3_client = get_storage_client()
         logger.info(f"Regenerating image for scene: {scene.title}, style: {visual_style}")
 
         # 优先从 extra_data 获取

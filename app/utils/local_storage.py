@@ -132,6 +132,72 @@ class LocalStorage:
         return self._result(put_key, target)
 
 
+class LocalStorageClient:
+    """
+    与 US3Client 接口兼容的本地存储客户端
+
+    部分任务（场景图、视频、Agent 图片）直接构造 US3Client 而不经过 upload_helper，
+    这个类提供同名同签名的方法，使那些调用点可以无差别替换。
+    只实现被实际用到的三个方法，其余 US3Client 方法不在此覆盖范围。
+    """
+
+    def __init__(self, *args, **kwargs):
+        # 吞掉 US3Client 的构造参数（bucket / suffix 等），本地存储用不到
+        self._storage = local_storage
+
+    def upload_file(
+        self,
+        local_file: str,
+        bucket: str = None,
+        put_key: str = None,
+        header: Dict[str, str] = None,
+        verify_hash: bool = True,
+    ) -> Dict[str, Any]:
+        """对齐 US3Client.upload_file，返回值含 'key' 字段"""
+        if not put_key:
+            put_key = os.path.basename(local_file)
+
+        result = self._storage.save_file(local_file=local_file, put_key=put_key)
+        # US3Client 的返回用 'key'，调用方会读它再传给 get_file_url
+        result["key"] = put_key
+        return result
+
+    def upload_file_stream(
+        self,
+        file_stream: bytes,
+        bucket: str = None,
+        put_key: str = None,
+        header: Dict[str, str] = None,
+        content_type: str = None,
+    ) -> Dict[str, Any]:
+        """对齐 US3Client.upload_file_stream"""
+        if not put_key:
+            raise LocalStorageError("上传文件流时必须指定put_key")
+
+        result = self._storage.save_bytes(data=file_stream, put_key=put_key)
+        result["key"] = put_key
+        return result
+
+    def get_file_url(self, put_key: str, bucket: str = None) -> str:
+        """对齐 US3Client.get_file_url"""
+        return self._storage.build_url(put_key)
+
+
+def get_storage_client():
+    """
+    返回当前可用的存储客户端
+
+    US3 已配置时返回 US3Client，否则返回接口兼容的 LocalStorageClient。
+    供那些直接构造 US3Client 的调用点使用，避免 US3 未配置时在构造阶段就抛
+    ValueError（这会让整个任务失败，且错误信息与真正的业务无关）。
+    """
+    if use_local_storage():
+        return LocalStorageClient()
+
+    from app.utils.us3 import US3Client
+    return US3Client()
+
+
 def use_local_storage() -> bool:
     """
     当前是否应该使用本地存储

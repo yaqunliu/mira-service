@@ -144,9 +144,9 @@ def _upload_to_us3(
     entity_id: int,
 ) -> str:
     """上传图片到 US3"""
-    from app.utils.us3 import US3Client
-    
-    us3_client = US3Client()
+    from app.utils.local_storage import get_storage_client
+
+    us3_client = get_storage_client()
     filename = f"{path_prefix}/{creation_uuid}/{entity_id}_{uuid.uuid4().hex[:8]}.png"
     us3_client.upload_file_stream(image_data, put_key=filename, content_type="image/png")
     return us3_client.get_file_url(filename)

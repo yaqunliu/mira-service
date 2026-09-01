@@ -16,6 +16,7 @@ from app.db.base import _get_sync_session_factory
 from app.models.creation import Creation
 from app.utils.ffmpeg_utils import FFmpegUtils
 from app.utils.us3 import US3Client, download_file_smart
+from app.utils.local_storage import get_storage_client
 from app.core.config import settings
 
 
@@ -356,7 +357,7 @@ def export_video_task(self, creation_id: int, user_id: int):
         timestamp = int(datetime.utcnow().timestamp())
         put_key = f"exports/{creation.uuid}/{timestamp}.mp4"
 
-        us3_client = US3Client()
+        us3_client = get_storage_client()
         us3_client.upload_file(
             local_file=final_video_path,
             bucket=settings.US3_BUCKET,

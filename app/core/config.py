@@ -142,6 +142,21 @@ class Settings(BaseSettings):
     ARK_VIDEO_TIMEOUT: int = 600  # 视频生成超时时间（秒）
     ARK_VIDEO_RETRY_DELAY: int = 5  # 视频生成重试间隔（秒）
 
+    # Siray 中转站图片生成配置（异步接口：提交拿 task_id，再轮询取结果）
+    #
+    # 与 OpenAI 的同步 images.generate 协议不同，siray 是：
+    #   POST {base}/images/generations/async      -> data.task_id
+    #   GET  {base}/images/generations/async/{id} -> data.status / data.outputs[]
+    # 因此单独走一套适配器（AIClient._call_siray_image_api）。
+    #
+    # 留空时自动复用 OPENAI_API_KEY / OPENAI_BASE_URL（siray 是统一 key）。
+    SIRAY_API_KEY: str = ""
+    SIRAY_BASE_URL: str = ""
+    # 轮询间隔与总超时（秒）。注意：外层 generate_image_* 用 AI_TIMEOUT 做线程超时，
+    # SIRAY_IMAGE_TIMEOUT 必须小于 AI_TIMEOUT，否则会被外层提前掐断。
+    SIRAY_IMAGE_POLL_INTERVAL: int = 3
+    SIRAY_IMAGE_TIMEOUT: int = 280
+
     # Sora2 视频生成配置（使用 OPENAI_API_KEY 和 OPENAI_BASE_URL）
     SORA2_MODEL: str = "openai/sora-2/image-to-video-pro"  # Sora2 图生视频模型
     SORA2_TIMEOUT: int = 1800  # Sora2 视频生成超时时间（秒），默认30分钟

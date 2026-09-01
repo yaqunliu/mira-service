@@ -40,16 +40,63 @@ class ModelConfigFactory:
     """模型配置工厂类"""
     
     # LLM 模型配置
+    #
+    # 模型 ID 必须与 siray 各模型 OpenAPI spec 里的 enum 完全一致（带厂商前缀），
+    # 下面这几个是逐个核对过的。新增前请先看 docs.siray.ai/api-reference/model-api/<模型>.md。
+    #
+    # 老的 Qwen/* 是接硅基流动时期的配置，在 siray 上不存在，保留但置为
+    # is_enabled=False 从下拉框隐藏：用户一旦选中就会写进 creation.extra_data，
+    # 覆盖 .env 里的默认模型并让后续所有 AI 步骤 400。
     _LLM_MODELS = [
+        ModelConfig(
+            model_name="z-ai/glm-5.2",
+            model_type="llm",
+            display_name="GLM 5.2",
+            description="siray 中转 - 智谱 GLM 5.2",
+            config={"max_tokens": 32768, "languages": ["zh", "en"]},
+            is_enabled=True,
+            is_default=True,
+            sort_order=1,
+        ),
+        ModelConfig(
+            model_name="deepseek/deepseek-v4-pro",
+            model_type="llm",
+            display_name="DeepSeek V4 Pro",
+            description="siray 中转 - DeepSeek V4 Pro",
+            config={"max_tokens": 12288, "languages": ["zh", "en"]},
+            is_enabled=True,
+            is_default=False,
+            sort_order=2,
+        ),
+        ModelConfig(
+            model_name="alibaba/qwen3-max-256k",
+            model_type="llm",
+            display_name="Qwen3 Max 256K",
+            description="siray 中转 - 阿里云 Qwen3 Max 256K",
+            config={"max_tokens": 32768, "languages": ["zh", "en"]},
+            is_enabled=True,
+            is_default=False,
+            sort_order=3,
+        ),
+        ModelConfig(
+            model_name="anthropic/claude-opus-4.6",
+            model_type="llm",
+            display_name="Claude Opus 4.6",
+            description="siray 中转 - Anthropic Claude Opus 4.6",
+            config={"max_tokens": 32768, "languages": ["zh", "en"]},
+            is_enabled=True,
+            is_default=False,
+            sort_order=4,
+        ),
         ModelConfig(
             model_name="Qwen/Qwen-Plus",
             model_type="llm",
             display_name="通义千问 Plus",
             description="阿里云通义千问 Plus 模型",
             config={"max_tokens": 12288, "languages": ["zh"]},
-            is_enabled=True,
-            is_default=True,
-            sort_order=1,
+            is_enabled=False,
+            is_default=False,
+            sort_order=11,
         ),
         ModelConfig(
             model_name="Qwen/QwQ-32B",
@@ -57,9 +104,9 @@ class ModelConfigFactory:
             display_name="QwQ 32B",
             description="QwQ 推理模型，输入：2元/百万，输出：6元/百万",
             config={"max_tokens": 8192, "languages": ["zh"]},
-            is_enabled=True,
+            is_enabled=False,
             is_default=False,
-            sort_order=2,
+            sort_order=12,
         ),
         ModelConfig(
             model_name="Qwen/Qwen3-32B",
@@ -67,9 +114,9 @@ class ModelConfigFactory:
             display_name="Qwen3 32B",
             description="Qwen3-32B 密集因果模型，输入：2元/百万，输出：8元/百万",
             config={"max_tokens": 8192, "languages": ["zh"]},
-            is_enabled=True,
+            is_enabled=False,
             is_default=False,
-            sort_order=3,
+            sort_order=13,
         ),
         # ModelConfig(
         #     model_name="moonshotai/Kimi-K2-Thinking",
@@ -104,16 +151,30 @@ class ModelConfigFactory:
     ]
     
     # 文生图模型配置
+    #
+    # siray 的图片模型走异步接口（ai_client._call_siray_image_api），模型 ID 同样必须
+    # 与其 spec 的 enum 一致。豆包/Gemini 是接火山云时期的配置，改用 siray 后不可用，
+    # 同样置为 is_enabled=False 从下拉框隐藏。
     _TEXT_TO_IMAGE_MODELS = [
+        ModelConfig(
+            model_name="bytedance/seedream-4.5-t2i",
+            model_type="text_to_image",
+            display_name="Seedream 4.5 文生图",
+            description="siray 中转 - 字节跳动 Seedream 4.5 文生图",
+            config={"aspect_ratio": "16:9", "languages": ["zh", "en"], "max_words": 300},
+            is_enabled=True,
+            is_default=True,
+            sort_order=1,
+        ),
         ModelConfig(
             model_name="gemini-3-pro-image-preview",
             model_type="text_to_image",
             display_name="Gemini 3 Pro Image",
             description="Gemini 3 Pro Image 图像生成模型 (Nano Banana 2)",
             config={"aspect_ratio": "16:9", "languages": ["zh", "en"], "max_words": 300},
-            is_enabled=True,
+            is_enabled=False,
             is_default=False,
-            sort_order=2,
+            sort_order=12,
         ),
         ModelConfig(
             model_name="doubao-seedream-4.5",
@@ -121,9 +182,9 @@ class ModelConfigFactory:
             display_name="豆包 Seedream 4.5",
             description="字节跳动豆包 Seedream 4.5 图像生成模型",
             config={"aspect_ratio": "16:9", "size": "2K", "languages": ["zh", "en"], "max_words": 300},
-            is_enabled=True,
-            is_default=True,
-            sort_order=1,
+            is_enabled=False,
+            is_default=False,
+            sort_order=11,
         ),
         ModelConfig(
             model_name="doubao-seedream-5-0-260128",
@@ -131,23 +192,36 @@ class ModelConfigFactory:
             display_name="豆包 Seedream 5.0",
             description="字节跳动豆包 Seedream 5.0 图像生成模型",
             config={"aspect_ratio": "16:9", "size": "2K", "languages": ["zh", "en"], "max_words": 300},
-            is_enabled=True,
-            is_default=True,
-            sort_order=1,
+            is_enabled=False,
+            is_default=False,
+            sort_order=13,
         ),
     ]
     
     # 图生图模型配置
+    #
+    # 注意：siray 的 i2i 接口只收单张参考图（image 是字符串不是数组），
+    # 项目会传多张角色图，适配器只取第一张并打 warning。
     _IMAGE_TO_IMAGE_MODELS = [
+        ModelConfig(
+            model_name="bytedance/seedream-4.5-i2i",
+            model_type="image_to_image",
+            display_name="Seedream 4.5 图生图",
+            description="siray 中转 - 字节跳动 Seedream 4.5 图生图（单张参考图）",
+            config={"aspect_ratio": "16:9", "languages": ["zh", "en"], "max_words": 300},
+            is_enabled=True,
+            is_default=True,
+            sort_order=1,
+        ),
         ModelConfig(
             model_name="gemini-3-pro-image-preview",
             model_type="image_to_image",
             display_name="Gemini 3 Pro Image",
             description="Gemini 3 Pro Image 图像生成模型 (Nano Banana 2)",
             config={"aspect_ratio": "16:9", "languages": ["zh", "en"], "max_words": 300},
-            is_enabled=True,
+            is_enabled=False,
             is_default=False,
-            sort_order=2,
+            sort_order=12,
         ),
         ModelConfig(
             model_name="doubao-seedream-4.5",
@@ -155,9 +229,9 @@ class ModelConfigFactory:
             display_name="豆包 Seedream 4.5",
             description="字节跳动豆包 Seedream 4.5 图像生成模型，支持单图或多图参考",
             config={"aspect_ratio": "16:9", "size": "2K", "languages": ["zh", "en"], "max_words": 300},
-            is_enabled=True,
-            is_default=True,
-            sort_order=1,
+            is_enabled=False,
+            is_default=False,
+            sort_order=11,
         ),
         ModelConfig(
             model_name="doubao-seedream-5-0-260128",
@@ -165,9 +239,9 @@ class ModelConfigFactory:
             display_name="豆包 Seedream 5.0",
             description="字节跳动豆包 Seedream 5.0 图像生成模型，支持单图或多图参考",
             config={"aspect_ratio": "16:9", "size": "2K", "languages": ["zh", "en"], "max_words": 300},
-            is_enabled=True,
-            is_default=True,
-            sort_order=1,
+            is_enabled=False,
+            is_default=False,
+            sort_order=13,
         ),
     ]
     

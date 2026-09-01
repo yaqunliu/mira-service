@@ -16,6 +16,7 @@ from app.models.scene import Scene
 from app.utils.task_types import TaskType
 from app.utils.ai_client import AIClient
 from app.utils.us3 import US3Client
+from app.utils.local_storage import get_storage_client
 from app.utils.points_deduction import deduct_points_for_video
 from app.utils.ffmpeg_utils import FFmpegUtils
 from app.models.user import User
@@ -67,8 +68,8 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
             return {"status": "success", "message": "No shots found in scene"}
 
         ai_client = AIClient()
-        us3_client = US3Client()
-        
+        us3_client = get_storage_client()
+
         # 获取作品配置的模型
         creation = db.query(Creation).filter(Creation.creation_id == creation_id).first()
         video_model = (creation.extra_data or {}).get('video_model', 'doubao-seedance-1-5-pro-251215')
@@ -244,16 +245,26 @@ def generate_scene_videos_task(self, scene_id: int, creation_id: int):
                             audio_path = None
 
                     # 上传静音视频到US3
+                    # 注意：第二个位置参数是 bucket 而非 put_key，必须用关键字传参，
+                    # 否则文件名会退化成临时文件名；upload_file 返回的是结果字典，
+                    # 需要经 get_file_url 转成 URL 再落库（对齐本文件 766 行的写法）。
                     video_filename = f"videos/{creation_id}/{shot.shot_id}_{uuid.uuid4().hex[:8]}_silent.mp4"
-                    silent_video_url = us3_client.upload_file(silent_video_path, video_filename)
+                    video_upload_result = us3_client.upload_file(silent_video_path, put_key=video_filename)
+                    if not video_upload_result.get('success'):
+                        raise Exception(f"视频上传失败: {video_upload_result.get('message')}")
+                    silent_video_url = us3_client.get_file_url(video_upload_result['key'])
                     logger.info(f"静音视频上传成功: {silent_video_url}")
 
                     # 上传音频到US3（如果有音频）
                     audio_url = None
                     if audio_path and os.path.exists(audio_path):
                         audio_filename = f"audio/{creation_id}/{shot.shot_id}_{uuid.uuid4().hex[:8]}.mp3"
-                        audio_url = us3_client.upload_file(audio_path, audio_filename)
-                        logger.info(f"音频上传成功: {audio_url}")
+                        audio_upload_result = us3_client.upload_file(audio_path, put_key=audio_filename)
+                        if audio_upload_result.get('success'):
+                            audio_url = us3_client.get_file_url(audio_upload_result['key'])
+                            logger.info(f"音频上传成功: {audio_url}")
+                        else:
+                            logger.error(f"音频上传失败: {audio_upload_result.get('message')}")
                         # 清理临时音频文件
                         try:
                             os.remove(audio_path)
@@ -478,7 +489,7 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
         db.commit()
 
         ai_client = AIClient()
-        us3_client = US3Client()
+        us3_client = get_storage_client()
 
         # 检查是否有 video_prompt，优先使用 extra_data 中的 video_prompt
         # 只有在 video_prompt 为空、或者是降级提示词时才重新生成

@@ -96,6 +96,12 @@ class AIClient:
         self.sora2_base_url = self.base_url
         self.sora2_model = sora2_model or settings.SORA2_MODEL
 
+        # Siray 图片生成配置（未单独配置时复用 OpenAI 配置，siray 是统一 key）
+        self.siray_api_key = settings.SIRAY_API_KEY or self.api_key
+        self.siray_base_url = (settings.SIRAY_BASE_URL or self.base_url or "").rstrip("/")
+        self.siray_image_poll_interval = settings.SIRAY_IMAGE_POLL_INTERVAL
+        self.siray_image_timeout = settings.SIRAY_IMAGE_TIMEOUT
+
         logger.info(f"文生图模型（角色）: {self.text_to_image_model}")
         logger.info(f"图生图模型（分镜）: {self.image_to_image_model}")
         logger.info(f"人物解析模型: {self.character_analysis_model}")
@@ -1017,6 +1023,15 @@ class AIClient:
         Returns:
             生成的图片URL
         """
+        # siray 异步图片接口（提交 + 轮询，与同步 images.generate 协议不同）
+        if self._is_siray_image_model(model):
+            logger.info(f"使用 siray 异步接口进行文生图: {model}")
+            return self._call_siray_image_api(
+                prompt=prompt,
+                model=model,
+                size=self._get_siray_image_size(aspectRatio)
+            )
+
         # 检查是否为 Gemini 模型
         if "gemini" in model.lower():
             return self._call_gemini_image_api(
@@ -2507,6 +2522,185 @@ class AIClient:
             
         return image_url
     
+    @staticmethod
+    def _is_siray_image_model(model: str) -> bool:
+        """
+        判断是否为 siray 的图片模型
+
+        siray 的图片模型 ID 一律是「厂商/模型-用途」形式，用途后缀区分文生图与图生图，
+        例如 bytedance/seedream-4.5-t2i、black-forest-labs/flux-kontext-i2i-pro。
+        """
+        if not model or "/" not in model:
+            return False
+        return re.search(r"-(t2i|i2i|edit|ref2i)(-|$)", model) is not None
+
+    def _get_siray_image_size(self, aspect_ratio_str: str) -> str:
+        """
+        把项目内的比例/尺寸写法映射为 siray 允许的固定尺寸
+
+        siray 的 size 是 8 个值的枚举，传别的值会被接口拒绝。这 8 个值与豆包
+        Seedream 的尺寸表完全一致，所以直接复用既有的比例映射。
+        """
+        siray_sizes = {
+            "2048x2048", "2304x1728", "1728x2304", "2560x1440",
+            "1440x2560", "2496x1664", "1664x2496", "3024x1296",
+        }
+
+        if aspect_ratio_str in siray_sizes:
+            return aspect_ratio_str
+
+        size = self._get_doubao_image_size(aspect_ratio_str)
+        if size not in siray_sizes:
+            # _get_doubao_image_size 兜底返回 "2k"，siray 不认这种写法
+            logger.warning(f"siray 不支持的尺寸: {aspect_ratio_str}（映射结果 {size}），回退到 2560x1440")
+            size = "2560x1440"
+        return size
+
+    def _to_siray_image_field(self, reference: str) -> str:
+        """
+        把参考图转换成 siray image 字段可接受的形式
+
+        siray 接受图片 URL 或 data URL。本地存储的图片（US3 未开通时的降级方案）
+        对 siray 不可达，必须内联成 base64 data URL。
+        """
+        from app.utils.local_storage import local_storage
+
+        local_path = local_storage.locate(reference)
+        if local_path:
+            mime = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".webp": "image/webp",
+                ".gif": "image/gif",
+            }.get(local_path.suffix.lower(), "image/png")
+            encoded = base64.b64encode(local_path.read_bytes()).decode("ascii")
+            logger.info(f"参考图为本地文件，内联为 data URL: {local_path}（base64 {len(encoded)} 字符）")
+            return f"data:{mime};base64,{encoded}"
+
+        if reference.startswith("http://") or reference.startswith("https://"):
+            return reference
+
+        raise Exception(f"参考图无法解析，既不是可访问的 URL 也不是本地存储文件: {reference}")
+
+    def _call_siray_image_api(
+        self,
+        prompt: str,
+        model: str,
+        size: str,
+        reference_images: List[str] = None,
+    ) -> str:
+        """
+        调用 siray 的异步图片生成接口
+
+        与 OpenAI 的同步 images.generate 不同，siray 是两段式：
+            POST {base}/images/generations/async       -> data.task_id
+            GET  {base}/images/generations/async/{id}  -> 轮询到 SUCCESS，取 data.outputs[0]
+
+        Args:
+            prompt: 提示词
+            model: siray 模型 ID（带厂商前缀）
+            size: 图片尺寸，必须是 siray 允许的 8 个枚举值之一
+            reference_images: 参考图列表；图生图时只取第一张（接口只收单图）
+
+        Returns:
+            生成的图片 URL
+        """
+        if not self.siray_api_key:
+            raise ValueError("siray API Key 未配置（SIRAY_API_KEY 或 OPENAI_API_KEY）")
+        if not self.siray_base_url:
+            raise ValueError("siray Base URL 未配置（SIRAY_BASE_URL 或 OPENAI_BASE_URL）")
+
+        payload = {"model": model, "prompt": prompt, "size": size}
+
+        if reference_images:
+            if len(reference_images) > 1:
+                logger.warning(
+                    f"siray 图生图只接受单张参考图，当前有 {len(reference_images)} 张，"
+                    f"只使用第一张: {reference_images[0]}"
+                )
+            payload["image"] = self._to_siray_image_field(reference_images[0])
+
+        # 轮询整体耗时受外层 future 的 AI_TIMEOUT 约束，配反了会在拿到图之前被掐断
+        if self.timeout <= self.siray_image_timeout:
+            logger.warning(
+                f"AI_TIMEOUT({self.timeout}s) 不大于 SIRAY_IMAGE_TIMEOUT({self.siray_image_timeout}s)，"
+                f"轮询可能被外层提前中断，建议调大 AI_TIMEOUT"
+            )
+
+        submit_url = f"{self.siray_base_url}/images/generations/async"
+        headers = {
+            "Authorization": f"Bearer {self.siray_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        logger.info(
+            f"提交 siray 图片任务: model={model}, size={size}, "
+            f"参考图={'有' if reference_images else '无'}, 提示词长度={len(prompt)}"
+        )
+
+        with httpx.Client(timeout=60) as client:
+            response = client.post(submit_url, json=payload, headers=headers)
+            response.raise_for_status()
+            submit_result = response.json()
+
+        task_id = (submit_result.get("data") or {}).get("task_id")
+        if not task_id:
+            raise Exception(
+                f"siray 未返回 task_id: code={submit_result.get('code')}, "
+                f"message={submit_result.get('message')}, fail_code={submit_result.get('fail_code')}"
+            )
+
+        logger.info(f"siray 图片任务已提交: task_id={task_id}")
+        return self._poll_siray_image_task(task_id)
+
+    def _poll_siray_image_task(self, task_id: str) -> str:
+        """
+        轮询 siray 图片任务直到出结果
+
+        状态流转: NOT_START -> SUBMITTED -> QUEUED -> IN_PROGRESS -> SUCCESS / FAILURE
+        """
+        status_url = f"{self.siray_base_url}/images/generations/async/{task_id}"
+        headers = {"Authorization": f"Bearer {self.siray_api_key}"}
+
+        deadline = time.time() + self.siray_image_timeout
+        last_status = None
+
+        while time.time() < deadline:
+            with httpx.Client(timeout=30) as client:
+                response = client.get(status_url, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+
+            data = result.get("data") or {}
+            status = data.get("status")
+
+            # 只在状态变化时打日志，避免轮询把日志刷爆
+            if status != last_status:
+                logger.info(f"siray 任务 {task_id} 状态: {status}, 进度: {data.get('progress')}")
+                last_status = status
+
+            if status == "SUCCESS":
+                outputs = data.get("outputs") or []
+                if not outputs:
+                    raise Exception(f"siray 任务 {task_id} 状态为 SUCCESS 但没有返回图片")
+                image_url = outputs[0]
+                logger.info(f"siray 图片生成成功: {image_url}")
+                return image_url
+
+            if status == "FAILURE":
+                raise Exception(
+                    f"siray 图片生成失败: fail_code={data.get('fail_code')}, "
+                    f"fail_reason={data.get('fail_reason')}"
+                )
+
+            time.sleep(self.siray_image_poll_interval)
+
+        raise TimeoutError(
+            f"siray 图片任务轮询超时（{self.siray_image_timeout}秒）: "
+            f"task_id={task_id}, 最后状态={last_status}"
+        )
+
     def _do_generate_image_by_reference(
         self,
         prompt: str,
@@ -2521,11 +2715,29 @@ class AIClient:
         if settings.DEBUG_GENERATE_IMAGE:
             return settings.DEBUG_GENERATE_IMAGE_URL
 
+        # 不支持的模型必须在进入重试循环之前拦掉：循环体内若没有任何分支命中，
+        # 既不返回也不抛异常，retry_count 不会自增，会变成死循环。
+        doubao_models = ("doubao-seedream-4.5", "doubao-seedream-5-0-260128")
+        if not ("gemini" in model.lower()
+                or model in doubao_models
+                or self._is_siray_image_model(model)):
+            raise Exception(f"不支持的图生图模型: {model}")
+
         # 重试逻辑
         max_retries = 5
         retry_count = 0
         while retry_count < max_retries:
             try:
+                # siray 异步图片接口
+                if self._is_siray_image_model(model):
+                    logger.info(f"使用 siray 异步接口进行图生图: {model}")
+                    return self._call_siray_image_api(
+                        prompt=prompt,
+                        model=model,
+                        size=self._get_siray_image_size(aspect_ratio),
+                        reference_images=reference_images
+                    )
+
                 # 检查是否为 Gemini 模型
                 if "gemini" in model.lower():
                     return self._call_gemini_image_api(
@@ -2553,9 +2765,9 @@ class AIClient:
                     return image_url
             except Exception as e:
                 retry_count += 1
-                logger.error(f"豆包 Seedream API 调用失败 (尝试 {retry_count}/{max_retries}): {str(e)}")
+                logger.error(f"图生图调用失败 (模型 {model}，尝试 {retry_count}/{max_retries}): {str(e)}")
                 if retry_count >= max_retries:
-                    raise Exception(f"豆包 Seedream API 调用失败 {max_retries} 次，最后一次错误: {str(e)}")
+                    raise Exception(f"图生图调用失败 {max_retries} 次（模型 {model}），最后一次错误: {str(e)}")
     def generate_image_by_reference(
         self, 
         prompt: str, 
