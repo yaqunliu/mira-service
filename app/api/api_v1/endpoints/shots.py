@@ -374,15 +374,15 @@ async def generate_shot_image(
     creation_id = shot.scene.creation.creation_id
 
     extra_data = shot.scene.creation.extra_data or {}
-    image_model = (
-        request.model_name
-        or extra_data.get("image_to_image_model")
-        or extra_data.get("text_to_image_model")
-        or settings.IMAGE_MODEL_IMAGE_TO_IMAGE
-        or settings.IMAGE_MODEL_TEXT_TO_IMAGE
-        or settings.IMAGE_MODEL_NAME
-        or "black-forest-labs/flux-kontext-pro/multi"
-    )
+    image_model = ModelConfigService.resolve_model(
+        "image_to_image",
+        request.model_name,
+        extra_data.get("image_to_image_model"),
+        extra_data.get("text_to_image_model"),
+        settings.IMAGE_MODEL_IMAGE_TO_IMAGE,
+        settings.IMAGE_MODEL_TEXT_TO_IMAGE,
+        settings.IMAGE_MODEL_NAME,
+    ) or "black-forest-labs/flux-kontext-pro/multi"
 
     reference_image_count = 0
     if shot.characters:
@@ -516,15 +516,15 @@ async def regenerate_shot_image(
     creation_id = shot.scene.creation.creation_id
 
     extra_data = shot.scene.creation.extra_data or {}
-    image_model = (
-        request.model_name
-        or extra_data.get("image_to_image_model")
-        or extra_data.get("text_to_image_model")
-        or settings.IMAGE_MODEL_IMAGE_TO_IMAGE
-        or settings.IMAGE_MODEL_TEXT_TO_IMAGE
-        or settings.IMAGE_MODEL_NAME
-        or "black-forest-labs/flux-kontext-pro/multi"
-    )
+    image_model = ModelConfigService.resolve_model(
+        "image_to_image",
+        request.model_name,
+        extra_data.get("image_to_image_model"),
+        extra_data.get("text_to_image_model"),
+        settings.IMAGE_MODEL_IMAGE_TO_IMAGE,
+        settings.IMAGE_MODEL_TEXT_TO_IMAGE,
+        settings.IMAGE_MODEL_NAME,
+    ) or "black-forest-labs/flux-kontext-pro/multi"
 
     reference_image_count = 0
     if shot.characters:

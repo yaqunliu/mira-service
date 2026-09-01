@@ -175,8 +175,21 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         # 从创作配置中获取模型配置
         creation = shot.scene.creation
         extra_data = creation.extra_data or {}
-        image_to_image_model = model_name or extra_data.get("image_to_image_model") or settings.IMAGE_MODEL_NAME
-        text_to_image_model = model_name or extra_data.get("text_to_image_model") or settings.IMAGE_MODEL_NAME # 兼容旧字段，实际不再区分
+        image_to_image_model = ModelConfigService.resolve_model(
+            "image_to_image",
+            model_name,
+            extra_data.get("image_to_image_model"),
+            settings.IMAGE_MODEL_IMAGE_TO_IMAGE,
+            settings.IMAGE_MODEL_NAME,
+        )
+        # 兼容旧字段，实际不再区分
+        text_to_image_model = ModelConfigService.resolve_model(
+            "text_to_image",
+            model_name,
+            extra_data.get("text_to_image_model"),
+            settings.IMAGE_MODEL_TEXT_TO_IMAGE,
+            settings.IMAGE_MODEL_NAME,
+        )
         
         # 使用LLM生成英文提示词
         llm_model = extra_data.get("llm_model") or settings.LLM_MODEL_NAME
@@ -707,15 +720,15 @@ def generate_single_shot_image_task(self, shot_id: int, creation_id: int, freeze
                 }
             
             extra_data = creation.extra_data or {}
-            image_model = (
-                model_name
-                or extra_data.get("image_to_image_model")
-                or extra_data.get("text_to_image_model")
-                or settings.IMAGE_MODEL_IMAGE_TO_IMAGE
-                or settings.IMAGE_MODEL_TEXT_TO_IMAGE
-                or settings.IMAGE_MODEL_NAME
-                or "black-forest-labs/flux-kontext-pro/multi"
-            )
+            image_model = ModelConfigService.resolve_model(
+                "image_to_image",
+                model_name,
+                extra_data.get("image_to_image_model"),
+                extra_data.get("text_to_image_model"),
+                settings.IMAGE_MODEL_IMAGE_TO_IMAGE,
+                settings.IMAGE_MODEL_TEXT_TO_IMAGE,
+                settings.IMAGE_MODEL_NAME,
+            ) or "black-forest-labs/flux-kontext-pro/multi"
             try:
                 model_config = ModelConfigService.get_model_config(image_model, "image_to_image")
                 image_size = model_config.get("image_size", "2K") if model_config else "2K"
@@ -911,14 +924,14 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
         
         # 计算每个分镜需要的积分并冻结积分
         # 优先使用 creation.extra_data 中的 image_to_image_model（如果不存在则回退到 text_to_image，再回退到 settings）
-        image_model = (
-            (creation.extra_data or {}).get("image_to_image_model")
-            or (creation.extra_data or {}).get("text_to_image_model")
-            or settings.IMAGE_MODEL_IMAGE_TO_IMAGE
-            or settings.IMAGE_MODEL_TEXT_TO_IMAGE
-            or settings.IMAGE_MODEL_NAME
-            or "black-forest-labs/flux-kontext-pro/multi"
-        )
+        image_model = ModelConfigService.resolve_model(
+            "image_to_image",
+            (creation.extra_data or {}).get("image_to_image_model"),
+            (creation.extra_data or {}).get("text_to_image_model"),
+            settings.IMAGE_MODEL_IMAGE_TO_IMAGE,
+            settings.IMAGE_MODEL_TEXT_TO_IMAGE,
+            settings.IMAGE_MODEL_NAME,
+        ) or "black-forest-labs/flux-kontext-pro/multi"
         try:
             model_config = ModelConfigService.get_model_config(image_model, "image_to_image")
             image_size = model_config.get("image_size", "2K") if model_config else "2K"

@@ -14,6 +14,7 @@ from app.utils.file_utils import read_prompt_file
 from app.utils.us3 import US3Client
 from app.utils.upload_helper import upload_helper
 from app.utils.points_deduction import deduct_points_for_image
+from app.services.model_config_service import ModelConfigService
 from app.core.config import settings
 from app.models.user import User
 from datetime import datetime
@@ -88,7 +89,13 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         # 从创作配置中获取模型配置
         creation = character.creation
         extra_data = creation.extra_data or {} if creation else {}
-        text_to_image_model = model_name or extra_data.get("text_to_image_model") or settings.IMAGE_MODEL_NAME
+        text_to_image_model = ModelConfigService.resolve_model(
+            "text_to_image",
+            model_name,
+            extra_data.get("text_to_image_model"),
+            settings.IMAGE_MODEL_TEXT_TO_IMAGE,
+            settings.IMAGE_MODEL_NAME,
+        )
         llm_model = extra_data.get("llm_model") or settings.LLM_MODEL_NAME
 
         # 获取风格描述

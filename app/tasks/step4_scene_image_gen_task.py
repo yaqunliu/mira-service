@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.models.user import User
 from app.utils.points_deduction import deduct_points_for_image
 from app.utils.model_prices import ModelPrices
+from app.services.model_config_service import ModelConfigService
 import math
 
 # 风格映射
@@ -204,7 +205,13 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
         # 从创作配置中获取模型配置和风格
         creation = scene.creation
         extra_data = creation.extra_data or {} if creation else {}
-        text_to_image_model = model_name or extra_data.get("text_to_image_model") or settings.IMAGE_MODEL_NAME
+        text_to_image_model = ModelConfigService.resolve_model(
+            "text_to_image",
+            model_name,
+            extra_data.get("text_to_image_model"),
+            settings.IMAGE_MODEL_TEXT_TO_IMAGE,
+            settings.IMAGE_MODEL_NAME,
+        )
         llm_model = extra_data.get("llm_model") or settings.LLM_MODEL_NAME
         visual_style = extra_data.get("visual_style", extra_data.get("style", "anime"))
 

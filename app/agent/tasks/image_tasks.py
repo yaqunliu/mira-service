@@ -20,6 +20,7 @@ from app.core.celery_app import celery_app
 from app.core.logger import logger
 from app.core.config import settings
 from app.utils.model_prices import ModelPrices
+from app.services.model_config_service import ModelConfigService
 from app.services.points_service import PointsService, InsufficientPointsError
 
 
@@ -256,7 +257,13 @@ def agent_generate_character_image_task(
                 raise Exception(f"创作不存在: {creation_uuid}")
             
             extra_data = creation.extra_data or {}
-            text_to_image_model = model or extra_data.get("text_to_image_model") or settings.IMAGE_MODEL_NAME
+            text_to_image_model = ModelConfigService.resolve_model(
+                "text_to_image",
+                model,
+                extra_data.get("text_to_image_model"),
+                settings.IMAGE_MODEL_TEXT_TO_IMAGE,
+                settings.IMAGE_MODEL_NAME,
+            )
             
             freeze_result = freeze_points_for_image_generation(
                 db=db,
@@ -410,7 +417,13 @@ def agent_generate_scene_image_task(
                 raise Exception(f"创作不存在: {creation_uuid}")
             
             extra_data = creation.extra_data or {}
-            text_to_image_model = model or extra_data.get("text_to_image_model") or settings.IMAGE_MODEL_NAME
+            text_to_image_model = ModelConfigService.resolve_model(
+                "text_to_image",
+                model,
+                extra_data.get("text_to_image_model"),
+                settings.IMAGE_MODEL_TEXT_TO_IMAGE,
+                settings.IMAGE_MODEL_NAME,
+            )
             
             freeze_result = freeze_points_for_image_generation(
                 db=db,
@@ -584,13 +597,13 @@ def agent_generate_single_shot_image_task(
             
             # 获取模型配置
             extra_data = creation.extra_data or {}
-            image_model = (
-                extra_data.get("image_to_image_model")
-                or extra_data.get("text_to_image_model")
-                or settings.IMAGE_MODEL_IMAGE_TO_IMAGE
-                or settings.IMAGE_MODEL_TEXT_TO_IMAGE
-                or "black-forest-labs/flux-kontext-pro/multi"
-            )
+            image_model = ModelConfigService.resolve_model(
+                "image_to_image",
+                extra_data.get("image_to_image_model"),
+                extra_data.get("text_to_image_model"),
+                settings.IMAGE_MODEL_IMAGE_TO_IMAGE,
+                settings.IMAGE_MODEL_TEXT_TO_IMAGE,
+            ) or "black-forest-labs/flux-kontext-pro/multi"
             
             # 获取 aspect ratio
             aspect_ratio_type = extra_data.get("aspect_ratio", "16:9")

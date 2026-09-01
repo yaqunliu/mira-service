@@ -1029,7 +1029,7 @@ class AIClient:
             return self._call_siray_image_api(
                 prompt=prompt,
                 model=model,
-                size=self._get_siray_image_size(aspectRatio)
+                aspect_ratio=aspectRatio
             )
 
         # 检查是否为 Gemini 模型
@@ -2534,27 +2534,128 @@ class AIClient:
             return False
         return re.search(r"-(t2i|i2i|edit|ref2i)(-|$)", model) is not None
 
+    # siray 的图片模型有两套互不兼容的请求体，按模型 ID 区分：
+    #
+    #   seedream 系: {model, prompt, size:"2560x1440"}          图生图用 image  (单个字符串)
+    #   qwen 系:     {model, prompt, size:"2k", aspect_ratio}   图生图用 images (数组，≤3)
+    #
+    # 两边的 size 含义完全不同（像素尺寸 vs 档位），字段名也不同，传错直接 400。
+    # 已核对过 spec 的只有这两系；其余（flux / nano-banana / midjourney 等）未验证，
+    # 默认按 seedream 系发，接入前请先看对应的 spec 页面。
+    _SIRAY_SEEDREAM_SIZES = {
+        "2048x2048", "2304x1728", "1728x2304", "2560x1440",
+        "1440x2560", "2496x1664", "1664x2496", "3024x1296",
+    }
+    _SIRAY_ASPECT_RATIOS = [
+        "1:1", "1:2", "2:1", "1:3", "3:1", "2:3", "3:2", "3:4",
+        "4:3", "4:5", "5:4", "9:16", "16:9", "9:21", "21:9",
+    ]
+
+    @staticmethod
+    def _siray_image_schema(model: str) -> str:
+        """判断 siray 图片模型属于哪一套请求体规范"""
+        if "qwen-image" in model:
+            return "qwen"
+        return "seedream"
+
     def _get_siray_image_size(self, aspect_ratio_str: str) -> str:
         """
-        把项目内的比例/尺寸写法映射为 siray 允许的固定尺寸
+        把项目内的比例/尺寸写法映射为 seedream 系允许的固定像素尺寸
 
         siray 的 size 是 8 个值的枚举，传别的值会被接口拒绝。这 8 个值与豆包
         Seedream 的尺寸表完全一致，所以直接复用既有的比例映射。
         """
-        siray_sizes = {
-            "2048x2048", "2304x1728", "1728x2304", "2560x1440",
-            "1440x2560", "2496x1664", "1664x2496", "3024x1296",
-        }
-
-        if aspect_ratio_str in siray_sizes:
+        if aspect_ratio_str in self._SIRAY_SEEDREAM_SIZES:
             return aspect_ratio_str
 
         size = self._get_doubao_image_size(aspect_ratio_str)
-        if size not in siray_sizes:
-            # _get_doubao_image_size 兜底返回 "2k"，siray 不认这种写法
+        if size not in self._SIRAY_SEEDREAM_SIZES:
+            # _get_doubao_image_size 兜底返回 "2k"，seedream 系不认这种写法
             logger.warning(f"siray 不支持的尺寸: {aspect_ratio_str}（映射结果 {size}），回退到 2560x1440")
             size = "2560x1440"
         return size
+
+    def _get_siray_aspect_ratio(self, aspect_ratio_str: str) -> str:
+        """
+        把项目内的比例/尺寸写法归一化为 qwen 系要求的 aspect_ratio 枚举
+
+        项目里这个值可能是 "16:9"，也可能是 "1536x864" 这种像素写法，
+        统一换算成宽高比后取最接近的枚举值。
+        """
+        default = "16:9"
+        if not aspect_ratio_str:
+            return default
+
+        value = str(aspect_ratio_str).strip().lower()
+        if value in self._SIRAY_ASPECT_RATIOS:
+            return value
+
+        match = re.fullmatch(r"(\d+)\s*[x×:]\s*(\d+)", value)
+        if not match:
+            logger.warning(f"无法解析的比例写法: {aspect_ratio_str}，回退到 {default}")
+            return default
+
+        width, height = int(match.group(1)), int(match.group(2))
+        if height == 0:
+            return default
+
+        target = width / height
+        closest = min(
+            self._SIRAY_ASPECT_RATIOS,
+            key=lambda r: abs(int(r.split(":")[0]) / int(r.split(":")[1]) - target),
+        )
+        logger.info(f"比例 {aspect_ratio_str} 归一化为 {closest}")
+        return closest
+
+    def _build_siray_image_payload(
+        self,
+        model: str,
+        prompt: str,
+        aspect_ratio_str: str,
+        reference_images: List[str] = None,
+    ) -> Dict[str, Any]:
+        """按模型所属的规范组装 siray 图片请求体"""
+        schema = self._siray_image_schema(model)
+
+        # 编辑/图生图类模型的参考图字段是必填的，缺了会被接口以 400 拒绝，
+        # 且报错文本看不出是配置问题（常见于把 -edit / -i2i 模型误配成文生图模型）。
+        if not reference_images and re.search(r"-(i2i|edit|ref2i)(-|$)", model):
+            raise Exception(
+                f"{model} 是图生图/编辑模型，必须提供参考图。"
+                f"文生图请改用 -t2i 结尾的模型（如 alibaba/qwen-image-3-t2i、bytedance/seedream-4.5-t2i）"
+            )
+
+        if schema == "qwen":
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "size": "2k",
+                "aspect_ratio": self._get_siray_aspect_ratio(aspect_ratio_str),
+            }
+            max_images = 3
+        else:
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "size": self._get_siray_image_size(aspect_ratio_str),
+            }
+            max_images = 1
+
+        if reference_images:
+            usable = reference_images[:max_images]
+            if len(reference_images) > max_images:
+                logger.warning(
+                    f"{model} 最多接受 {max_images} 张参考图，当前有 {len(reference_images)} 张，"
+                    f"只使用前 {max_images} 张"
+                )
+            converted = [self._to_siray_image_field(ref) for ref in usable]
+            # qwen 系字段是复数数组，seedream 系是单个字符串，不能互换
+            if schema == "qwen":
+                payload["images"] = converted
+            else:
+                payload["image"] = converted[0]
+
+        return payload
 
     def _to_siray_image_field(self, reference: str) -> str:
         """
@@ -2587,7 +2688,7 @@ class AIClient:
         self,
         prompt: str,
         model: str,
-        size: str,
+        aspect_ratio: str,
         reference_images: List[str] = None,
     ) -> str:
         """
@@ -2600,8 +2701,8 @@ class AIClient:
         Args:
             prompt: 提示词
             model: siray 模型 ID（带厂商前缀）
-            size: 图片尺寸，必须是 siray 允许的 8 个枚举值之一
-            reference_images: 参考图列表；图生图时只取第一张（接口只收单图）
+            aspect_ratio: 项目内的比例或像素写法，由适配器按模型规范转换
+            reference_images: 参考图列表；超出模型上限的部分会被丢弃并告警
 
         Returns:
             生成的图片 URL
@@ -2611,15 +2712,12 @@ class AIClient:
         if not self.siray_base_url:
             raise ValueError("siray Base URL 未配置（SIRAY_BASE_URL 或 OPENAI_BASE_URL）")
 
-        payload = {"model": model, "prompt": prompt, "size": size}
-
-        if reference_images:
-            if len(reference_images) > 1:
-                logger.warning(
-                    f"siray 图生图只接受单张参考图，当前有 {len(reference_images)} 张，"
-                    f"只使用第一张: {reference_images[0]}"
-                )
-            payload["image"] = self._to_siray_image_field(reference_images[0])
+        payload = self._build_siray_image_payload(
+            model=model,
+            prompt=prompt,
+            aspect_ratio_str=aspect_ratio,
+            reference_images=reference_images,
+        )
 
         # 轮询整体耗时受外层 future 的 AI_TIMEOUT 约束，配反了会在拿到图之前被掐断
         if self.timeout <= self.siray_image_timeout:
@@ -2635,7 +2733,8 @@ class AIClient:
         }
 
         logger.info(
-            f"提交 siray 图片任务: model={model}, size={size}, "
+            f"提交 siray 图片任务: model={model}, 规范={self._siray_image_schema(model)}, "
+            f"size={payload.get('size')}, aspect_ratio={payload.get('aspect_ratio', '-')}, "
             f"参考图={'有' if reference_images else '无'}, 提示词长度={len(prompt)}"
         )
 
@@ -2734,7 +2833,7 @@ class AIClient:
                     return self._call_siray_image_api(
                         prompt=prompt,
                         model=model,
-                        size=self._get_siray_image_size(aspect_ratio),
+                        aspect_ratio=aspect_ratio,
                         reference_images=reference_images
                     )
 

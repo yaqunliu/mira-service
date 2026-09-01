@@ -167,6 +167,16 @@ class ModelConfigFactory:
             sort_order=1,
         ),
         ModelConfig(
+            model_name="alibaba/qwen-image-3-t2i",
+            model_type="text_to_image",
+            display_name="Qwen Image 3 文生图",
+            description="siray 中转 - 阿里 Qwen Image 3 文生图",
+            config={"aspect_ratio": "16:9", "languages": ["zh", "en"], "max_words": 300},
+            is_enabled=True,
+            is_default=False,
+            sort_order=2,
+        ),
+        ModelConfig(
             model_name="gemini-3-pro-image-preview",
             model_type="text_to_image",
             display_name="Gemini 3 Pro Image",
@@ -212,6 +222,16 @@ class ModelConfigFactory:
             is_enabled=True,
             is_default=True,
             sort_order=1,
+        ),
+        ModelConfig(
+            model_name="alibaba/qwen-image-3-edit",
+            model_type="image_to_image",
+            display_name="Qwen Image 3 图生图",
+            description="siray 中转 - 阿里 Qwen Image 3 编辑模型，最多 3 张参考图",
+            config={"aspect_ratio": "16:9", "languages": ["zh", "en"], "max_words": 300},
+            is_enabled=True,
+            is_default=False,
+            sort_order=2,
         ),
         ModelConfig(
             model_name="gemini-3-pro-image-preview",
@@ -310,13 +330,15 @@ class ModelConfigFactory:
     ]
 
     @classmethod
-    def get_models_by_type(cls, model_type: str) -> List[ModelConfig]:
+    def get_models_by_type(cls, model_type: str, include_disabled: bool = False) -> List[ModelConfig]:
         """
-        根据模型类型获取启用的模型列表
-        
+        根据模型类型获取模型列表
+
         Args:
             model_type: 模型类型（llm, text_to_image, image_to_image, video）
-            
+            include_disabled: 是否包含 is_enabled=False 的条目。默认只返回启用的；
+                传 True 用于区分「已停用的已知模型」和「配置里没登记过的模型」。
+
         Returns:
             模型配置列表，按 sort_order 排序
         """
@@ -330,10 +352,11 @@ class ModelConfigFactory:
             models = cls._VIDEO_MODELS
         else:
             return []
-        
+
         # 过滤启用的模型并按排序顺序返回
-        enabled_models = [m for m in models if m.is_enabled]
-        return sorted(enabled_models, key=lambda x: x.sort_order)
+        if not include_disabled:
+            models = [m for m in models if m.is_enabled]
+        return sorted(models, key=lambda x: x.sort_order)
     
     @classmethod
     def get_all_models(cls) -> Dict[str, List[Dict[str, Any]]]:
