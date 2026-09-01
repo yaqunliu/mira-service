@@ -72,6 +72,42 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 - `src/lib/api/client.ts:14` — 空值时 `baseURL=''`，走同源 ✅
 - `src/hooks/use-agent-chat.ts:545`、`src/lib/api/agent-api.ts:36` — 用的是 `|| ''` ✅
 
+### 🔴 C. next-intl 中间件会拦截 `/api/*`，导致代理彻底失效（部署后实测发现）
+
+前后端在服务器起来之后，从外网实测：
+
+```
+GET http://45.130.164.189:8001/api/v1/products
+  → 307 重定向到 /zh/api/v1/products
+  → 404，返回的是一个 HTML 页面而不是 JSON
+```
+
+**根因**：`src/middleware.ts` 的 matcher 把 `/api` 也纳入了 next-intl 的处理范围：
+
+```ts
+matcher: ['/((?!.*\\..*|_next).*)', '/', '/(api|trpc)(.*)']
+//         ↑ 这条本身就匹配 /api/v1/*     ↑ 这条又显式匹配一次
+```
+
+Next.js 的执行顺序是「middleware → afterFiles rewrites」，而 `next.config.js` 里
+`rewrites()` 返回数组属于 afterFiles。所以中间件先给 `/api/v1/*` 加上了 locale 前缀，
+加完之后的路径不再匹配 rewrite 的 `source: '/api/v1/:path*'`，代理永远不会触发。
+
+**为什么之前没暴露**：方案 A 下浏览器直连后端绝对地址，这些请求根本不经过前端服务器，
+中间件碰不到。换成同源代理后才显形。
+
+**修复**：把 `api` 从 matcher 中排除。已确认项目没有 `src/app/api`
+（无 Next 自己的 route handler），`/api` 下的请求全部属于后端。
+
+```ts
+matcher: ['/((?!api|_next|_vercel|.*\\..*).*)']
+```
+
+已用正则对 10 条路径逐一验证：`/`、`/zh/home`、`/auth/login` 仍走中间件；
+`/api/v1/*`、`/_next/*`、带扩展名的静态资源全部跳过。
+
+> ⚠️ middleware 的 matcher 会编译进构建产物，**改完必须 `--build` 重新构建**，重启无效。
+
 ### 已核查通过的项
 
 - 前端所有后端请求路径都在 `/api/v1/` 前缀下，正好被 rewrites 覆盖
