@@ -303,6 +303,15 @@ class Settings(BaseSettings):
     DEBUG_GENERATE_VIDEO: bool = False  # 调试生成模式，为 True 时不调用真实 API，返回固定地址
     DEBUG_GENERATE_IMAGE_URL: str = "https://novel-agent.cn-sh2.ufileos.com/dev/20260205/10a34369-16b7-4cb9-ab19-4be8b84adb5a/characters/characters/78/image_41b33d9a-19b5-471c-8d6c-80ff72323446.png"
     DEBUG_GENERATE_VIDEO_URL: str = "https://novel-agent.cn-sh2.ufileos.com/test/testvideo/0001.mp4"
+
+    # 演示模式：跳过积分校验
+    #
+    # 为 True 时，freeze_points / deduct_points 不再因余额不足抛 InsufficientPointsError，
+    # 允许积分扣成负数。积分记录照常写入，账户余额照常变动 —— 只是不拦。
+    # 这样演示结束后关掉开关，账目仍是完整可追溯的。
+    #
+    # 默认 False：不配置 .env 就是线上正常行为，删除开关时无需改代码。
+    POINTS_CHECK_DISABLED: bool = False
     
     model_config = ConfigDict(
         env_file=[".env.local", ".env"],  # 先读取 .env.local（本地开发），再读取 .env（Docker/生产）

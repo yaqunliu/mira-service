@@ -541,14 +541,21 @@ class PointsService:
                 return existing_deduction  # 返回已存在的记录，不重复扣除
         
         balance_before = account.available_points
-        
-        # 检查余额（如果不允许负积分且余额不足，抛出异常）
-        if not allow_negative and balance_before < points:
-            raise InsufficientPointsError(required=points, available=balance_before)
-        
-        # 检查积分为负或0时，不允许扣除
-        if balance_before <= 0:
-            raise InsufficientPointsError(required=points, available=balance_before)
+
+        # 演示模式：跳过余额校验，允许扣成负数（见 settings.POINTS_CHECK_DISABLED）
+        if settings.POINTS_CHECK_DISABLED:
+            logger.warning(
+                f"[演示模式] 跳过积分扣除校验: user_id={user_id}, 需要 {points}, "
+                f"可用 {balance_before}, operation_type={operation_type}"
+            )
+        else:
+            # 检查余额（如果不允许负积分且余额不足，抛出异常）
+            if not allow_negative and balance_before < points:
+                raise InsufficientPointsError(required=points, available=balance_before)
+
+            # 检查积分为负或0时，不允许扣除
+            if balance_before <= 0:
+                raise InsufficientPointsError(required=points, available=balance_before)
         
         # 同步总积分（确保数据一致）
         PointsService._sync_total_points(db, account)
@@ -599,9 +606,10 @@ class PointsService:
         
         # 剩余部分从长期积分中扣除
         if remaining_points > 0:
-            if account.permanent_points < remaining_points:
+            if account.permanent_points < remaining_points and not settings.POINTS_CHECK_DISABLED:
                 # 长期积分不足，抛出异常
                 raise InsufficientPointsError(required=points, available=balance_before)
+            # 演示模式下允许扣成负数（上面的余额校验已放行，这里不能再拦）
             account.permanent_points -= remaining_points
             deducted_permanent = remaining_points
         
@@ -742,13 +750,20 @@ class PointsService:
         # 同步总积分（确保数据一致）
         PointsService._sync_total_points(db, account)
         balance_before = account.available_points
-        
-        # 检查余额
-        if account.available_points < points:
-            raise InsufficientPointsError(required=points, available=balance_before)
-        
-        if account.available_points <= 0:
-            raise InsufficientPointsError(required=points, available=balance_before)
+
+        # 演示模式：跳过余额校验，允许扣成负数（见 settings.POINTS_CHECK_DISABLED）
+        if settings.POINTS_CHECK_DISABLED:
+            logger.warning(
+                f"[演示模式] 跳过积分冻结校验: user_id={user_id}, 需要 {points}, "
+                f"可用 {balance_before}, operation_type={operation_type}"
+            )
+        else:
+            # 检查余额
+            if account.available_points < points:
+                raise InsufficientPointsError(required=points, available=balance_before)
+
+            if account.available_points <= 0:
+                raise InsufficientPointsError(required=points, available=balance_before)
         
         # 冻结积分（只操作 frozen_points，available_points 会在同步时自动计算）
         account.frozen_points += points

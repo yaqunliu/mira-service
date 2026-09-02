@@ -258,8 +258,15 @@ class PointsAsyncService:
         
         account = await PointsAsyncService.get_or_create_account(db, user_id)
         total = await PointsAsyncService._calculate_total_points(db, account)
-        
-        if total < points:
+
+        # 演示模式：跳过余额校验，允许扣成负数（见 settings.POINTS_CHECK_DISABLED）
+        if settings.POINTS_CHECK_DISABLED:
+            if total < points:
+                logger.warning(
+                    f"[演示模式] 跳过积分扣除校验(async): user_id={user_id}, "
+                    f"需要 {points}, 可用 {total}, reason={reason}"
+                )
+        elif total < points:
             raise InsufficientPointsError(
                 f"积分不足: 需要 {points}, 可用 {total}"
             )
@@ -588,12 +595,19 @@ class PointsAsyncService:
         
         await PointsAsyncService._sync_total_points(db, account)
         balance_before = account.available_points
-        
-        if account.available_points < points:
-            raise InsufficientPointsError(required=points, available=balance_before)
-        
-        if account.available_points <= 0:
-            raise InsufficientPointsError(required=points, available=balance_before)
+
+        # 演示模式：跳过余额校验，允许扣成负数（见 settings.POINTS_CHECK_DISABLED）
+        if settings.POINTS_CHECK_DISABLED:
+            logger.warning(
+                f"[演示模式] 跳过积分冻结校验(async): user_id={user_id}, 需要 {points}, "
+                f"可用 {balance_before}, operation_type={operation_type}"
+            )
+        else:
+            if account.available_points < points:
+                raise InsufficientPointsError(required=points, available=balance_before)
+
+            if account.available_points <= 0:
+                raise InsufficientPointsError(required=points, available=balance_before)
         
         account.frozen_points += points
         await PointsAsyncService._sync_total_points(db, account)
