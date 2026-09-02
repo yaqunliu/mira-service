@@ -18,6 +18,14 @@ from app.models.shot import Shot
 from app.schemas.creation import CreationStatus
 from app.utils.task_types import TaskType
 from app.services.model_config_service import ModelConfigService
+from app.utils.character_variants import (
+    TYPE_ON_SCREEN,
+    build_historical_library,
+    parse_analysis_result,
+    resolve_character_ids,
+    resolve_narration_items,
+    variant_key,
+)
 
 @celery_app.task(
     bind=True, 
@@ -107,8 +115,6 @@ def character_analysis_task(self, novel_id: int, chapter_id: int, creation_id: i
         logger.info(f"成功读取章节内容，长度: {len(chapter_content)} 字符")
         
         # 获取历史角色库
-        historical_characters = {}
-        
         # 根据创作类型查询历史角色
         if creation.creation_type == "script":
             # 文案创作：查询该创作相关的角色
@@ -122,21 +128,10 @@ def character_analysis_task(self, novel_id: int, chapter_id: int, creation_id: i
                 Character.novel_id == novel_id,
                 Character.deleted_at.is_(None)
             ).all()
-        
-        for char in existing_characters:
-            # 构建角色特征字典
-            char_dict = {
-                "基础信息": char.basic_info or "",
-                "容貌特征": char.appearance or "",
-                "身材特征": char.body or "",
-                "头发": char.hair or "",
-                "服装": char.clothing or "",
-                "特征标签": char.tags if char.tags else ""
-            }
-            historical_characters[char.name] = char_dict
-        
+
+        historical_characters = build_historical_library(existing_characters)
         logger.info(f"获取到 {len(historical_characters)} 个历史角色")
-        
+
         # 进行角色分析
         prompt_character_analysis = read_prompt_file("character_analysis.md")
         character_analysis_result = ai_client.gen_character_analysis(
@@ -147,118 +142,85 @@ def character_analysis_task(self, novel_id: int, chapter_id: int, creation_id: i
             creation_id=creation_id,
             novel_id=creation.novel_id
         )
-        
-        # 获取出镜角色数据
-        characters_data = character_analysis_result.get('人物特征库', {}).get('出镜角色', {})
-        if not characters_data:
-             # 兼容旧格式（如果没有区分出镜角色和声音角色）
-             characters_data = character_analysis_result.get('人物特征库', {})
-             # 如果包含"出镜角色"键但为空，或者包含"声音角色"键，说明是新格式但没有出镜角色
-             if '出镜角色' in character_analysis_result.get('人物特征库', {}) or '声音角色' in character_analysis_result.get('人物特征库', {}):
-                  if not isinstance(characters_data, dict) or ('出镜角色' not in characters_data and '声音角色' not in characters_data):
-                       # 只有当它是纯角色字典时才使用，否则认为是空
-                       pass
-                  else:
-                       characters_data = {}
 
-        logger.info(f"角色分析完成，识别到 {len(characters_data)} 个出镜角色")
-        logger.info(f"【DEBUG】角色列表: {list(characters_data.keys())}")
+        # 解析并归一化角色列表（新格式为 characters 数组，兼容旧的中文字典格式）
+        characters_data = parse_analysis_result(character_analysis_result)
+
+        on_screen_count = sum(1 for c in characters_data if c["character_type"] == TYPE_ON_SCREEN)
+        logger.info(
+            f"角色分析完成，识别到 {len(characters_data)} 个角色"
+            f"（出镜 {on_screen_count} 个，声音 {len(characters_data) - on_screen_count} 个）"
+        )
 
         # 打印每个角色的详细信息，以便调试
-        for char_name, char_info in characters_data.items():
-            logger.info(f"【DEBUG】角色 '{char_name}': 基础信息={char_info.get('基础信息', '')[:50]}..., 服装={char_info.get('服装', '')[:100]}...")
-        
+        for char_info in characters_data:
+            logger.info(
+                f"【DEBUG】角色 '{char_info['name']}' "
+                f"[type={char_info['character_type']}, age_group={char_info['age_group']}, "
+                f"state={char_info['state']}]: "
+                f"基础信息={(char_info.get('basic_info') or '')[:50]}..., "
+                f"服装={(char_info.get('clothing') or '')[:100]}..."
+            )
+
         # 保存角色信息到数据库
-        character_map = {}
+        # 出镜角色与声音角色统一走同一个循环，靠 character_type 区分，
+        # 不再依赖 basic_info == "声音角色" 这个字符串哨兵
+        character_map = {}  # variant_key -> Character obj
         created_count = 0
         reused_count = 0
-        
-        for char_name, char_info in characters_data.items():
-            # 根据创作类型检查是否存在同名角色
-            if creation.creation_type == "script":
-                # 文案创作：检查该创作下是否已存在同名角色
-                existing_character = db.query(Character).filter(
-                    Character.creation_id == creation_id,
-                    Character.name == char_name,
-                    Character.deleted_at.is_(None)
-                ).first()
-            else:
-                # 章节创作：检查该小说中是否已存在同名角色
-                existing_character = db.query(Character).filter(
-                    Character.novel_id == novel_id,
-                    Character.name == char_name,
-                    Character.deleted_at.is_(None)
-                ).first()
-            
+
+        # 查重范围：文案创作限于本 creation，章节创作跨整部小说
+        scope_filter = (
+            Character.creation_id == creation_id
+            if creation.creation_type == "script"
+            else Character.novel_id == novel_id
+        )
+
+        for char_info in characters_data:
+            key = variant_key(char_info["name"], char_info["age_group"], char_info["state"])
+
+            # 变体去重键是 (name, age_group, state) 三元组，不再只看 name——
+            # 同一人物的不同外观状态是独立角色条目
+            existing_character = db.query(Character).filter(
+                scope_filter,
+                Character.name == char_info["name"],
+                Character.age_group.is_(None) if char_info["age_group"] is None
+                else Character.age_group == char_info["age_group"],
+                Character.state.is_(None) if char_info["state"] is None
+                else Character.state == char_info["state"],
+                Character.deleted_at.is_(None)
+            ).first()
+
             if existing_character:
-                character_map[char_name] = existing_character
+                character_map[key] = existing_character
                 reused_count += 1
-                logger.info(f"复用已有角色: {char_name} (character_id={existing_character.character_id})")
-            else:
-                # 解析特征标签
-                tags = char_info.get('特征标签', '')
-                if isinstance(tags, str):
-                    tags_list = [tag.strip() for tag in tags.split('、') if tag.strip()]
-                else:
-                    tags_list = tags if isinstance(tags, list) else []
-                
-                # 根据创作类型设置角色属性
-                character = Character(
-                    name=char_name,
-                    status='new',
-                    basic_info=char_info.get('基础信息', ''),
-                    appearance=char_info.get('容貌特征', ''),
-                    body=char_info.get('身材特征', ''),
-                    hair=char_info.get('头发', ''),
-                    clothing=char_info.get('服装', ''),
-                    tags=tags_list if tags_list else None,
-                    voice_description=char_info.get('音色描述', ''),  # 新增字段
-                    creation_id=creation_id,
-                    novel_id=novel_id  # 对于文案创作，novel_id 会保持为 0
+                logger.info(
+                    f"复用已有角色: {existing_character.variant_label} "
+                    f"(character_id={existing_character.character_id})"
                 )
-                db.add(character)
-                character_map[char_name] = character
-                created_count += 1
-                logger.info(f"创建新角色: {char_name}")
-        
-        # 处理声音角色
-        voice_characters_data = character_analysis_result.get('人物特征库', {}).get('声音角色', {})
-        if voice_characters_data:
-             for char_name, char_info in voice_characters_data.items():
-                if char_name in character_map:
-                    continue # 如果已经存在（可能是出镜角色同时也是声音角色），跳过
-                
-                # 检查是否存在
-                if creation.creation_type == "script":
-                    existing_character = db.query(Character).filter(
-                        Character.creation_id == creation_id,
-                        Character.name == char_name,
-                        Character.deleted_at.is_(None)
-                    ).first()
-                else:
-                    existing_character = db.query(Character).filter(
-                        Character.novel_id == novel_id,
-                        Character.name == char_name,
-                        Character.deleted_at.is_(None)
-                    ).first()
-                
-                if existing_character:
-                     character_map[char_name] = existing_character
-                     reused_count += 1
-                     logger.info(f"复用已有声音角色: {char_name}")
-                else:
-                     character = Character(
-                        name=char_name,
-                        status='new',
-                        basic_info="声音角色", # 标记为声音角色
-                        voice_description=char_info.get('音色描述', ''),
-                        creation_id=creation_id,
-                        novel_id=novel_id
-                     )
-                     db.add(character)
-                     character_map[char_name] = character
-                     created_count += 1
-                     logger.info(f"创建新声音角色: {char_name}")
+                continue
+
+            character = Character(
+                name=char_info["name"],
+                status='new',
+                character_type=char_info["character_type"],
+                age_group=char_info["age_group"],
+                state=char_info["state"],
+                voice_channel=char_info["voice_channel"],
+                basic_info=char_info.get("basic_info"),
+                appearance=char_info.get("appearance"),
+                body=char_info.get("body"),
+                hair=char_info.get("hair"),
+                clothing=char_info.get("clothing"),
+                tags=char_info.get("tags"),
+                voice_description=char_info.get("voice_description"),
+                creation_id=creation_id,
+                novel_id=novel_id  # 对于文案创作，novel_id 会保持为 0
+            )
+            db.add(character)
+            character_map[key] = character
+            created_count += 1
+            logger.info(f"创建新角色: {character.variant_label} [{character.character_type}]")
 
         # 先 flush 以确保新创建的角色有 character_id
         db.flush()
@@ -858,30 +820,9 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
         
         if not characters:
             raise Exception("未找到角色数据，请先进行角色分析")
-            
-        characters_data = {
-            "出镜角色": {},
-            "声音角色": {}
-        }
-        character_map = {} # name -> Character obj
-        
-        for char in characters:
-            character_map[char.name] = char
-            char_info = {
-                "基础信息": char.basic_info or "",
-                "容貌特征": char.appearance or "",
-                "身材特征": char.body or "",
-                "头发": char.hair or "",
-                "服装": char.clothing or "",
-                "特征标签": char.tags if char.tags else "",
-                "音色描述": char.voice_description or ""
-            }
-            
-            # 根据 basic_info 判断是否为声音角色 (约定俗成)
-            if char.basic_info == "声音角色":
-                characters_data["声音角色"][char.name] = char_info
-            else:
-                characters_data["出镜角色"][char.name] = char_info
+
+        # 角色按 character_id 索引——分镜拆解的角色引用一律用 ID，不做字符串匹配
+        char_by_id = {char.character_id: char for char in characters}
 
         # 初始化 AI Client
         extra_data = creation.extra_data or {}
@@ -892,7 +833,7 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
         # 执行分镜拆解
         result = ai_client.gen_shot_analysis(
             scenes_data=scenes_data,
-            characters_data=characters_data,
+            characters=characters,
             original_text=chapter_content,
             user_id=creation.owner_id,
             creation_id=creation_id,
@@ -950,15 +891,12 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
                     continue
 
             # 处理台词
-            raw_narration = shot_data.get("台词", [])
-            if isinstance(raw_narration, list):
-                # 已经是列表，直接保存
-                processed_narration = raw_narration
-            elif isinstance(raw_narration, str) and raw_narration.strip():
-                # 是字符串，转换为默认旁白格式
-                processed_narration = [{"角色": "旁白", "内容": raw_narration}]
-            else:
-                processed_narration = []
+            # LLM 侧输出 [{"character_id": 42, "content": "..."}]，旁白用 character_id: null
+            processed_narration = resolve_narration_items(
+                shot_data.get("台词", []),
+                char_by_id,
+                shot_label=f"分镜 {shot_number}",
+            )
 
             # 创建分镜
             shot = Shot(
@@ -981,41 +919,29 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
             )
             db.add(shot)
             db.flush()
-            
-            # 关联角色
-            char_names = shot_data.get("人物", []) or shot_data.get("出镜角色", []) # 兼容字段
-            if char_names:
-                for name in char_names:
-                    # 尝试精确匹配
-                    if name in character_map:
-                        shot.characters.append(character_map[name])
-                        logger.info(f"分镜 {shot_number} 关联角色: {name}")
-                    else:
-                        # 尝试模糊匹配（如果 AI 输出的名字包含额外描述，或者数据库名字包含额外描述）
-                        # 例如：AI输出 "陶未"，DB中有 "陶未-青年"
-                        matched = False
-                        for db_char_name, char_obj in character_map.items():
-                            if name in db_char_name or db_char_name in name:
-                                shot.characters.append(char_obj)
-                                logger.info(f"分镜 {shot_number} 模糊关联角色: {name} -> {db_char_name}")
-                                matched = True
-                                break
-                        if not matched:
-                            logger.warning(f"分镜 {shot_number} 未找到角色: {name} (可用角色: {list(character_map.keys())})")
-            
-            # 关联声音角色（如果需要）
-            voice_char_names = shot_data.get("声音角色", [])
-            if voice_char_names:
-                 for name in voice_char_names:
-                    if name in character_map:
-                        # 声音角色也关联到 shot_characters 表吗？是的，通常都需要知道谁参与了这个分镜
-                        # 但如果是为了生成图片，可能只关心出镜角色。
-                        # 这里我们先关联上，后续使用时可以根据角色属性过滤
-                        if character_map[name] not in shot.characters:
-                            shot.characters.append(character_map[name])
-                            logger.info(f"分镜 {shot_number} 关联声音角色: {name}")
-            
-            
+
+            # 关联角色：一律按 character_id 查表，不做任何名字匹配
+            shot_label = f"分镜 {shot_number}"
+            on_screen_chars = resolve_character_ids(
+                shot_data.get("on_screen_character_ids", []), char_by_id, shot_label
+            )
+            voice_chars = resolve_character_ids(
+                shot_data.get("voice_character_ids", []), char_by_id, shot_label
+            )
+
+            # 声音角色也进 shot_characters 表——需要知道谁参与了这个分镜；
+            # 生图时由 shot_task 按 character_type 过滤掉不出镜的
+            for char in on_screen_chars + voice_chars:
+                if char not in shot.characters:
+                    shot.characters.append(char)
+
+            if on_screen_chars or voice_chars:
+                logger.info(
+                    f"{shot_label} 关联角色: "
+                    f"出镜={[c.variant_label for c in on_screen_chars]}, "
+                    f"声音={[c.variant_label for c in voice_chars]}"
+                )
+
         # 更新状态
         creation.status = CreationStatus.PLAYBOOK_GENERATED
         creation.current_task_id = None

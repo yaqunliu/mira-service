@@ -15,6 +15,7 @@ from app.agent.state.schemas import ComicDramaState, CharacterState
 from app.agent.tools.voice_selection_tools import SelectVoiceForCharacterTool
 from app.core.logger import logger
 from app.core.config import settings
+from app.utils.character_variants import NARRATOR_NAME, is_narrator
 
 
 class NarrationAudioTaggerTool(BaseTool):
@@ -57,11 +58,23 @@ class NarrationAudioTaggerTool(BaseTool):
         )
     
     def _get_character_voice_id(
-        self, 
-        speaker: str, 
-        characters: List[CharacterState]
+        self,
+        speaker: str,
+        characters: List[CharacterState],
+        character_id: Optional[int] = None
     ) -> Optional[str]:
-        """从角色列表中获取角色的 voice_id"""
+        """
+        获取角色的 voice_id。
+
+        优先按 character_id 精确定位；老数据的 narration 没有 character_id，
+        才退回按角色名匹配（见 en-plan.md Phase 3.5.4）。
+        """
+        if character_id is not None:
+            for char in characters:
+                if char.get("character_id") == character_id:
+                    return char.get("voice_id")
+            logger.warning(f"narration 引用的 character_id={character_id} 不在角色列表中")
+
         for char in characters:
             if char.get("name") == speaker:
                 return char.get("voice_id")
@@ -82,7 +95,7 @@ class NarrationAudioTaggerTool(BaseTool):
         voice_speed = 1.0
         
         # 旁白默认情感
-        if speaker in ["旁白", "narration", "解说"]:
+        if is_narrator(speaker):
             emotion_tags = ["calm", "confident"]
             voice_speed = 1.0
         else:
@@ -146,26 +159,33 @@ class NarrationAudioTaggerTool(BaseTool):
             tagged_narrations = []
             
             for idx, narration in enumerate(narration_list):
-                speaker = narration.get("角色", "旁白")
-                content = narration.get("内容", "")
-                
+                speaker = narration.get("角色") or narration.get("role") or NARRATOR_NAME
+                content = narration.get("内容") or narration.get("content") or ""
+
                 if not content:
                     continue
-                
+
                 # 判断是旁白还是对话
-                is_narration = speaker in ["旁白", "narration", "解说", " narrator"]
+                # （原先这里的判定列表里有个 " narrator" 前导空格 typo，永远匹配不上）
+                narration_character_id = narration.get("character_id")
+                is_narration = narration_character_id is None and is_narrator(speaker)
                 audio_type = "narration" if is_narration else "dialogue"
-                
+
                 # 获取 voice_id
                 if is_narration:
                     voice_id = self.default_narration_voice_id
                 else:
-                    voice_id = self._get_character_voice_id(speaker, characters)
-                    
+                    voice_id = self._get_character_voice_id(
+                        speaker, characters, narration_character_id
+                    )
+
                     # 如果角色没有 voice_id，尝试从状态中获取或使用默认
                     if not voice_id:
                         voice_id = state.get("creation_voice_id") or settings.FISH_AUDIO_DEFAULT_VOICE_ID
-                        logger.warning(f"角色 {speaker} 没有分配 voice_id，使用默认值")
+                        logger.warning(
+                            f"角色 {speaker} (character_id={narration_character_id}) "
+                            f"没有分配 voice_id，使用默认值"
+                        )
                 
                 # 分析情感标签
                 emotion_analysis = self._analyze_emotion_for_text(content, speaker, context)

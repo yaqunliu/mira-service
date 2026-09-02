@@ -7,6 +7,10 @@ class CharacterBase(BaseModel):
     name: str
     status: str = "new"
     basic_info: Optional[str] = None
+    age_group: Optional[str] = None  # child / teen / youth / middle_aged / elder
+    state: Optional[str] = None  # 临时外观状态，如 "drenched"；日常状态为 None
+    character_type: str = "on_screen"  # on_screen / voice
+    voice_channel: Optional[str] = None  # 仅 voice：phone / intercom / memory / distant / offscreen
     appearance: Optional[str] = None
     body: Optional[str] = None
     hair: Optional[str] = None
@@ -28,6 +32,10 @@ class CharacterUpdate(BaseModel):
     name: Optional[str] = None
     status: Optional[str] = None
     basic_info: Optional[str] = None
+    age_group: Optional[str] = None
+    state: Optional[str] = None
+    character_type: Optional[str] = None
+    voice_channel: Optional[str] = None
     appearance: Optional[str] = None
     body: Optional[str] = None
     hair: Optional[str] = None

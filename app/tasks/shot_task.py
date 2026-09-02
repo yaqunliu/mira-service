@@ -110,8 +110,8 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
         else:
             # 否则从角色表获取
             for character in shot.characters:
-                # 跳过声音角色
-                if character.basic_info == "声音角色":
+                # 跳过声音角色（不出镜，不该进生图参考）
+                if character.is_voice_only:
                     logger.info(f"跳过声音角色 {character.name}，不加入图片提示词生成")
                     continue
 

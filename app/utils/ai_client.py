@@ -536,7 +536,7 @@ class AIClient:
         self,
         prompt: str,
         chapter_content: str,
-        historical_characters: Dict[str, Any] = None,
+        historical_characters: List[Dict[str, Any]] = None,
         model: str = None,
         user_id: int = None,
         creation_id: int = None,
@@ -548,14 +548,16 @@ class AIClient:
         Args:
             prompt: 角色分析提示词
             chapter_content: 章节内容
-            historical_characters: 历史角色库（可选），格式：{"角色名": {...特征...}}
+            historical_characters: 历史角色库（可选），数组格式，每项含
+                name / age_group / state / character_type 等字段。
+                按 (name, age_group, state) 三元组复用，不再按角色名做键
             model: 模型名称，默认使用 character_analysis_model
             user_id: 用户ID（用于积分扣除，可选）
             creation_id: 创作ID（用于积分扣除，可选）
             novel_id: 小说ID（用于积分扣除，可选）
 
         Returns:
-            解析后的 JSON 数据，包含章节信息和人物特征库
+            解析后的 JSON 数据，包含 chapter_info 和 characters 数组
         """
         # 默认使用人物解析专用模型
         model = model or self.character_analysis_model
@@ -563,13 +565,18 @@ class AIClient:
         # 构建历史角色库的文本描述
         historical_characters_text = ""
         if historical_characters:
-            historical_characters_text = "\n\n以下是之前已存在的角色特征库（如果当前章节中出现同名角色且状态相同，请复用这些特征；如果同一角色出现不同状态，必须创建新的独立角色条目）：\n"
+            historical_characters_text = (
+                "\n\nExisting character library. If a character in this chapter matches an entry by the "
+                "(name, age_group, state) triple, reuse that entry's features AND its exact English name. "
+                "If the same person appears with a different age_group or state, create a new independent "
+                "entry instead of reusing:\n"
+            )
             historical_characters_text += json.dumps(historical_characters, ensure_ascii=False, indent=2)
 
         messages = [
             {
                 "role": "user",
-                "content": f"{prompt}{historical_characters_text}\n\n下面是章节内容：\n{chapter_content}",
+                "content": f"{prompt}{historical_characters_text}\n\nSource text:\n{chapter_content}",
             }
         ]
 
@@ -607,7 +614,7 @@ class AIClient:
                 }
             )
 
-            logger.info(f"角色分析完成，识别到 {len(parsed_data.get('人物特征库', {}))} 个角色")
+            logger.info(f"角色分析完成，识别到 {len(parsed_data.get('characters', []))} 个角色")
             return parsed_data
 
         except Exception as e:
@@ -805,7 +812,7 @@ class AIClient:
     def gen_shot_analysis(
         self,
         scenes_data: List[Dict[str, Any]],
-        characters_data: Dict[str, Any],
+        characters: List[Any],
         original_text: str,
         model: str = None,
         user_id: int = None,
@@ -817,7 +824,8 @@ class AIClient:
 
         Args:
             scenes_data: 场景列表
-            characters_data: 角色特征库（包含出镜角色和声音角色）
+            characters: Character 对象列表（已落库，带 character_id）。
+                注入 prompt 时带上 id，要求 LLM 用 id 引用角色而非复述角色名
             original_text: 原文文案
             model: 模型名称，默认使用 shot_analysis_model
             user_id: 用户ID（用于积分扣除，可选）
@@ -833,12 +841,9 @@ class AIClient:
         # 加载提示词模板
         prompt_template = self._load_prompt_template("shot_decomposition_V3")
 
-        # 提取角色名称列表（合并出镜角色和声音角色）
-        on_screen_characters = characters_data.get('出镜角色', {})
-        voice_characters = characters_data.get('声音角色', {})
-        all_character_names = list(on_screen_characters.keys()) + list(voice_characters.keys())
-        character_list_str = "\n".join([f"- {name}" for name in all_character_names])
-
+        # 渲染角色表（带 character_id，LLM 必须用 id 引用角色）
+        from app.utils.character_variants import format_character_list_for_prompt
+        character_list_str = format_character_list_for_prompt(characters)
         # 格式化场景信息（去除场景内容字段，因为已经单独传入原文）
         scenes_for_prompt = []
         for scene in scenes_data:
