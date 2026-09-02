@@ -11,6 +11,7 @@
 
 这里只负责「把 LLM 输出归一化成可落库的字典」，不碰数据库。
 """
+import re
 from typing import Any, Dict, List, Optional
 
 from app.core.logger import logger
@@ -364,6 +365,72 @@ def resolve_narration_items(
         items.append({"角色": role, "内容": content.strip(), "character_id": character_id})
 
     return items
+
+
+def strip_leaked_character_ids(
+    description: Any,
+    char_by_id: Dict[int, Any],
+    shot_label: str = "",
+) -> str:
+    """
+    把 description 里泄漏的裸 character_id 换回角色名。
+
+    分镜拆解 prompt 反复要求「角色一律用 id 引用，禁止输出角色名」，但那条规则只针对
+    on_screen_character_ids / voice_character_ids / narration[].character_id 三个字段。
+    LLM 会把它过度泛化到 description 上，输出 "Medium close-up, centered: 10 carries
+    a stack of textbooks..."——而 description 是直接显示在前端列表里的叙述文本。
+
+    prompt 侧已加了错误示例 6 明确禁止；这里是兜底，避免裸数字直接进 UI。
+
+    **只替换出现在小句开头的 id**（字符串开头，或紧跟 : ： , ， 。 . ! ! ? ? 之后）。
+    这正是实际观察到的错误形态："近景居中: 10抱着一摞新课本..."。
+    非小句开头的数字不动——正则分不清 "10 carries textbooks"（角色）和
+    "waits 10 minutes"（时长）、"Shot 1-10"（编号），误改比不改更糟：
+    把 "waits 10 minutes" 改成 "waits Tao Wei minutes" 会造出一个更难发现的新 bug。
+    这类残留只打 warning，交给 prompt 侧和人工复核。
+    """
+    if not isinstance(description, str) or not description.strip():
+        return description if isinstance(description, str) else ""
+
+    if not char_by_id:
+        return description
+
+    # 长 id 优先，避免 id=1 抢先命中 id=10 的前缀
+    ids_desc = sorted(char_by_id, key=lambda cid: len(str(cid)), reverse=True)
+
+    # 小句开头：字符串起始，或标点（中英文冒号/逗号/句号/问号/叹号）后可带空白
+    clause_start = r"(?:^|(?<=[:：,，。.!！?？]))\s*"
+
+    replaced = []
+    result = description
+    for character_id in ids_desc:
+        char = char_by_id.get(character_id)
+        name = getattr(char, "name", None)
+        if not name:
+            continue
+        pattern = rf"({clause_start}){character_id}(?![0-9A-Za-z])"
+        result, count = re.subn(pattern, rf"\1{name}", result)
+        if count:
+            replaced.append(f"{character_id}->{name}")
+
+    if replaced:
+        logger.warning(
+            f"[character_variants] {shot_label} description 小句开头泄漏了 character_id，"
+            f"已替换为角色名: {', '.join(replaced)}"
+        )
+
+    # 残留的裸 id 只告警不改写（可能是时长/编号等正常数字，无法可靠区分）
+    leftover = [
+        cid for cid in char_by_id
+        if re.search(rf"(?<![0-9A-Za-z-]){cid}(?![0-9A-Za-z-])", result)
+    ]
+    if leftover:
+        logger.warning(
+            f"[character_variants] {shot_label} description 中仍有疑似 character_id 的裸数字 "
+            f"{leftover}（未改写，可能是正常数字）: {result[:120]}"
+        )
+
+    return result
 
 
 def resolve_character_ids(

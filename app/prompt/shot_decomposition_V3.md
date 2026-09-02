@@ -36,7 +36,7 @@
 
 ### 分镜拆解规则
 
-1. **分镜编号**：使用"场景编号-分镜序号"格式（如："1-1", "1-2", "2-1"），场景编号取自场景表的 `scene_number`
+1. **分镜编号 (shot_number)**：使用"场景编号-分镜序号"格式（如："1-1", "1-2", "2-1"），场景编号取自场景表的 `scene_number`
 
 2. **关联场景**：每个分镜必须输出 `scene_number`（整数，与场景表的 `scene_number` 一致）和 `scene_title`（原样复制场景表的 `title`，不要改写或翻译）
 
@@ -61,21 +61,31 @@
 6. **出镜元素 (appearance_elements)**：列出分镜中**实际出现**的关键物品、工具或道具
    - 如：手机、包包、武器、书信、特定家具、车辆等。
    - 确保分镜中描述的重要道具在这里被明确列出，以便后续生成提示词时不会遗漏。
+   - **元素名称用英文**（如 `"a stack of new textbooks"`、`"failure report"`）。
 
 7. **台词 (narration)**：列出分镜中角色的第一人称声音（对话、心理独白、电话声音）
    - **必须以对象数组形式输出**，每项包含 `character_id` 与 `content`，
      例如：`[{"character_id": 42, "content": "Professor, I found the map!"}]`
    - `character_id` 同样取角色表中的 `id`；**禁止输出角色名**
+   - **台词内容 `content` 必须是英文。**
    - **禁止添加第三人称旁白描述**。
-   - **台词时长估算**：包含标点符号，平均每秒 3.5 个汉字。
+   - **台词时长估算**：包含标点符号，平均每秒 2.5 个英文单词。
 
-8. **分镜时长**：控制在 3-8 秒之间
+8. **分镜时长 (duration)**：控制在 3-8 秒之间
    - **严禁超过 8 秒**。
    - 如果台词内容在 8 秒内无法说完，**必须**将该分镜拆分为两个或多个分镜，并合理分配台词。
-   - **计算公式**：台词字数 ÷ 3.5 + 1.5秒（留出画面停留时间），且结果不能超过 8。
+   - **计算公式**：台词单词数 ÷ 2.5 + 1.5秒（留出画面停留时间），且结果不能超过 8。
 
-9. **简要剧情**：精简描述分镜的剧情内容（30-50字）
-   - 概括这个分镜发生了什么，重点描述角色的动作 and 情节发展。
+9. **简要剧情 (description)**：精简描述分镜的剧情内容（20-35 个英文单词）
+   - 概括这个分镜发生了什么，重点描述角色的动作和情节发展。
+   - **必须是英文。**
+   - 🔥 **必须写角色的名字，严禁写 `id` 数字** 🔥
+     - `description` 是给人阅读的自然语言叙述，会直接显示在用户界面上。
+     - 「用 id 引用角色」这条规则**只适用于** `on_screen_character_ids`、
+       `voice_character_ids` 和 `narration[].character_id` 这三个字段。
+     - ✅ 正确：`"Medium close-up, centered: Tao Wei stands at the classroom door..."`
+     - ❌ 错误：`"Medium close-up, centered: 51 stands at the classroom door..."`
+     - 角色名取角色表 `name` 列的值，**不要**附带 `age_group` / `state` 后缀。
 
 ## 重要规则
 
@@ -96,6 +106,12 @@
 5. **台词格式**：
    - 必须是对象数组格式，每项为 `{"character_id": <id>, "content": "..."}`，只包含第一人称声音。
 
+6. **输出语言（硬性要求）**：
+   - `description`、`narration[].content`、`appearance_elements`、`camera_movement`、
+     `sound_effect`、`script_content` 全部**必须是英文**。
+   - `scene_title` 原样复制场景表的 `title`（已是英文），不要改写或翻译。
+   - 即使原文文案是中文，输出也必须是英文。
+
 ## 输出格式
 
 请将结果放在 `<分镜拆解>` 标签内，输出 JSON 格式。
@@ -108,34 +124,32 @@
 
 ```json
 {
-  "分镜列表": [
+  "shots": [
     {
-      "分镜编号": "1-1",
+      "shot_number": "1-1",
       "scene_number": 1,
       "scene_title": "Rare Books Library",
       "on_screen_character_ids": [42],
-      "出镜元素": ["泛黄的羊皮地图", "古籍典籍"],
+      "appearance_elements": ["yellowed parchment map", "ancient tomes"],
       "voice_character_ids": [],
-      "台词": [],
-      "分镜时长": 6,
-      "简要剧情": "近景居中：林小雨专注地翻阅典籍，突然在书页中发现一张泛黄的羊皮地图，惊讶地睁大眼睛。"
+      "narration": [],
+      "duration": 6,
+      "description": "Medium close-up, centered: Lin Xiaoyu pores over an ancient tome, then spots a yellowed parchment map between the pages and her eyes widen in surprise."
     },
     {
-      "分镜编号": "1-2",
+      "shot_number": "1-2",
       "scene_number": 1,
       "scene_title": "Rare Books Library",
       "on_screen_character_ids": [42],
-      "出镜元素": ["泛黄的羊皮地图", "古籍典籍"],
+      "appearance_elements": ["yellowed parchment map", "ancient tomes"],
       "voice_character_ids": [43],
-      "台词": [{"character_id": 42, "content": "Professor, I found the map!"}],
-      "分镜时长": 5,
-      "简要剧情": "近景居中：林小雨举起电话，神情激动地向教授汇报发现。"
+      "narration": [{"character_id": 42, "content": "Professor, I found the map!"}],
+      "duration": 5,
+      "description": "Medium close-up, centered: Lin Xiaoyu lifts her phone, reporting the discovery to the professor with mounting excitement."
     }
   ]
 }
 ```
-
-请注意：`出镜元素` 字段在代码中对应 `appearance_elements`，请确保 JSON key 使用 `出镜元素`。
 
 请严格按照以上格式输出，确保 JSON 格式正确，所有字段完整。
 
@@ -146,32 +160,33 @@
 **示例1：严格控制时长与起始构图**
 ```json
 {
-  "分镜编号": "2-1",
+  "shot_number": "2-1",
   "on_screen_character_ids": [51],
-  "出镜元素": ["失败报告"],
-  "分镜时长": 6,
-  "简要剧情": "近景居中：陶未面色苍白，眼神中透着绝望，死死盯着面前的失败报告。",
-  "台词": [{"character_id": 51, "content": "Not again... am I really not good enough?"}]
+  "appearance_elements": ["failure report"],
+  "duration": 6,
+  "description": "Medium close-up, centered: Tao Wei's face is pale, despair in his eyes as he stares down at the failure report in front of him.",
+  "narration": [{"character_id": 51, "content": "Not again... am I really not good enough?"}]
 }
 ```
-*解析：时长 6s（未超8s），简要剧情指明了“近景居中”，台词为第一人称独白，角色一律用 id 引用。*
+*解析：时长 6s（未超8s），description 指明了"近景居中"并用角色名叙述，台词为第一人称独白，
+`on_screen_character_ids` 与 `narration[].character_id` 一律用 id 引用。*
 
 **示例2：新人物出现强制拆分分镜**
 ```json
 [
   {
-    "分镜编号": "3-1",
+    "shot_number": "3-1",
     "on_screen_character_ids": [42],
-    "出镜元素": [],
-    "简要剧情": "近景居中：林小雨在雨中奔跑，神色慌张。",
-    "分镜时长": 5
+    "appearance_elements": [],
+    "description": "Medium close-up, centered: Lin Xiaoyu runs through the rain, panic on her face.",
+    "duration": 5
   },
   {
-    "分镜编号": "3-2",
+    "shot_number": "3-2",
     "on_screen_character_ids": [42, 60],
-    "出镜元素": ["神秘人手中的雨伞"],
-    "简要剧情": "近景居中：神秘人突然出现在林小雨面前挡住去路，两人对峙。",
-    "分镜时长": 4
+    "appearance_elements": ["the stranger's umbrella"],
+    "description": "Medium close-up, centered: a stranger blocks Lin Xiaoyu's path, the two of them locked in a standoff.",
+    "duration": 4
   }
 ]
 ```
@@ -186,42 +201,62 @@
 ```
 雨中湿透的分镜必须用 `52`，办公室日常的分镜必须用 `51`：
 ```json
-{ "分镜编号": "4-1", "on_screen_character_ids": [52], "简要剧情": "近景居中：陶未浑身湿透地站在雨里。" }
+{ "shot_number": "4-1", "on_screen_character_ids": [52], "description": "Medium close-up, centered: Tao Wei stands in the rain, soaked through." }
 ```
-*解析：选错 id 会导致生图时套用错误的角色参考图，画面与剧情不符。*
+*解析：选错 id 会导致生图时套用错误的角色参考图，画面与剧情不符。
+注意 `description` 里写的是名字 `Tao Wei`，不是 id `52`。*
 
 ### ❌ 错误示例
 
 **错误1：时长超过 8 秒**
 ```json
-❌ "分镜时长": 12,
-❌ "简要剧情": "林小雨在图书馆里找了很久，终于找到了地图，然后她坐下来仔细研究，最后拿出了手机拍照。"
+❌ "duration": 12,
+❌ "description": "Lin Xiaoyu searches the library for a long time, finally finds the map, sits down to study it carefully, and then takes out her phone to photograph it."
 ```
 *修正：动作过多导致时长过长，应拆分为 2-3 个分镜。*
 
 **错误2：人物中途入场**
 ```json
 ❌ "on_screen_character_ids": [51, 73],
-❌ "简要剧情": "近景居中：陶未正在工作，李总推门走进来，走到陶未身边。"
+❌ "description": "Medium close-up, centered: Tao Wei is working when Director Li pushes the door open and walks over to him."
 ```
 *修正：李总是在分镜中途进入的。应改为：分镜A（只有陶未），分镜B（两人都在画面中）。*
 
 **错误3：非近景居中起始**
 ```json
-❌ "简要剧情": "全景：整座城市被大雨笼罩，远处的图书馆灯火通明。"
+❌ "description": "Wide shot: the entire city is shrouded in heavy rain, the library glowing in the distance."
 ```
 *修正：起始画面必须是人物近景且居中。环境描述应融入角色互动的背景中。*
 
 **错误4：包含第三人称旁白**
 ```json
-❌ "台词": [{"character_id": null, "content": "He felt a fear he had never known before."}]
+❌ "narration": [{"character_id": null, "content": "He felt a fear he had never known before."}]
 ```
-*修正：应改为角色的第一人称心理独白或通过面部表情动作（简要剧情）来体现。*
+*修正：应改为角色的第一人称心理独白或通过面部表情动作（description）来体现。*
 
 **错误5：用角色名而不是 id 引用角色**
 ```json
 ❌ "on_screen_character_ids": ["Tao Wei", "Director Li"],
-❌ "台词": [{"角色": "Tao Wei", "内容": "..."}]
+❌ "narration": [{"role": "Tao Wei", "content": "..."}]
 ```
-*修正：必须写成 `"on_screen_character_ids": [51, 73]` 与 `"台词": [{"character_id": 51, "content": "..."}]`。
+*修正：必须写成 `"on_screen_character_ids": [51, 73]` 与 `"narration": [{"character_id": 51, "content": "..."}]`。
 角色名会导致后端无法定位到具体的角色变体，进而套错参考图或配错音色。*
+
+**错误6：把 id 数字写进 description（🔥 高频错误）**
+```json
+❌ "description": "Medium close-up, centered: 10 carries a stack of new textbooks and stands at the classroom door, slightly out of breath."
+```
+*修正：`description` 是给人阅读的叙述文本，会直接显示在用户界面上，必须写角色名：*
+```json
+✅ "description": "Medium close-up, centered: Tao Wei carries a stack of new textbooks and stands at the classroom door, slightly out of breath."
+```
+*「用 id 引用角色」只适用于 `on_screen_character_ids`、`voice_character_ids`、
+`narration[].character_id` 三个字段，**不适用于任何叙述性文本**。*
+
+**错误7：输出中文**
+```json
+❌ "description": "近景居中：陶未抱着一摞新课本站在教室门口，微微喘气。"
+❌ "appearance_elements": ["新课本", "教室门"]
+```
+*修正：即使原文文案是中文，`description`、`narration[].content`、`appearance_elements`
+等字段也必须输出英文。*

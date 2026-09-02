@@ -24,6 +24,7 @@ from app.utils.character_variants import (
     parse_analysis_result,
     resolve_character_ids,
     resolve_narration_items,
+    strip_leaked_character_ids,
     variant_key,
 )
 
@@ -843,7 +844,7 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
             novel_id=creation.novel_id
         )
         
-        shot_list = result.get("分镜列表", [])
+        shot_list = result.get("shots", [])
         logger.info(f"分镜拆解完成，AI原始输出: {json.dumps(result, ensure_ascii=False)}")
         logger.info(f"分镜拆解完成，共 {len(shot_list)} 个分镜")
         
@@ -902,7 +903,7 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
             # 处理台词
             # LLM 侧输出 [{"character_id": 42, "content": "..."}]，旁白用 character_id: null
             processed_narration = resolve_narration_items(
-                shot_data.get("台词", []),
+                shot_data.get("narration", []),
                 char_by_id,
                 shot_label=f"分镜 {shot_number}",
             )
@@ -911,17 +912,19 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
             shot = Shot(
                 title=f"Shot {shot_number}", # 简化标题，前端会显示场景Tag
                 shot_number=shot_number, # 全局递增编号 1, 2, 3...
-                description=shot_data.get("画面内容", "") or shot_data.get("分镜内容", "") or shot_data.get("简要剧情", ""),
+                description=strip_leaked_character_ids(
+                    shot_data.get("description", ""), char_by_id, f"分镜 {shot_number}"
+                ),
                 narration=json.dumps(processed_narration, ensure_ascii=False),
-                image_prompt=shot_data.get("画面提示词", "") or shot_data.get("图片提示词", ""),
-                video_duration=shot_data.get("分镜时长", 5),
+                image_prompt=shot_data.get("image_prompt", ""),
+                video_duration=shot_data.get("duration", 5),
                 scene_id=target_scene.scene_id,
                 creation_id=creation_id,
                 extra_data={
-                    "camera_movement": shot_data.get("运镜", ""),
-                    "sound_effect": shot_data.get("音效", ""),
-                    "script_content": shot_data.get("剧本正文", ""),
-                    "appearance_elements": shot_data.get("出镜元素", []),
+                    "camera_movement": shot_data.get("camera_movement", ""),
+                    "sound_effect": shot_data.get("sound_effect", ""),
+                    "script_content": shot_data.get("script_content", ""),
+                    "appearance_elements": shot_data.get("appearance_elements", []),
                     "ai_output": shot_data,
                     "scene_title": target_scene.title # 冗余存储场景标题方便前端使用（尽管可以通过关联查）
                 }

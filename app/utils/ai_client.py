@@ -896,7 +896,7 @@ class AIClient:
                 }
             )
 
-            total_shots = len(parsed_data.get('分镜列表', []))
+            total_shots = len(parsed_data.get('shots', []))
             logger.info(f"分镜解析完成，生成 {total_shots} 个分镜")
             return parsed_data
 
