@@ -624,6 +624,20 @@
     - 如果风格描述为"无特定创作风格设定"，使用"精细插画"、"高质量"等通用描述
 
 ## 输出格式
+
+⚠️ **输出语言（硬性要求）**：`start_frame_prompt` 与 `end_frame_prompt` 的内容
+**必须完整使用{output_language}**，不得中英混杂。
+
+上文的「模板结构」示例用中文书写，那只是**结构骨架的示意**（说明依次要写哪些成分），
+**不是**要你照抄中文词句和中文标点。请按该结构组织内容，但用{output_language}表达，
+标点也使用{output_language}的标点。
+
+反例（❌ 中英夹杂，严禁）：
+`精细插画风格，高质量、8K细节，中近景，她站在 classroom door 处，抱着一 stack of new textbooks`
+
+正例（✅ 全英文）：
+`detailed illustration, high quality, 8K detail, medium close-up shot, eye-level angle, 16:9 composition. She stands at the classroom door, clutching a stack of new textbooks against her chest.`
+
 请以JSON格式输出{output_language}提示词，不需要其他解释：
 
 ```json

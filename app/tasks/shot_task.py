@@ -118,19 +118,21 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
                 if character.image_url:
                     character_images.append(character.image_url)
                     # 构建角色档案描述
+                    # 标签用英文：字段值本身已是英文（角色分析英文化后），
+                    # 中文标签 + 英文值会诱导 LLM 产出中英夹杂的提示词
                     profile_parts = []
                     if character.name:
-                        profile_parts.append(f"姓名: {character.name}")
+                        profile_parts.append(f"Name: {character.name}")
                     if character.appearance:
-                        profile_parts.append(f"外貌: {character.appearance}")
+                        profile_parts.append(f"Appearance: {character.appearance}")
                     if character.body:
-                        profile_parts.append(f"身材: {character.body}")
+                        profile_parts.append(f"Build: {character.body}")
                     if character.hair:
-                        profile_parts.append(f"发型: {character.hair}")
+                        profile_parts.append(f"Hair: {character.hair}")
                     if character.clothing:
-                        profile_parts.append(f"服装: {character.clothing}")
+                        profile_parts.append(f"Clothing: {character.clothing}")
                     if profile_parts:
-                        character_profiles.append("，".join(profile_parts))
+                        character_profiles.append(", ".join(profile_parts))
         
         # 添加场景图片作为参考图（如果有）
         if shot.scene and shot.scene.image_url:

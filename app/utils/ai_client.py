@@ -3235,40 +3235,39 @@ class AIClient:
             safe_env_desc = environment_desc.replace("{", "{{").replace("}", "}}")
             prompt_template = prompt_template.replace("{{SCENE_ENVIRONMENT}}", safe_env_desc)
 
-        # 确定输出语言：从图片模型配置中获取支持的语言
+        # 确定输出语言
+        #
+        # 全流程英文化后，注入这份 prompt 的输入（分镜 description、appearance_elements、
+        # 角色档案）已经全是英文。此前这里对 doubao/seedream/banana 强制中文输出，
+        # 导致模板要中文、输入是英文，LLM 半译半抄产出夹生文本：
+        #   「穿着整洁的标准 school uniform，双臂紧紧抱着一 stack of new textbooks」
+        # 现统一输出英文，保证输入与输出语言一致。
+        #
+        # 注：模型配置里若显式声明 languages 且不含 en，仍尊重配置回落中文。
         image_model = image_model or self.image_to_image_model
-        output_language = "中文"  # 默认使用中文
-        word_unit = "字"  # 默认单位
-        max_words = 300  # 默认字数上限
+        output_language = "英文"
+        word_unit = "单词"
+        max_words = 150
 
         try:
             # 尝试获取模型配置
             model_config = ModelConfigService.get_model_config(image_model, "image_to_image")
-            
-            # 如果是 豆包模型、Nano Banana 或者 配置明确支持中文，则使用中文
-            is_chinese_preferred = image_model and (
-                "doubao" in image_model.lower() or 
-                "seedream" in image_model.lower() or
-                "banana" in image_model.lower()
-            )
-            
+
             if model_config and "languages" in model_config:
-                languages = model_config["languages"]
-                # 只有当模型明确只支持英文时，才切换到英文
-                if "zh" not in languages and "chinese" not in [lang.lower() for lang in languages] and not is_chinese_preferred:
-                    output_language = "英文"
-                    word_unit = "单词"
-                    max_words = 150
-            elif not is_chinese_preferred and image_model and ("flux" in image_model.lower()):
-                # Flux 等模型默认使用英文
-                output_language = "英文"
-                word_unit = "单词"
-                max_words = 150
-            
+                languages = [str(lang).lower() for lang in model_config["languages"]]
+                supports_english = any(
+                    lang in ("en", "english") for lang in languages
+                )
+                if not supports_english:
+                    # 模型明确不支持英文，回落中文
+                    output_language = "中文"
+                    word_unit = "字"
+                    max_words = 300
+
             if model_config and "max_words" in model_config:
                 max_words = model_config.get("max_words", max_words)
         except Exception as e:
-            logger.warning(f"获取图片模型配置失败，使用默认中文输出: {e}")
+            logger.warning(f"获取图片模型配置失败，使用默认英文输出: {e}")
 
         logger.info(f"分镜提示词生成：模型={image_model}, 目标语言={output_language}, 字数限制={max_words}{word_unit}, 宽高比={aspect_ratio}, 使用V4={use_v4}, 使用V3={use_v3}, 视觉风格={visual_style or '默认'}")
 
@@ -3285,18 +3284,16 @@ class AIClient:
         aspect_ratio_desc = "16:9横版" if aspect_ratio == "16:9" else "9:16竖版"
 
         # 格式化视觉风格描述
-        style_description = ""
+        #
+        # 用 app.agent.config.style_config 里已有的英文风格表（Agent 链路一直在用），
+        # 不再维护这份中文副本：中文风格描述会被 LLM 原样抄进提示词开头，
+        # 与英文正文拼成「精细插画风格，高质量、8K细节，medium shot...」的夹生文本。
+        from app.agent.config.style_config import get_visual_style_description
+
         if visual_style:
-            style_description_map = {
-                "realism": "写实摄影风格，摄影作品，真实的光影和材质，逼真的人物形象，高清晰度",
-                "cyberpunk": "赛博朋克风格，未来科幻，高科技低生活，霓虹灯光，赛博朋克美学",
-                "ukiyoe": "浮世绘风格，传统日本浮世绘，葛饰北斋风格，平面化，鲜明色彩，传统日本元素",
-                "watercolor": "水彩画风格，柔和细腻，色彩透明，笔触柔和，艺术感强",
-                "anime": "日漫风格，经典日本动漫，鲜明色彩，夸张表情，典型日本动画美学"
-            }
-            style_description = style_description_map.get(visual_style, f"{visual_style}风格")
+            style_description = get_visual_style_description(visual_style)
         else:
-            style_description = "精细插画风格，高质量，8K细节"
+            style_description = "detailed illustration, high quality, 8K detail"
         
         # 替换 V4 模板中的 VISUAL_STYLE 占位符
         if "{{VISUAL_STYLE}}" in prompt_template:
