@@ -862,30 +862,36 @@ def generate_creation_shots_task(self, creation_id: int, force_regenerate: bool 
         if not creation:
             raise NotFoundError(detail=f"创作不存在: creation_id={creation_id}")
         
-        # 查询所有场景和分镜
-        scenes = (
-            db.query(Scene)
-            .options(selectinload(Scene.shots))
-            .filter(Scene.creation_id == creation_id)
-            .order_by(Scene.scene_id)
+        # 查询该创作的所有分镜
+        #
+        # 不要走「查场景 → 遍历 scene.shots」：场景可跨章节复用（复用时不改写
+        # Scene.creation_id，见 CreationService.get_creation_scenes），那条路径有两个坑：
+        #   1. 只按 Scene.creation_id 过滤会漏掉复用来的场景 → 分镜一个都查不到，
+        #      任务标记成功并返回 total=0，前端表现为「调用成功但没有图」
+        #   2. scene.shots 是该场景下的全部分镜，复用场景会连带捞出**其他创作**的分镜
+        # 直接按 Shot.creation_id 查，口径与 POST /generate-shots 的校验一致。
+        shots = (
+            db.query(Shot)
+            .options(selectinload(Shot.scene))
+            .filter(Shot.creation_id == creation_id)
+            .order_by(Shot.scene_id, Shot.shot_id)
             .all()
         )
-        
+
         # 收集所有需要生成图片的分镜
         all_shots: List[Dict[str, Any]] = []
-        for scene in scenes:
-            for shot in scene.shots:
-                # 如果强制重新生成，或者分镜没有图片，则加入列表
-                if force_regenerate or not shot.image_url:
-                    # 如果没有 image_prompt，也会加入列表，在生成任务中会自动生成提示词
-                    all_shots.append({
-                        "shot_id": shot.shot_id,
-                        "shot_title": shot.title,
-                        "scene_id": scene.scene_id,
-                        "scene_title": scene.title
-                    })
-                else:
-                    logger.info(f"分镜 {shot.shot_id} 已有图片且非强制重新生成，跳过")
+        for shot in shots:
+            # 如果强制重新生成，或者分镜没有图片，则加入列表
+            if force_regenerate or not shot.image_url:
+                # 如果没有 image_prompt，也会加入列表，在生成任务中会自动生成提示词
+                all_shots.append({
+                    "shot_id": shot.shot_id,
+                    "shot_title": shot.title,
+                    "scene_id": shot.scene_id,
+                    "scene_title": shot.scene.title if shot.scene else ""
+                })
+            else:
+                logger.info(f"分镜 {shot.shot_id} 已有图片且非强制重新生成，跳过")
         
         total_shots = len(all_shots)
         if total_shots == 0:
