@@ -9,6 +9,7 @@ from app.core.logger import logger
 from app.core.config import settings
 from app.agent.tools.async_db import get_async_db_session
 from app.utils.us3 import US3Client
+from app.utils.character_variants import NARRATOR_NAME, is_narrator
 
 
 class GenerateNarrationAudioBatchTool(BaseTool):
@@ -147,7 +148,7 @@ class GenerateNarrationAudioBatchTool(BaseTool):
         voice_speed = 1.0
 
         # 旁白默认情感
-        if speaker in ["旁白", "narration", "解说", "narrator"]:
+        if is_narrator(speaker):
             emotion_tags = ["calm", "confident"]
             voice_speed = 1.0
         else:
@@ -257,28 +258,35 @@ class GenerateNarrationAudioBatchTool(BaseTool):
 
             # 获取所有角色信息（用于查找 voice_id）
             # 使用显式查询而不是 relationship 属性，避免 greenlet 问题
+            # 主键是 character_id；角色名只作为老数据的兜底键（见 en-plan.md Phase 3.5.4）
             char_voice_map = {}
+            legacy_name_map = {}
             try:
                 from app.models.character import Character
                 from app.models.shot import shot_characters
-                
+
                 # 查询与该 shot 关联的所有角色
                 char_stmt = select(Character).join(
-                    shot_characters, 
+                    shot_characters,
                     Character.character_id == shot_characters.c.character_id
                 ).where(shot_characters.c.shot_id == shot_id)
-                
+
                 char_result = await db.execute(char_stmt)
                 characters = char_result.scalars().all()
-                
+
                 for char in characters:
-                    char_voice_map[char.name] = {
+                    entry = {
                         "voice_id": char.voice_id,
                         "voice_speed": float(char.voice_speed) if char.voice_speed else 1.0,
                         "character_id": char.character_id
                     }
-                
-                logger.info(f"[GenerateNarrationAudio] Shot {shot_id} 关联角色: {list(char_voice_map.keys())}")
+                    char_voice_map[char.character_id] = entry
+                    legacy_name_map[char.name] = entry
+
+                logger.info(
+                    f"[GenerateNarrationAudio] Shot {shot_id} 关联角色: "
+                    f"{[(cid, c.name) for cid, c in zip(char_voice_map, characters)]}"
+                )
             except Exception as char_e:
                 logger.warning(f"[GenerateNarrationAudio] 获取角色信息失败: {char_e}")
 
@@ -290,8 +298,8 @@ class GenerateNarrationAudioBatchTool(BaseTool):
             success_count = 0
 
             for idx, narration in enumerate(narration_list):
-                speaker = narration.get("角色", "旁白")
-                text = narration.get("内容", "")
+                speaker = narration.get("角色") or narration.get("role") or NARRATOR_NAME
+                text = narration.get("内容") or narration.get("content") or ""
 
                 if not text:
                     logger.warning(f"Narration {idx} 内容为空，跳过")
@@ -299,7 +307,8 @@ class GenerateNarrationAudioBatchTool(BaseTool):
                     continue
 
                 # 判断是旁白还是对话
-                is_narration = speaker in ["旁白", "narration", "解说", "narrator"]
+                narration_character_id = narration.get("character_id")
+                is_narration = narration_character_id is None and is_narrator(speaker)
 
                 # 获取 voice_id 和 voice_speed
                 if is_narration:
@@ -307,7 +316,22 @@ class GenerateNarrationAudioBatchTool(BaseTool):
                     voice_speed = 1.0
                     character_id = None
                 else:
-                    char_info = char_voice_map.get(speaker, {})
+                    # 优先按 character_id 精确定位；老数据没有 character_id，退回按名字匹配
+                    char_info = char_voice_map.get(narration_character_id)
+                    if char_info is None:
+                        char_info = legacy_name_map.get(speaker, {})
+                        if char_info:
+                            logger.info(
+                                f"[GenerateNarrationAudio] Narration {idx} 无 character_id，"
+                                f"按角色名 '{speaker}' 兜底匹配成功"
+                            )
+                    if not char_info:
+                        # 匹配不上会静默用默认旁白音色说角色台词——必须留痕
+                        logger.warning(
+                            f"[GenerateNarrationAudio] Narration {idx} 未匹配到角色 "
+                            f"(character_id={narration_character_id}, speaker='{speaker}')，"
+                            f"回落默认音色"
+                        )
                     voice_id = char_info.get("voice_id") or creation_voice_id
                     voice_speed = char_info.get("voice_speed", 1.0)
                     character_id = char_info.get("character_id")

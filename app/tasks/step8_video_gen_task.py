@@ -582,16 +582,10 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
 
             logger.info(f"Shot {shot_id} 解析到 {len(dialogues)} 条台词/旁白: {dialogues}")
 
-            # 获取关联的角色信息（使用智能状态识别）
-            from app.utils.character_state_identifier import generate_character_identity
-
+            # 获取关联的角色信息
             characters = []
             if hasattr(shot, 'characters') and shot.characters:
                 for char in shot.characters:
-                    # 从角色的basic_info解析年龄段
-                    basic_info = char.basic_info if isinstance(char.basic_info, dict) else {}
-                    age_group = basic_info.get('age_group', '未知') if basic_info else '未知'
-
                     # 组合外观描述
                     appearance_parts = []
                     if char.appearance:
@@ -603,23 +597,17 @@ def generate_single_shot_video_task(self, shot_id: int, creation_id: int, freeze
 
                     appearance_full = '，'.join(appearance_parts) if appearance_parts else ''
 
-                    # 生成智能角色标识（考虑状态：湿透、受伤、变身等）
-                    character_identity = generate_character_identity(
-                        name=char.name,
-                        age_group=age_group,
-                        appearance=char.appearance or '',
-                        clothing=char.clothing or '',
-                        shot_description=script  # 使用分镜剧本作为上下文
-                    )
-
+                    # 年龄段与外观状态直接读结构化字段
+                    # （改造前 age_group 恒为 '未知'，见 en-plan.md Phase 3.5.5）
                     characters.append({
                         'name': char.name,
-                        'age_group': age_group,
+                        'age_group': char.age_group,
+                        'state': char.state,
                         'appearance': appearance_full,
-                        'identity': character_identity  # 添加角色标识
+                        'identity': char.variant_label,
                     })
 
-                    logger.info(f"角色识别: {char.name} -> {character_identity}")
+                    logger.info(f"角色识别: {char.name} -> {char.variant_label}")
 
             # 从creation获取模型配置
             extra_data = creation.extra_data or {} if creation else {}

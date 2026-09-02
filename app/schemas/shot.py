@@ -10,6 +10,9 @@ class NarrationItem(BaseModel):
     """旁白/台词项"""
     角色: str = ""
     内容: str = ""
+    # 说话角色的数据库 ID。音色映射以此为准，角色名只作为老数据的兜底键。
+    # 必须在响应里带出去——否则前端编辑分镜后回写会把它抹掉，音色映射退回名字匹配。
+    character_id: Optional[int] = None
 
     class Config:
         populate_by_name = True
@@ -56,7 +59,7 @@ class ShotCreate(BaseModel):
                         if isinstance(item, dict):
                             role = item.get("角色") or item.get("role", "旁白")
                             content = item.get("内容") or item.get("content", "")
-                            result.append(NarrationItem(角色=role, 内容=content))
+                            result.append(NarrationItem(角色=role, 内容=content, character_id=item.get("character_id")))
                         elif isinstance(item, str):
                             result.append(NarrationItem(角色="旁白", 内容=item))
                     return result
@@ -69,7 +72,7 @@ class ShotCreate(BaseModel):
                 if isinstance(item, dict):
                     role = item.get("角色") or item.get("role", "旁白")
                     content = item.get("内容") or item.get("content", "")
-                    result.append(NarrationItem(角色=role, 内容=content))
+                    result.append(NarrationItem(角色=role, 内容=content, character_id=item.get("character_id")))
                 elif isinstance(item, NarrationItem):
                     result.append(item)
                 elif isinstance(item, str):
@@ -107,7 +110,7 @@ class ShotUpdate(BaseModel):
                         if isinstance(item, dict):
                             role = item.get("角色") or item.get("role", "旁白")
                             content = item.get("内容") or item.get("content", "")
-                            result.append(NarrationItem(角色=role, 内容=content))
+                            result.append(NarrationItem(角色=role, 内容=content, character_id=item.get("character_id")))
                         elif isinstance(item, str):
                             result.append(NarrationItem(角色="旁白", 内容=item))
                     return result
@@ -120,7 +123,7 @@ class ShotUpdate(BaseModel):
                 if isinstance(item, dict):
                     role = item.get("角色") or item.get("role", "旁白")
                     content = item.get("内容") or item.get("content", "")
-                    result.append(NarrationItem(角色=role, 内容=content))
+                    result.append(NarrationItem(角色=role, 内容=content, character_id=item.get("character_id")))
                 elif isinstance(item, NarrationItem):
                     result.append(item)
                 elif isinstance(item, str):
@@ -189,7 +192,7 @@ class ShotResponse(BaseModel):
                 elif isinstance(item, dict):
                     role = item.get("角色") or item.get("role", "旁白")
                     content = item.get("内容") or item.get("content", "")
-                    result.append(NarrationItem(角色=role, 内容=content))
+                    result.append(NarrationItem(角色=role, 内容=content, character_id=item.get("character_id")))
                 elif isinstance(item, str):
                     result.append(NarrationItem(角色="旁白", 内容=item))
             return result
@@ -212,7 +215,7 @@ class ShotResponse(BaseModel):
                             # 兼容 角色/内容 和 role/content 两种格式
                             role = item.get("角色") or item.get("role", "旁白")
                             content = item.get("内容") or item.get("content", "")
-                            narration_list.append(NarrationItem(角色=role, 内容=content))
+                            narration_list.append(NarrationItem(角色=role, 内容=content, character_id=item.get("character_id")))
                         elif isinstance(item, str):
                             # 兼容旧格式
                             narration_list.append(NarrationItem(角色="旁白", 内容=item))
