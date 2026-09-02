@@ -26,13 +26,9 @@ from app.services.model_config_service import ModelConfigService
 import math
 
 # 风格映射
-STYLE_MAPPING = {
-    "realism": "写实摄影,摄影作品，真实的光影和材质，逼真的场景细节",
-    "cyberpunk": "赛博朋克风格，霓虹灯效果，高科技与低生活的结合，未来主义",
-    "ukiyoe": "浮世绘风格，传统日本绘画风格，平面化，鲜明的色彩",
-    "watercolor": "水彩画风格，柔和的色彩过渡，透明感，自然的笔触",
-    "anime": "日漫风格，典型的日本动画美学，夸张的场景元素"
-}
+# 统一用 app.agent.config.style_config 的英文风格表：中文风格描述会被 LLM
+# 原样抄进提示词开头，与英文正文拼成夹生文本
+from app.agent.config.style_config import get_visual_style_description
 
 
 @celery_app.task(bind=True, name="batch_generate_scene_images_task")
@@ -213,7 +209,7 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
         visual_style = extra_data.get("visual_style", extra_data.get("style", "anime"))
 
         # 获取风格描述
-        style_description = STYLE_MAPPING.get(visual_style, STYLE_MAPPING["anime"])
+        style_description = get_visual_style_description(visual_style)
 
         ai_client = AIClient(llm_model_name=llm_model, text_to_image_model=text_to_image_model)
         us3_client = get_storage_client()
@@ -236,12 +232,13 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
             first_shot = db.query(Shot).filter(Shot.scene_id == scene_id).order_by(Shot.shot_number.asc()).first()
             
             character_profiles = []
-            current_shot_desc = "无"
+            current_shot_desc = "None"
             if first_shot:
                 current_shot_desc = first_shot.description
                 # 获取该分镜中的角色档案
+                # 标签用英文：字段值已是英文，中文标签会诱导 LLM 产出中英夹杂的提示词
                 for char in first_shot.characters:
-                    profile = f"{char.name}：{char.appearance or char.basic_info or '无描述'}"
+                    profile = f"{char.name}: {char.appearance or char.basic_info or 'no description'}"
                     character_profiles.append(profile)
 
             # 加载 V2 模板
@@ -251,25 +248,25 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
             # space_type 现在是 indoor/outdoor 枚举，布局细节在 extra_data.space_description
             scene_extra = scene.extra_data or {}
             env_config = {
-                "时间": scene.time_setting,
-                "地点": scene.location,
-                "空间": scene_extra.get("space_description") or scene.space_type,
-                "氛围": scene.atmosphere
+                "time_setting": scene.time_setting,
+                "location": scene.location,
+                "space_description": scene_extra.get("space_description") or scene.space_type,
+                "atmosphere": scene.atmosphere
             }
             environment_desc = json.dumps(env_config, ensure_ascii=False, indent=2)
-            
+
             # 替换模板中的占位符
             system_prompt = prompt_template.replace("{{SCENE_ENVIRONMENT}}", environment_desc)
             system_prompt = system_prompt.replace("{{VISUAL_STYLE}}", style_description)
-            system_prompt = system_prompt.replace("{character_profiles}", "\n".join(character_profiles) if character_profiles else "无")
-            system_prompt = system_prompt.replace("{previous_shot}", "无") # 场景建立图通常没有上一分镜
+            system_prompt = system_prompt.replace("{character_profiles}", "\n".join(character_profiles) if character_profiles else "None")
+            system_prompt = system_prompt.replace("{previous_shot}", "None") # 场景建立图通常没有上一分镜
             system_prompt = system_prompt.replace("{current_shot}", current_shot_desc)
-            system_prompt = system_prompt.replace("{output_language}", "中文")
+            system_prompt = system_prompt.replace("{output_language}", "English")
             
             messages = [
                 {
                     "role": "user",
-                    "content": f"{system_prompt}\n\n场景标题：{scene.title}\n视觉风格：{style_description}"
+                    "content": f"{system_prompt}\n\nScene title: {scene.title}\nVisual style: {style_description}"
                 }
             ]
             logger.info(f"Scene image generation V2 messages: {messages[0]['content']}")

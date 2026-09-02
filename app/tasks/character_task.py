@@ -25,13 +25,9 @@ import os
 import time
 
 # 风格映射
-STYLE_MAPPING = {
-    "realism": "写实摄影,摄影作品，真实的光影和材质，逼真的人物形象",
-    "cyberpunk": "赛博朋克风格，霓虹灯效果，高科技与低生活的结合，未来主义",
-    "ukiyoe": "浮世绘风格，传统日本绘画风格，平面化，鲜明的色彩",
-    "watercolor": "水彩画风格，柔和的色彩过渡，透明感，自然的笔触",
-    "anime": "日漫风格，典型的日本动画美学，夸张的表情和动作"
-}
+# 统一用 app.agent.config.style_config 的英文风格表：中文风格描述会被 LLM
+# 原样抄进提示词开头，与英文正文拼成夹生文本
+from app.agent.config.style_config import get_visual_style_description
 
 # 固定规范提示词文案
 CHARACTER_NORM_PROMPT = (
@@ -99,7 +95,7 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
         llm_model = extra_data.get("llm_model") or settings.LLM_MODEL_NAME
 
         # 获取风格描述
-        style_description = STYLE_MAPPING.get(visual_style, STYLE_MAPPING["anime"])
+        style_description = get_visual_style_description(visual_style)
 
         # 1. 获取提示词逻辑：
         # 如果数据库中已有提示词，则直接使用；否则使用 LLM 生成
@@ -111,15 +107,17 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
             character_description = ""
         else:
             # 准备角色特征数据
+            # 标签用英文：字段值已是英文（角色分析英文化后），
+            # 中文标签 + 英文值会诱导 LLM 产出中英夹杂的提示词
             character_features = (
-                f"角色姓名：{character.name}\n"
-                f"基础信息：{character.basic_info}\n"
-                f"容貌特征：{character.appearance}\n"
-                f"身材特征：{character.body}\n"
-                f"发型发色：{character.hair}\n"
-                f"服装配饰：{character.clothing}\n"
-                f"特征标签：{', '.join(character.tags) if character.tags and isinstance(character.tags, list) else character.tags}"
-                f"视觉风格：{style_description}\n"
+                f"Name: {character.name}\n"
+                f"Basic info: {character.basic_info}\n"
+                f"Appearance: {character.appearance}\n"
+                f"Build: {character.body}\n"
+                f"Hair: {character.hair}\n"
+                f"Clothing: {character.clothing}\n"
+                f"Tags: {', '.join(character.tags) if character.tags and isinstance(character.tags, list) else character.tags}"
+                f"Visual style: {style_description}\n"
             )
 
             # 加载模板并替换变量
@@ -128,7 +126,7 @@ def _generate_single_character_image(character_id: int, visual_style: str, force
             system_prompt = system_prompt.replace("{{VISUAL_STYLE}}", style_description)
             
             # 准备用户消息
-            user_content = f"请根据上述特征和指定的视觉风格，为角色 {character.name} 生成生图提示词。"
+            user_content = f"Generate the image prompt for character {character.name}, based on the features and visual style above."
             
             try:
                 prompt_start = time.perf_counter()

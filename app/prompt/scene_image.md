@@ -1,132 +1,139 @@
-你的任务是根据提供的场景环境设定和指定的视觉风格，生成用于生成场景环境图的中文提示词。
+Your task is to generate an image prompt for a scene environment plate, based on the scene's
+environment settings and the specified visual style.
 
-## 重要要求
+## Key Requirements
 
-1. **风格要求**：必须按照指定的视觉风格生成提示词，不能使用其他风格
-2. **空场景**：画面中**不能出现任何人物、角色、人形生物**
-3. **纯环境描写**：只描述环境、建筑、物体、自然景观、天气、光线等
-4. **16:9横版构图**：适合横版画面的构图和视角
+1. **Style**: follow the specified visual style exactly — no other style
+2. **Empty scene**: **no people, characters, or humanoid figures** may appear
+3. **Environment only**: describe only environment, architecture, objects, landscape, weather, light
+4. **16:9 landscape composition**: framing and viewpoint suited to a horizontal image
 
-## 输入信息
+## Input
 
-以下是场景的环境设定信息：
+The scene's environment settings:
 
 <scene_environment>
 {{SCENE_ENVIRONMENT}}
 </scene_environment>
 
-以下是指定的视觉风格：
+The specified visual style:
 <visual_style>
 {{VISUAL_STYLE}}
 </visual_style>
 
-## 提示词构建要点
+## What the Prompt Must Contain
 
-### 必须包含的元素
+1. **Style declaration**
+   - Open with: {{VISUAL_STYLE}}
+   - Emphasise: high quality background
 
-1. **风格声明**
-   - 开头必须声明：{{VISUAL_STYLE}}
-   - 强调：高质量背景
+2. **The subject of the scene**
+   - Place name and spatial character
+   - Architectural structure or natural landscape
+   - Principal objects and decorative elements
 
-2. **场景主体**
-   - 地点名称和空间特征
-   - 建筑结构或自然景观
-   - 主要物体和装饰元素
+3. **Time and light**
+   - Time of day (dusk, deep night, early morning...)
+   - Lighting (neon, moonlight, sunlight...)
+   - How light and shadow shift, and the mood they create
 
-3. **时间与光线**
-   - 时间段（傍晚、深夜、清晨等）
-   - 光线效果（霓虹灯、月光、阳光等）
-   - 光影变化和氛围
+4. **Weather and motion**
+   - Weather (rain, clear, fog...)
+   - Moving elements (raindrops, smoke, drifting light...)
+   - Environmental detail in motion
 
-4. **天气与动态**
-   - 天气状况（雨天、晴天、雾天等）
-   - 动态元素（雨滴、烟雾、光线流动等）
-   - 环境细节的动态表现
+5. **Palette and atmosphere**
+   - Dominant palette (cool, warm...)
+   - Emotional atmosphere (oppressive, warm, mysterious...)
+   - Overall texture of the image
 
-5. **色调与氛围**
-   - 主色调（冷色调、暖色调等）
-   - 情绪氛围（压抑、温馨、神秘等）
-   - 画面质感
+### Prohibited
 
-### 禁止事项
+❌ **Never include**:
+- Any person, character, or human figure
+- Person-related words (man, woman, person, character, protagonist...)
+- Body parts (hand, face, body...)
+- Human actions (standing, walking, sitting...)
+- Clothing or accessories (unless present as a static prop)
 
-❌ **严禁出现**：
-- 任何人物、角色、人形
-- 人物相关词汇（如：男性、女性、人、角色、主角等）
-- 人体部位（如：手、脸、身体等）
-- 人物动作（如：站立、行走、坐着等）
-- 人物服装或配饰（除非作为道具静物出现）
+✅ **Allowed**:
+- Buildings, rooms, streets
+- Natural landscape (mountains, water, trees, sky...)
+- Objects and props (furniture, lamps, vehicles...)
+- Weather and lighting effects
+- Atmosphere and mood
 
-✅ **允许描述**：
-- 建筑物、房间、街道
-- 自然景观（山、水、树、天空等）
-- 物体和道具（桌椅、灯具、车辆等）
-- 天气和光线效果
-- 氛围和情绪
+## Output Format
 
-## 输出格式
+**Output language**: write the prompt entirely in English. The scene environment settings may
+contain text in another language — translate it. Never mix languages, and use English punctuation
+throughout.
 
-请将生成的中文提示词放在 `<提示词>` 标签内。
+Output **only the prompt itself** — no tags, no code fences, no explanation. The entire response is
+used directly as the image generation prompt.
 
-**提示词结构示例**：
+**Structure** (a skeleton showing what to write in what order — do not copy the bracket labels
+literally):
 
 ```
-{{VISUAL_STYLE}}，高质量背景。16:9横版构图。
+{{VISUAL_STYLE}}, high quality background. 16:9 landscape composition.
 
-[地点描述]：[空间特征]，[建筑/景观结构]。
+[Location]: [spatial character], [architecture or landscape structure].
 
-时间：[时间段]，[光线描述]。天气：[天气状况]，[动态效果]。
+Time: [time of day], [lighting]. Weather: [conditions], [motion effects].
 
-环境细节：[主要物体]，[装饰元素]，[背景元素]。[具体物品的位置和状态描述]。
+Environment detail: [principal objects], [decorative elements], [background elements]. [Position and state of specific items].
 
-色调：[主色调]，[光影效果]。氛围：[情绪氛围]，[画面质感]。
+Palette: [dominant colors], [light and shadow]. Atmosphere: [mood], [image texture].
 
-动态效果：[雨滴/烟雾/光线等动态元素的描述]。
+Motion: [raindrops, smoke, drifting light and similar moving elements].
 
-高质量，无人物，空场景。
+High quality, no people, empty scene.
 ```
 
-## 示例
+## Example
 
-### 输入示例
+### Input
+
 ```json
 {
-  "时间": "傍晚",
-  "地点": "城市街道旁的公交站台",
-  "空间描述": "狭小的半开放式候车区域，仅由一个塑料顶棚和两侧矮栏围合而成，地面为湿滑的水泥地，前方是车流稀疏的马路",
-  "背景元素": "被雨水冲刷的广告灯箱、积水倒映着模糊霓虹、湿漉漉的座椅、散落的传单和水洼中的纸屑",
-  "氛围": "压抑、孤寂、潮湿"
+  "time_setting": "dusk",
+  "location": "A bus stop beside a city street",
+  "space_description": "A cramped half-open waiting area enclosed by a plastic canopy and low railings on both sides, the ground slick concrete, a road with sparse traffic in front",
+  "background_elements": "Rain-washed advert lightbox, standing water reflecting blurred neon, soaked benches, scattered flyers and shreds of paper in the puddles",
+  "atmosphere": "Oppressive, lonely, damp"
 }
 ```
 
-### 输出示例
+### Output
+
 ```
-<提示词>
-日本动漫风格，高质量动画背景。16:9横版构图。
+anime style, japanese animation, cel shading, high quality animated background. 16:9 landscape composition.
 
-城市街道旁的公交站台：狭小的半开放式候车区域，塑料顶棚被雨水密集敲打，两侧矮栏围合，地面为湿滑的水泥地，前方是车流稀疏的马路。
+A bus stop beside a city street: a cramped half-open waiting area, rain drumming hard on the plastic canopy, low railings enclosing both sides, the ground slick wet concrete, a road with sparse traffic ahead.
 
-时间：傍晚，天色灰暗，路灯初亮。天气：大雨倾盆，雨滴从塑料棚顶滑落形成雨帘，地面积水反射霓虹光斑。
+Time: dusk, the sky gone grey, streetlights just coming on. Weather: heavy downpour, rain sheeting off the canopy edge, standing water throwing back neon highlights.
 
-环境细节：被雨水冲刷的广告灯箱闪烁不定，湿漉漉的金属座椅泛着水光，地面散落传单被雨水浸透，水洼中漂浮纸屑。远处马路上车灯拖曳光痕。
+Environment detail: a rain-washed advert lightbox flickering unevenly, wet metal benches glazed with water, flyers scattered across the ground and soaked through, scraps of paper floating in the puddles. Headlights trail streaks of light on the road beyond.
 
-色调：冷色调为主，蓝紫色霓虹与昏黄路灯混合，湿润质感。氛围：压抑、孤寂、潮湿，雨夜的寂寥感。
+Palette: predominantly cool, blue-violet neon mixed with dim yellow streetlight, a wet sheen throughout. Atmosphere: oppressive, lonely, damp — the desolation of a rainy night.
 
-动态效果：雨滴持续从棚顶滑落，水面涟漪扩散，霓虹灯闪烁反射，远处车辆驶过溅起水花。
+Motion: rain running continuously off the canopy, ripples spreading across the water's surface, neon flickering in reflection, a passing car throwing up spray in the distance.
 
-，高质量，无人物，空场景。
-</提示词>
+High quality, no people, empty scene.
 ```
 
-## 质量检查
+## Self-check
 
-生成提示词后，请自查：
-- ✅ 是否声明了指定的视觉风格？
-- ✅ 是否强调了16:9横版构图？
-- ✅ 是否完全没有人物相关描述？
-- ✅ 是否包含了时间、地点、天气、光线？
-- ✅ 是否描述了环境细节和氛围？
-- ✅ 是否包含了动态效果描述？
-- ✅ 是否强调了"无人物、空场景"？
+Before finishing, verify:
+- ✅ Is the specified visual style declared?
+- ✅ Is 16:9 landscape composition emphasised?
+- ✅ Is the prompt entirely free of people?
+- ✅ Does it cover time, place, weather and light?
+- ✅ Does it describe environmental detail and atmosphere?
+- ✅ Does it include motion?
+- ✅ Does it end on "no people, empty scene"?
+- ✅ Is every word English, with no language mixing?
+- ✅ Is it the bare prompt only — no tags, no code fences, no explanation?
 
-请现在开始生成场景图提示词。
+Now generate the scene image prompt.

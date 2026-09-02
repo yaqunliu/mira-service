@@ -1,29 +1,41 @@
-你的任务是根据提供的角色特征库和指定的视觉风格，生成用于生成角色参考图（包含四项：面部特写、正面、侧面、背面）的提示词。
+Your task is to generate a prompt for a character reference sheet (four views: facial close-up,
+front, side, back), based on the character feature profile and the specified visual style.
 
-以下是角色特征库的详细信息：
+Here is the character feature profile:
 <character_features>
 {{CHARACTER_FEATURES}}
 </character_features>
 
-以下是指定的视觉风格：
+Here is the specified visual style:
 <visual_style>
 {{VISUAL_STYLE}}
 </visual_style>
 
-请按照以下要求生成提示词：
-1. **核心要求**：提示词必须包含"横版构图"、"四视图布局(面部正面特写、正面全身、侧面全身、背面全身)"、"{{VISUAL_STYLE}}"、"纯白色背景"。
-2. **构图布局规范**：必须采用横向排版（Landscape orientation），画面中应明确平铺包含四个独立部分：
-    - 一个清晰的角色脸部正面大特写（Large facial close-up）。
-    - 角色的正面全身站立姿态（Full body front view）。
-    - 角色的侧面全身站立姿态（Full body side view）。
-    - 角色的背面全身站立姿态（Full body back view）。
-3. **背景与质量规范**：
-    - 背景必须是纯白色（Pure white background），严禁出现任何背景装饰、场景或杂物。
-    - 严禁画面中出现任何文字、字母、数字、水印或签名（No text, no watermarks, no letters, no words）。
-4. **角色物品规范**：
-    - 角色可以持有其身份相关的特定物品、武器或道具（如果角色特征库中有描述，请务必包含在内）。
-5. **一致性整合**：需整合角色特征库中的所有信息：基础信息、容貌特征、身材特征、头发、服装、特征标签。
-6. **提示词结构建议**：[横版构图]，[四视图布局：面部正面大特写、正面全身、侧面全身、背面全身]，[{{VISUAL_STYLE}}]，[纯白色背景]，[无文字水印]，[角色详细外貌与身份描述]，[发型与发色细节]，[全身服装与配饰描述]，[持有的武器或道具描述]。
-7. **语言习惯**：语言需简洁明了，符合主流AI绘画工具对提示词的语法习惯，确保能精准传达角色核心特征。
+Follow these requirements:
 
-请将生成的中文提示词放在<提示词>标签内。
+1. **Core requirement**: the prompt must include "horizontal landscape composition", "four-view
+   layout (large facial close-up, full body front, full body side, full body back)",
+   "{{VISUAL_STYLE}}", and "pure white background".
+2. **Layout**: landscape orientation, laying out four distinct parts side by side:
+    - A clear, large facial close-up of the character
+    - Full body front view, standing
+    - Full body side view, standing
+    - Full body back view, standing
+3. **Background and quality**:
+    - The background must be pure white — no decoration, scenery, or clutter of any kind
+    - No text, letters, numbers, watermarks or signatures anywhere in the image
+4. **Props**: the character may hold items, weapons or props tied to their identity — if the feature
+   profile describes any, include them.
+5. **Consistency**: integrate everything in the feature profile — basic info, facial features, build,
+   hair, clothing, and feature tags.
+6. **Suggested structure**: [horizontal landscape composition], [four-view layout: large facial
+   close-up, full body front, full body side, full body back], [{{VISUAL_STYLE}}], [pure white
+   background], [no text or watermark], [detailed appearance and identity], [hair style and color],
+   [full-body clothing and accessories], [weapons or props held].
+7. **Language**: keep it concise and idiomatic for mainstream AI image tools, so the character's core
+   features come through precisely.
+
+**Output language**: write the prompt entirely in English. The character feature profile may contain
+text in another language — translate it; never mix languages in the output.
+
+Put the generated English prompt inside <提示词> tags.
