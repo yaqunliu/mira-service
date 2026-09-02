@@ -466,6 +466,125 @@ characters.append({
 
 ---
 
+## Phase 3.7 — 场景分析英文化
+
+> **状态：已实现**（2026-09-02）。未验证项：端到端未跑（本地无 DB/Celery），仅 `py_compile` 通过。
+> 场景图提示词链路（`scene_image*.md` / `regenerate_scene.md` / `STYLE_MAPPING`）**本轮不动**，
+> 属于 Phase 3 的 B 类高风险，需基线图对比后单独发版——见下方「本轮未做」。
+
+角色英文化（3.5）之后，场景分析仍全中文输出：卡片标题 `学校教学楼内的班级教室`、
+副标题 `安静、规整… | 日间`，分别是 `scene.title` / `scene.atmosphere` / `scene.time_setting`。
+根因与角色那轮同构——**prompt 全中文 + JSON 契约用中文键**，LLM 跟着中文输出。
+
+### 3.7.1 契约变更
+
+`scene_decomposition.md` 全文重写为英文，输出契约：
+
+| 现状 | 改为 |
+|---|---|
+| `场景列表` | `scenes` |
+| `场景编号` / `场景标题` | `scene_number` / `title` |
+| `环境设定` | `environment` |
+| `时间` / `地点` / `氛围` | `time_setting` / `location` / `atmosphere` |
+| `空间描述` / `背景元素` | `space_description` / `background_elements` |
+| （无） | `space_type`（新增，见 3.7.2） |
+| `文案信息` | `text_info` |
+
+枚举值同步收紧：`time_setting` ∈ {`day`, `night`, `dawn`, `dusk`}，`space_type` ∈ {`indoor`, `outdoor`}。
+prompt 里补了「字段留在源语言」的反例（拿截图里的实际错误输出当反例）。
+
+消费端 `creation_task.py:506,526-570` 按英文键解析。
+
+### 3.7.2 顺带修掉 `space_type` 的列语义错位
+
+`scenes.space_type` 列注释是「室内/室外」（`scene.py:23`），但 `creation_task.py:556` 实际塞的是
+`space_description[:50]`——一段被截断的布局描述。老 prompt 根本没让 LLM 输出空间类型。
+
+本轮 prompt 新增 `space_type` 枚举字段，落库存真值；布局描述只进 `extra_data.space_description`。
+
+**连带补丁（必须同批）**：两处注入生图 prompt 的 `"空间"` 字段原先读 `scene.space_type`，
+改完后会从「一段布局描述」缩水成一个 `indoor`，画面细节会掉。改成优先读 `extra_data.space_description`：
+
+- `step4_scene_image_gen_task.py:250-257`
+- `shot_task.py:242-251`
+
+同时给所有落库字段按列宽逐个截断（`title[:200]` / `time_setting[:50]` / `location[:200]` /
+`space_type[:50]` / `atmosphere[:100]`），并用 `or ""` 兜 LLM 输出 `null`——
+英文文本比中文长，原先只截 `space_type` 一个字段不够。
+
+### 3.7.3 场景 → 分镜注入链路
+
+场景以英文键注入分镜 prompt，分镜输出端同步改：
+
+| 位置 | 改动 |
+|---|---|
+| `creation_task.py:801-815` | 注入端改英文键，额外注入 `space_description` |
+| `shot_decomposition_V3.md:17-21` | 「场景信息」段说明改为列出英文字段名 |
+| `shot_decomposition_V3.md:36-38` | 要求输出 `scene_number`（整数）+ `scene_title`（原样复制，不改写不翻译） |
+| `shot_decomposition_V3.md:111-126` | 输出示例的 `场景编号`/`场景标题` → `scene_number`/`scene_title` |
+| `creation_task.py:878-892` | 读取端改英文键 |
+| `ai_client.py:690,851` | 日志键 + `场景内容` 剔除逻辑 |
+
+> 🔥 **顺带修掉一个静默降级**：`creation_task.py:883` 原先要求 `isinstance(scene_idx, int)`，
+> 而 prompt 示例给的是字符串 `"1"`。字符串编号会跳过 ID 匹配、掉进 title 匹配，
+> title 再匹配不上就掉进 `:888` 的「兜底关联到第一个场景」——**所有分镜挂到场景 1，只打一条 warning**。
+> 现已统一 `int()` 强转。与 3.5.4 删掉的角色子串模糊匹配是同类坑。
+
+**本节与 3.7.1 必须同批发版**：注入端与读取端都已改英文键，未留中文兜底
+（`scene_result` 是同一任务内现调 LLM 拿的，不存在 Celery 旧 payload 问题；
+但分两次发版会导致中间态全部掉进兜底关联）。
+
+### 3.7.4 Agent 模式独立链路
+
+`script_analyst.py` 是 Agent 模式下的场景/角色提取，与主流程 prompt 完全独立，
+容易漏。SYSTEM_PROMPT（`:41-81`）全文翻英文：
+
+- 枚举值对齐 3.7.1：`indoor|outdoor`、`day|night|dusk`
+- `atmosphere` 长度约束从「20 字以内」改为「100 字符以内」（对齐列宽，英文更长）
+- 补人名罗马化 + 地名意译规则，与 `character_analysis.md`（3.5.2）保持一致
+- `get_user_message`（`:98`）的中文提示语一并改
+
+`agent_generate_scene.md:213` 已在 commit `1faa116`（Phase 3.4）改为 English prompt，本轮无需再动。
+
+### 3.7.5 前端
+
+**无需改动**。已确认 `mira-fe/src/` 只有 `lib/mock-data/*.json` 含中文场景值，
+无任何按 `室内`/`日间` 做的枚举判断或分支，场景字段全部原样渲染。
+
+### 3.7.6 本轮未做（留给 Phase 3 B 类）
+
+场景图提示词链路仍产出中文，**这是独立问题，不影响场景卡片显示**——
+它生成的是 `scene.extra_data["image_prompt"]`，用户在 `scene-edit-modal.tsx:43`
+和 `scene-detail-dialog.tsx:77` 能看到并编辑：
+
+| 位置 | 问题 |
+|---|---|
+| `scene_image.md:1,69`、`regenerate_scene.md:25,78` | 明写「生成用于生成场景环境图的**中文**提示词」 |
+| `step4_scene_image_gen_task.py:264` | `{output_language}` 写死 `"中文"` |
+| `step4_scene_image_gen_task.py:29-35` `STYLE_MAPPING` | 5 种风格描述全中文，直接拼进生图提示词（`character_task.py:28` 有重复副本，见 3.6） |
+
+改这些需要 Phase 0.3 的基线图对比，效果不达标要能单独回滚，故不与本轮混在一个 PR。
+
+### 3.7.7 验收
+
+1. 传英文小说 → 场景卡片 `title` / `atmosphere` / `time_setting` 全英文，
+   `time_setting` 显示 `day`/`night` 而非 `日间`
+2. `grep -rn "场景列表\|场景标题\|环境设定" app/ --include=*.py` 仅剩注释/docstring
+3. **分镜关联场景 100% 命中**：全流程日志中 `分镜无法关联到场景` 应为 0 条（验证 3.7.3 的强转修复）
+4. `scenes.space_type` 落库值为 `indoor`/`outdoor`，不再是被截断的布局描述（验证 3.7.2）
+5. 生成一轮场景图，确认注入的 `"空间"` 字段是布局描述而非单词 `indoor`（验证连带补丁）
+6. **跨章节复用**：同一部小说跑第二章，同名同 `location` 同 `time_setting` 的场景应复用而非重复建档
+7. Agent 模式走一遍剧本分析，场景/角色输出同样全英文（验证 3.7.4 这条独立链路）
+
+### 3.7.8 已知边界
+
+**存量场景与新场景混跑会重复建档**。`creation_task.py:539` 的复用键是
+`f"{title}|{location}|{time_setting}"`，老数据是 `班级教室|…|日间`，新数据是 `Classroom|…|day`，
+同一场景跑第二章必然新建。这是决策 6「存量不迁移」的既定代价，与「已知边界」里
+角色音译一致性问题同源。验收项 6 只覆盖**新建 creation 内部**的跨章节复用。
+
+---
+
 ## Phase 4 — 数据契约英文化（破坏性变更）
 
 已确认本轮做，带数据迁移。**必须与前端同步发版。**
@@ -582,6 +701,7 @@ Phase 3 (Prompt 英文化)               ←── 主体工作量，B 类需质
    ↓
 Phase 3.5 (角色标识体系)  ┐
 Phase 3.6 (关键词表/标签)  │           ←── 3.6 独立，可与 3.5 并行
+Phase 3.7 (场景分析)       │           ←── 独立，已完成；场景图 prompt 留在 Phase 3 B 类
    ↓                      │
 Phase 4 (数据契约 + 迁移) ┘           ←── 3.5 与 4 必须同一批发版
    ↓
@@ -607,6 +727,9 @@ Phase 5 (voices / Swagger)
 - **存量角色名不翻译**（决策 6）：迁移前创建的 creation，角色名保持 `周宇-少年-校服` 形态，
   `age_group`/`state` 为 `null`。这些老 creation 继续走 `role` 字符串兜底路径，音色映射可能不准。
   如果后续要处理，是独立一轮工作（人名翻译无法机械映射，只能靠 LLM 重跑角色分析）
+- **存量场景名不翻译**（决策 6 的同源问题）：迁移前创建的场景，`title`/`atmosphere`/`time_setting`
+  保持中文形态。场景复用键含 `title` 与 `time_setting`，故中英混跑期同一场景会重复建档。
+  详见 Phase 3.7.8
 - **音译一致性无自动校验**：同一汉字串在不同章节被 LLM 译成不同英文名（`Zhou Yu` vs `Zhouyu`）
   会导致重复建档。本轮只靠 prompt 里「优先复用历史角色库」约束 + 验收项 11 人工检查，
   没有做 romanization 归一化校验
