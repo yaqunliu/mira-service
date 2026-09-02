@@ -18,6 +18,76 @@ except ImportError:
     logger = SimpleLogger()
 
 
+# 英文数字单词（one ~ nine hundred ninety-nine），用于识别 "Chapter One" 这类英文章节标题
+_EN_ONES = (
+    r'(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|'
+    r'thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)'
+)
+_EN_TENS = r'(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)'
+_EN_TWO_DIGIT = rf'(?:{_EN_TENS}(?:[\s-]+{_EN_ONES})?|{_EN_ONES})'
+_EN_NUMBER_WORD = (
+    rf'(?:{_EN_ONES}[\s-]+hundred(?:[\s-]+(?:and[\s-]+)?{_EN_TWO_DIGIT})?|{_EN_TWO_DIGIT})'
+)
+# 罗马数字（I、IV、XIII 等），前瞻确保非空匹配
+_ROMAN_NUMBER = r'(?=[MDCLXVI])M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})'
+# 章节序号：阿拉伯数字 / 英文单词 / 罗马数字
+_EN_CHAPTER_NUMBER = rf'(?:[0-9]+|{_EN_NUMBER_WORD}|{_ROMAN_NUMBER})'
+# 行首可能出现的 Markdown 标记，如 "## Chapter Two"、"**Chapter Two**"
+_MD_PREFIX = r'(?:#{1,6}\s*)?(?:\*{1,3})?\s*'
+# 英文章节标题（锚定行首，避免正文中提到 "chapter one" 时被误切分）
+_EN_CHAPTER_HEADING = rf'^{_MD_PREFIX}(?:chapter|chap\.?|part)\s+{_EN_CHAPTER_NUMBER}\b'
+# 用于 clean_chapter_title：提取英文章节号部分
+_EN_CHAPTER_PREFIX = rf'^(?:chapter|chap\.?|part)\s+{_EN_CHAPTER_NUMBER}\b'
+
+
+def _is_latin_dominant(text: str) -> bool:
+    """
+    判断正文是否以拉丁字母（英文等）为主。
+
+    用于按语种调整解析阈值：中文一个字的信息量约等于英文一个单词，
+    两者共用同一套字符数/标点阈值会误判。
+
+    Args:
+        text: 正文内容（只取前 5000 字符做采样，避免长文件开销）
+
+    Returns:
+        True 表示拉丁字母为主，False 表示中日韩文字为主
+    """
+    sample = text[:5000]
+    cjk_count = len(re.findall(r'[一-鿿]', sample))
+    latin_count = len(re.findall(r'[A-Za-z]', sample))
+    return latin_count > cjk_count
+
+
+def _looks_like_title(line: str, is_latin: bool) -> bool:
+    """
+    判断首行是否像书名（而不是正文的第一句）。
+
+    中文与英文用不同的阈值：
+    - 中文：不超过 50 字，且标点不超过 2 个
+    - 英文：不超过 120 字符且不超过 15 个单词，且不以句末标点结尾
+      （英文书名普遍比中文长，如 "The Evening Breeze Through the Classroom" 已 40 字符；
+       但英文正文首句几乎总以 . ! ? 结尾，用这一点排除正文比数标点更可靠，
+       同时不会误伤 "Dr. Jekyll and Mr. Hyde" 这类含缩写点的书名）
+
+    Args:
+        line: 已 strip 的首行
+        is_latin: 正文是否以拉丁字母为主
+
+    Returns:
+        True 表示看起来像书名
+    """
+    if is_latin:
+        if len(line) > 120 or len(line.split()) > 15:
+            return False
+        return not line.rstrip().endswith(('.', '!', '?', '。', '！', '？'))
+
+    if len(line) > 50:
+        return False
+    # 标点符号不超过2个，可能是标题
+    return len(re.findall(r'[。！？，、：；]', line)) <= 2
+
+
 def clean_chapter_title(title: str, max_length: int = 200) -> str:
     """
     清理章节标题
@@ -44,7 +114,11 @@ def clean_chapter_title(title: str, max_length: int = 200) -> str:
     
     # 去除多余的空格（多个空格替换为单个空格）
     title = re.sub(r'\s+', ' ', title)
-    
+
+    # 去除 Markdown 标记：行首的 #、首尾的 * / _（如 "## Chapter Two"、"**第一章**"）
+    title = re.sub(r'^#{1,6}\s*', '', title)
+    title = re.sub(r'^[*_]{1,3}\s*|\s*[*_]{1,3}$', '', title).strip()
+
     # 清理常见的垃圾内容模式
     # 1. 牢记本站网址相关（包括后面的所有内容）
     title = re.sub(r'牢记本站网址[：:].*', '', title, flags=re.IGNORECASE)
@@ -62,10 +136,15 @@ def clean_chapter_title(title: str, max_length: int = 200) -> str:
     # 匹配章节号后的内容，如果遇到句号等标点，截断
     # 先找到章节号的位置
     chapter_match = re.search(r'(第[^章回]*[章回])', title)
+    if not chapter_match:
+        # 英文章节标题，如 "Chapter One — Deskmates"、"Chapter 1. Beginning"
+        chapter_match = re.match(_EN_CHAPTER_PREFIX, title, re.IGNORECASE)
     if chapter_match:
-        chapter_part = chapter_match.group(1)
+        chapter_part = chapter_match.group(0)
         rest_part = title[chapter_match.end():].strip()
-        
+        # 去掉紧跟章节号的句点（"Chapter 1. Beginning" 中的 "."），避免被当成截断点
+        rest_part = re.sub(r'^[.。]+\s*', '', rest_part)
+
         # 在剩余部分中查找截断点
         # 优先在句号、感叹号、问号处截断
         truncate_chars = ['。', '！', '？', '.', '!', '?']
@@ -137,8 +216,13 @@ def parse_novel_metadata(content: str, filename: str) -> Dict[str, str]:
     author = None
     
     # 章节关键字模式，用于判断是否是章节标题
-    chapter_keyword_pattern = r'第\s*[零一二三四五六七八九十百千万\d]+\s*[章回话卷]|Chapter\s+\d+|CHAPTER\s+\d+'
-    
+    chapter_keyword_pattern = (
+        rf'第\s*[零一二三四五六七八九十百千万\d]+\s*[章回话卷]|{_EN_CHAPTER_HEADING}'
+    )
+
+    # 首行是否像书名，阈值按正文语种区分
+    is_latin = _is_latin_dominant(content)
+
     # 检查前10行
     for i, line in enumerate(lines[:10]):
         line = line.strip()
@@ -160,16 +244,13 @@ def parse_novel_metadata(content: str, filename: str) -> Dict[str, str]:
                         author = author_in_line.group(1).strip()
                     continue
             
-            # 2. 如果没有书名号，但第一行较短（少于50字）且不包含章节关键字，可能是标题
-            if i == 0 and len(line) <= 50:
-                # 检查是否包含章节关键字
+            # 2. 如果没有书名号，第一行看起来像书名且不包含章节关键字，则作为标题
+            #    长度/标点阈值按语种区分，见 _looks_like_title
+            if i == 0 and _looks_like_title(line, is_latin):
+                # 检查是否包含章节关键字（如 "第一章"、"Chapter One" 开头的小说没有单独书名行）
                 if not re.search(chapter_keyword_pattern, line, re.IGNORECASE):
-                    # 检查是否看起来像标题（不包含句号、问号、感叹号等，或者只有少量标点）
-                    # 排除明显是正文的情况（包含大量标点符号）
-                    punct_count = len(re.findall(r'[。！？，、：；]', line))
-                    if punct_count <= 2:  # 标点符号不超过2个，可能是标题
-                        title = line
-                        continue
+                    title = line
+                    continue
         
         # 尝试匹配作者模式
         if not author:
@@ -191,6 +272,15 @@ def parse_novel_metadata(content: str, filename: str) -> Dict[str, str]:
         "title": title,
         "author": author
     }
+
+
+def _default_chapter_title(content: str) -> str:
+    """
+    没有识别到章节标题时的兜底章节名。
+
+    按正文语种返回，避免英文小说出现中文的"第一章"。
+    """
+    return "Chapter 1" if _is_latin_dominant(content) else "第一章"
 
 
 def split_chapters(content: str) -> List[Dict[str, str]]:
@@ -235,6 +325,9 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
         # 英文
         r'Chapter\s+[0-9]+',
         r'CHAPTER\s+[0-9]+',
+        # 英文数字单词与罗马数字，如 Chapter One / Chapter Twenty-Three / Chapter IV / Part Two
+        # 锚定行首（允许 Markdown 的 # 与 * 前缀），避免正文中提到章节名时被误切分
+        _EN_CHAPTER_HEADING,
     ]
     
     # 组合所有模式
@@ -244,6 +337,9 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
     book_title_pattern = r'^[《【『][^》】』]+[》】』]\s*$'  # 匹配单独一行的书名
     separator_pattern = r'^[-=*_]{3,}\s*$'  # 匹配分隔符：---、===、***、___等
     
+    # 兜底章节名跟随正文语种：英文小说不应该出现"第一章"
+    default_title = _default_chapter_title(content)
+
     # 查找所有章节标题位置
     chapters = []
     lines = content.split('\n')
@@ -281,7 +377,7 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
             elif line_stripped:  # 如果还没有章节标题，但内容不为空，可能是前言
                 # 如果没有找到章节标题，将整个内容作为第一章
                 if not chapters:
-                    current_chapter_title = clean_chapter_title("第一章")
+                    current_chapter_title = clean_chapter_title(default_title)
                     current_chapter_content = [line]
     
     # 保存最后一个章节
@@ -306,7 +402,7 @@ def split_chapters(content: str) -> List[Dict[str, str]]:
         filtered_content = '\n'.join(filtered_lines).strip()
         if filtered_content and len(filtered_content) >= 20:
             chapters.append({
-                "title": clean_chapter_title("第一章"),
+                "title": clean_chapter_title(default_title),
                 "content": filtered_content
             })
     
