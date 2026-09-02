@@ -107,22 +107,22 @@
 [
   {
     "shot_id": 123,
-    "video_prompt": "暖色调室内光线，动漫艺术风格。\n[0-1.5s] 中景固定：她坐在窗边，手指轻轻翻动书页，阳光洒在脸上。\n[1.5-3s] 近景缓推：镜头推近，她抬起头，嘴角微微上扬，眼中带着期待的光芒。\n[3-4s] 特写定格：聚焦她的眼睛，瞳孔中映着窗外的景色，画面定格。",
+    "video_prompt": "Warm indoor lighting, anime art style.\n[0-1.5s] Medium shot, static: she sits by the window, fingers gently turning the pages, sunlight falling across her face.\n[1.5-3s] Close-up, slow push in: the camera moves closer as she lifts her head, the corners of her mouth curving up, anticipation glinting in her eyes.\n[3-4s] Extreme close-up, freeze: focus on her eyes, the view outside the window reflected in her pupils, the frame holds.",
     "generation_mode": "first_last_frame",
-    "mode_reason": "首尾帧景别变化明显（中景→特写），动作有明确起止（看书→抬头），适合首尾帧驱动"
+    "mode_reason": "Clear shot-size change between first and last frame (medium -> close-up), with a well-defined start and end action (reading -> looking up); suits first/last-frame driving"
   },
   {
     "shot_id": 124,
     "video_prompt": "...",
     "generation_mode": "first_frame_only",
-    "mode_reason": "无尾帧图片，画面变化小（静态对话），使用首帧模式"
+    "mode_reason": "No last-frame image and minimal visual change (static dialogue); use first-frame mode"
   }
 ]
 ```
 
 ## 重要规则
 
-1. **必须使用中文**：video_prompt 必须是中文描述
+1. **必须使用英文**：video_prompt 必须是英文描述（English description）
 2. **时间轴精确**：每个镜头标注时间段，总和等于分镜时长
 3. **首帧呼应**：第一个镜头必须与首帧提示词画面一致
 4. **尾帧衔接**：如果有尾帧，最后镜头必须与尾帧画面一致

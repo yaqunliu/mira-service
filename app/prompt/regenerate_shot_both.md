@@ -127,7 +127,7 @@
 
 ## 输出格式
 
-请以JSON格式输出中文提示词：
+请以JSON格式输出英文提示词（English prompts）：
 
 ```json
 {
