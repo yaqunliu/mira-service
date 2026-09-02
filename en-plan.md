@@ -19,13 +19,21 @@
 | 数据契约中文键 | `角色`/`内容` 44 处、`出镜角色`/`声音角色` 10 处、`旁白` 49 处，共 **15 个文件** |
 | 含中文字面量的 py 文件 | 200 个（含注释，实际需改的远少于此） |
 | voices 端点 | `language: str = Query(default="zh")`（`app/api/api_v1/endpoints/voices.py:24`） |
+| 角色名 | LLM 按 `character_analysis.md` 生成 `角色名-年龄段-临时状态`（如 `周宇-少年-校服`），代码原样存库、原样渲染 |
+| 把角色名当匹配键的代码 | **6 处**，其中 2 处失败时**静默降级**不报错（见 Phase 3.5） |
+| 中文关键词表 | `character_state_identifier.py` 状态词表、`audio_tools._analyze_emotion` 情感词表——英文输入下命中率 0 |
 
-### 已确认的三个决策
+### 已确认的决策
 
 1. **image_prompt / video_prompt 也改英文**——用户在 `shot-detail-dialog` 里能看到并编辑它们，体验要统一。
    ⚠️ **这是本计划最大的技术风险**，见 Phase 3。
 2. **数据契约本轮就改**，带 Alembic 数据迁移，前后端同步发版。
 3. **TTS 英文音色库情况未知**，计划第一步先验证。
+4. **中文人名一律音译**（汉语拼音，如 `周宇` → `Zhou Yu`），非人名的身份称呼意译（`班主任` → `Homeroom Teacher`）。
+5. **角色名只存人名**，年龄段与临时状态改为 Character 表的结构化字段，不再拼进 `name`。
+   跨引用改用 `character_id`，从根上消灭字符串匹配。见 Phase 3.5。
+6. **存量角色名不迁移**——老 creation 的中文角色名保持原样，新逻辑只对新建 creation 生效。
+   （注意：Phase 3.5 的**列语义搬迁**仍需一条 backfill SQL，那是 schema 收口不是文案翻译，不违反本决策。）
 
 ### 关键杠杆点（复用现有代码，不另起炉灶）
 
@@ -37,6 +45,8 @@
 | `app/core/exceptions.py` | 13 个异常类的干净继承体系，**错误码就加在这里** |
 | `app/middleware/error_handler.py` | 3 个全局处理器，响应格式统一收口点 |
 | `alembic/versions/` | 53 个已有迁移，数据迁移基础设施现成 |
+| `app/tasks/creation_task.py:141-261` | **角色落库唯一入口**，角色名在这里从 LLM 输出的 JSON 键变成 `Character.name` |
+| `app/utils/ai_client.py:836` | `{{CHARACTER_LIST}}` 注入点，改成 ID 引用就改这一处 |
 
 ---
 
@@ -192,12 +202,21 @@ app/prompt/
 
 直接决定用户看到什么，**必须英文**：
 
-`character_analysis.md`、`character.md`、`scene_decomposition.md`、`shot_decomposition_V4.md`、`agent_generate_character.md`、`agent_generate_scene.md`、`agent_generate_shot.md`
+`character_analysis.md`、`character.md`、`scene_decomposition.md`、`shot_decomposition_V3.md`、`agent_generate_character.md`、`agent_generate_scene.md`、`agent_generate_shot.md`
 
 改动要点：
 - 「输出中文提示词」→ 「Output in English」
 - **输出 JSON 的键名同步改英文**（与 Phase 4 的契约变更对齐，两者必须同批发版）
 - 默认角色名 `旁白` → `Narrator`
+- `character.md` 末行「请将生成的**中文**提示词放在 `<提示词>` 标签内」——注意 `character_task.py:144`
+  正是用 `re.search(r"<提示词>(.*?)</提示词>")` 提取的，改标签要两边同步，否则提取失败会静默回落到整段 LLM 输出
+
+> ⚠️ **`character_analysis.md` 和 `shot_decomposition_V3.md` 不要在本节改**——这两份的改动与角色标识体系强耦合，
+> 统一放到 Phase 3.5 一次改完，避免改两遍。
+>
+> ⚠️ **注意版本号**：`ai_client.py:834` 硬编码加载的是 `shot_decomposition_V3`。
+> `shot_decomposition_V2/V4/new.md` 全仓**无任何代码引用**（已 grep 确认），是死文件。
+> 本轮建议直接删除，不要翻译——留着以后切版本必然踩「改过的版本没在跑」的坑。
 
 ### 3.3 B 类：生成喂给豆包的 image/video prompt（高风险）
 
@@ -218,6 +237,230 @@ app/prompt/
 
 ---
 
+## Phase 3.5 — 角色标识体系重构（决策 4/5/6 的落地）
+
+单纯把 prompt 翻成英文**不够**。角色名今天同时承担三个职责：显示名、变体区分键、跨模块匹配键。
+第三个职责在中文下靠子串匹配勉强能跑，换成英文名就会误匹配，且**失败时静默降级不报错**。
+
+本 Phase 把三个职责拆开：`name` 只负责显示，变体靠结构化字段区分，跨引用一律用 `character_id`。
+
+### 3.5.1 Character 模型加结构化字段
+
+`app/models/character.py` 新增 4 列：
+
+| 列 | 类型 | 取值 |
+|---|---|---|
+| `age_group` | `String(20)` nullable | `child`(0-12) / `teen`(13-17) / `youth`(18-35) / `middle_aged`(36-55) / `elder`(56+) |
+| `state` | `String(120)` nullable | 英文短名词短语，小写：`drenched` / `formal attire` / `injured` / `taoist robes` / `battle-ready` / `transformed`。日常状态为 `null` |
+| `character_type` | `String(20)` not null, default `on_screen` | `on_screen` / `voice` |
+| `voice_channel` | `String(20)` nullable | 仅 voice：`phone` / `intercom` / `memory` / `distant` / `offscreen` |
+
+`name` 从此**只存人名或身份称呼**——`Zhou Yu`、`Homeroom Teacher`、`Mother`。
+
+> 附带好处：`name` 是 `String(100)`，原先担心英文三段名撑爆长度，现在只存人名反而比中文全名更短，该顾虑消失。
+
+Alembic 迁移（仿 `xxxx001_add_voice_fields.py` 的写法）：
+- `op.add_column` × 4，`character_type` 带 `server_default='on_screen'`
+- backfill 一句：`UPDATE characters SET character_type='voice' WHERE basic_info='声音角色'`
+- `downgrade()` 直接 `drop_column` × 4
+
+**这条 backfill 是列语义搬迁，不是文案翻译**——决策 6 说的「存量不迁移」指不翻译老角色名，
+但 `basic_info='声音角色'` 这个哨兵必须搬进 `character_type`，否则老数据的声音角色会被当成出镜角色去生图、白烧积分。
+
+同步改 `app/schemas/character.py`：`CharacterBase` / `CharacterUpdate` / `Character` 三处都加这 4 个字段。
+
+### 3.5.2 `character_analysis.md` 重写：结构化输出 + 音译规范
+
+**输出从「按角色名做键的字典」改成「数组」**——这一步直接消灭「名字即键」的模式：
+
+```json
+{
+  "chapter_info": { "chapter_number": "...", "title": "...", "word_count": ... },
+  "characters": [
+    {
+      "name": "Zhou Yu", "character_type": "on_screen",
+      "age_group": "teen", "state": "school uniform",
+      "basic_info": "...", "appearance": "...", "body": "...",
+      "hair": "...", "clothing": "...", "tags": "...", "voice_description": "..."
+    },
+    {
+      "name": "Homeroom Teacher", "character_type": "on_screen",
+      "age_group": "middle_aged", "state": null, "...": "..."
+    },
+    {
+      "name": "Mother", "character_type": "voice",
+      "voice_channel": "phone", "voice_description": "..."
+    }
+  ]
+}
+```
+
+**音译规范**（写进 prompt，配示例）：
+
+| 输入类型 | 规则 | 示例 |
+|---|---|---|
+| 中文人名 | 汉语拼音，姓名之间空格，各段首字母大写，名连写不加连字符 | `周宇` → `Zhou Yu`；`陶未` → `Tao Wei`；`欧阳峰` → `Ouyang Feng` |
+| 姓 + 职务/敬称 | 意译，职务在前 | `李总` → `Director Li`；`王老师` → `Teacher Wang`；`张医生` → `Doctor Zhang` |
+| 纯身份称呼 | 直接意译 | `班主任` → `Homeroom Teacher`；`旁白` → `Narrator`；`远处路人` → `Distant Passerby` |
+| 已有英文名 | 原样保留 | — |
+
+**跨章节一致性**：同一汉字串必须给出同一 romanization。
+`creation_task.py:141-144` 已经把 `historical_characters` 传进去了，prompt 里要明写「优先复用历史角色库中已有的英文名」。
+注意 `historical_characters` 目前也是**按 `char.name` 做键的字典**（`creation_task.py:137`），一并改成数组。
+
+prompt 里原有的 30+ 处中文示例名、年龄段枚举、临时状态词表、声音状态词表全部按上表重写。
+**「所有角色名必须带状态标识」那整套命名规范删掉**——状态现在是字段，不是名字的一部分。
+
+### 3.5.3 落库改造：变体去重键
+
+`creation_task.py:176-261` 的去重查询从 `Character.name == char_name` 改成三元组：
+
+```python
+existing = db.query(Character).filter(
+    scope_filter,                                   # creation_id 或 novel_id，逻辑不变
+    Character.name == c["name"],
+    Character.age_group == c.get("age_group"),
+    Character.state == c.get("state"),
+    Character.deleted_at.is_(None),
+).first()
+```
+
+同一人物的多个外观状态因此仍是多行（`Zhou Yu` + `teen` + `school uniform` / `Zhou Yu` + `teen` + `drenched`），
+但 `name` 相同——这正是想要的：FE 能按人聚合，后端能按变体区分。
+
+出镜/声音两段循环（`:176-261`）合并成一次遍历，靠 `character_type` 分流，
+不再需要 `basic_info="声音角色"` 这个哨兵。
+
+加一个纯派生的展示助手（**只用于日志和 prompt 注入，绝不作为匹配键**）：
+
+```python
+@property
+def variant_label(self) -> str:          # "Zhou Yu (teen, school uniform)"
+    parts = [p for p in (self.age_group, self.state) if p]
+    return f"{self.name} ({', '.join(parts)})" if parts else self.name
+```
+
+### 3.5.4 跨引用改用 `character_id`（本 Phase 的核心）
+
+角色在分镜拆解**之前**就已落库（`creation_task.py:854` 按 `creation.character_ids` 查回），
+所以 `character_id` 在拆解时是现成的。把字符串匹配整条链路换成整数查表：
+
+**注入端** `ai_client.py:836-839`：
+
+```python
+character_list_str = "\n".join(
+    f"- id={c.character_id} | {c.name} | {c.character_type} | {c.age_group or '—'} | {c.state or '—'}"
+    for c in characters
+)
+```
+
+**输出端** `shot_decomposition_V3.md`：
+
+| 现状 | 改为 |
+|---|---|
+| `"出镜角色": ["林小雨-青年"]` | `"on_screen_character_ids": [42]` |
+| `"声音角色": ["教授-中年"]` | `"voice_character_ids": [17]` |
+| `"台词": [{"角色": "林小雨-青年", "内容": "..."}]` | `"narration": [{"character_id": 42, "content": "..."}]` |
+
+prompt 里「必须使用角色特征库中的完整名称（包含状态）」那条规则（`:45`）改成
+「必须使用上表给出的 `id`，禁止输出角色名」。
+
+**消费端** `creation_task.py:988-1000`——**删掉子串模糊匹配**：
+
+```python
+# 删除：if name in db_char_name or db_char_name in name
+char_by_id = {c.character_id: c for c in characters}
+for cid in shot_data.get("on_screen_character_ids", []):
+    char = char_by_id.get(cid)
+    if char:
+        shot.characters.append(char)
+    else:
+        logger.warning(f"分镜 {shot_number} 引用了不存在的 character_id={cid}")
+```
+
+> 保留一轮按 name 的兜底分支并打 warning——**这是发版窗口期的 Celery 存量 payload 兼容**（队列里可能有旧格式任务），
+> 与决策 6 的「存量数据不迁移」是两码事。下个版本移除。
+
+**音色映射端** `audio_tools.py:280-312`、`narration_audio_tagger.py:137-160`：
+`char_voice_map` 从按 `speaker` 名字做键改成按 `character_id` 做键。
+这两处今天是**精确匹配 + 匹配不上静默回落默认旁白音色**，是最容易漏测的坑——
+改 ID 之后，回落分支要打 warning，不能再无声吞掉。
+
+### 3.5.5 删除 `character_state_identifier.py`
+
+整个模块的职责（从中文描述文本里猜状态）被 `state` 字段取代，直接删。
+
+调用方 `step7_video_prompt_gen_task.py:122-160`、`step8_video_gen_task.py:586-620` 改成直读字段：
+
+```python
+characters.append({
+    "name": char.name,
+    "age_group": char.age_group,
+    "state": char.state,
+    "appearance": appearance_full,
+})
+```
+
+> 🔥 **顺带修掉一个现存 bug**：这两处都写 `basic_info = char.basic_info if isinstance(char.basic_info, dict) else {}`
+> （`step7:128`、`step8:592`），但 `Character.basic_info` 是 `String(500)`，**永远不是 dict** →
+> `age_group` 恒为 `'未知'` → 现在喂给视频模型的角色标识实际是 `周宇-未知`。
+> 改用真字段后这个 bug 自然消失，但值得单独在 PR 描述里点出来——它现在正在影响线上生成质量。
+
+### 3.5.6 声音角色判定收口
+
+`basic_info == "声音角色"` 这个字符串哨兵三处写读，全部换成 `character_type`：
+
+| 位置 | 现状 | 改为 |
+|---|---|---|
+| `creation_task.py:253` | 写 `basic_info="声音角色"` | 写 `character_type="voice"` |
+| `creation_task.py:881` | 读 `if char.basic_info == "声音角色"` | `if char.character_type == "voice"` |
+| `shot_task.py:114` | 同上（跳过声音角色不生图） | 同上 |
+| FE `character-setting.tsx:526-527` | `c.body !== null` / `c.body === null` | `c.character_type === 'on_screen'` / `=== 'voice'` |
+
+注意前后端今天判定口径就**不一致**（后端看 `basic_info`，前端看 `body`），本节一并统一。
+
+### 3.5.7 narration 契约（与 Phase 4 合并发版）
+
+最终形态——在 Phase 4.1 的键名英文化基础上再加 `character_id`：
+
+```json
+[{"character_id": 42, "role": "Zhou Yu", "content": "..."}]
+```
+
+- `role` 是**反规范化的展示名**，FE 直接渲染，不用回查角色表
+- 音色映射以 `character_id` 为准；`character_id` 为 `null` 时按 `role` 兜底
+- 旁白：`{"character_id": null, "role": "Narrator", "content": "..."}`
+
+### 3.5.8 前端联动
+
+- `src/types/character.ts` 的 `ICharacter` 加 `age_group` / `state` / `character_type` / `voice_channel`
+- `character-setting.tsx:526-527` 分组改按 `character_type`（见 3.5.6）
+- `character-setting.tsx:731` 硬编码的 `声音角色` → `t('voiceCharacters')`（key 已存在，`zh.json:1110`）
+- 角色卡片渲染：`name` 为主标题，`age_group` 渲染成 badge（走 i18n，新增 5 个 key：
+  `characterAgeGroup.child|teen|youth|middleAged|elder`），`state` 是 LLM 产出的英文自由文本，**原样渲染不走 i18n**
+- 老 creation 的中文角色名（决策 6：不迁移）此时 `age_group`/`state` 均为 `null`，
+  卡片只显示 `name` 即原来的 `周宇-少年-校服`——**这是可接受的降级，但要确认 UI 不会因缺 badge 而错位**
+
+---
+
+## Phase 3.6 — 中文关键词表与硬编码标签
+
+这些不是 prompt，也不是报错，但同样直接影响英文产出质量。散落在 Phase 2/3 之间容易漏，单列一节。
+
+| 位置 | 问题 | 处理 |
+|---|---|---|
+| `audio_tools.py:150-170` `_analyze_emotion` | 情感关键词表纯中文（开心/难过/生气…）→ **英文台词下所有对话恒判 `neutral`**，情感标签与语速全丢 | 换英文关键词表，或改由 LLM 打标 |
+| `narration_audio_tagger.py:156` | `[..., " narrator"]` 前导空格 typo，这个分支永远匹配不上 | 修掉，并统一加入 `"Narrator"` |
+| 默认说话人 `旁白` → `Narrator`（12 处） | `creation_task.py:959`、`step7:100/104/108/112`、`step8:564/568/572/576`、`audio_tools.py:150/302`、`narration_audio_tagger.py:85/156`、`db_tools.py:1547/1601`、`audio_engineer.py:86`、`storyboard_director.py:86/147` | 统一常量，别再各处写字面量 |
+| `STYLE_MAPPING`（`character_task.py:28`、`step4_scene_image_gen_task.py:29`） | 5 种风格描述全中文，直接拼进生图提示词 | 翻英文；两份内容近乎重复，建议提取到公共模块 |
+| `CHARACTER_NORM_PROMPT`（`character_task.py:37-42`） | 中英混写，首句中文与后面的英文语义重复 | 删中文半句 |
+| `character_task.py:113-121` | `character_features` 的字段标签硬编码中文（"角色姓名："/"容貌特征："…），直接进 LLM 输入 | 翻英文 |
+| `shot_task.py:120-131` | `character_profiles` 同上（"姓名: "/"外貌: "…） | 翻英文 |
+| `db_tools.py:1094`、`resource_resolver.py:179/181` | 默认名 `"未命名"` | → `"Unnamed"` |
+| `resource_resolver.py:140-142, 276-286` | agent 资源匹配的 system prompt 示例名全中文（"幽影-青年"），后缀剥离写死 `"的图片"/"的提示词"` | 翻英文；示例名同步换成 3.5.2 的命名规范 |
+
+---
+
 ## Phase 4 — 数据契约英文化（破坏性变更）
 
 已确认本轮做，带数据迁移。**必须与前端同步发版。**
@@ -226,9 +469,12 @@ app/prompt/
 
 | 现状 | 改为 |
 |---|---|
-| `{"角色": "...", "内容": "..."}` | `{"role": "...", "content": "..."}` |
-| `"出镜角色"` / `"声音角色"` | `"on_screen_characters"` / `"voice_characters"` |
-| 默认值 `"旁白"` | `"Narrator"` |
+| `{"角色": "...", "内容": "..."}` | `{"character_id": 42, "role": "...", "content": "..."}` |
+| `"出镜角色"` / `"声音角色"` | `"on_screen_character_ids"` / `"voice_character_ids"`（值从名字数组变成 ID 数组） |
+| 默认值 `"旁白"` | `{"character_id": null, "role": "Narrator"}` |
+
+> 与原计划的差异：因为决策 5，`出镜角色`/`声音角色` 不只是**改键名**，**值的类型也变了**（名字 → ID）。
+> 具体见 Phase 3.5.4 和 3.5.7，这两个 Phase 必须同一批发版。
 
 涉及 15 个文件、103 处引用。代表位置：`app/tasks/creation_task.py:863,864,959,986,1007`、`app/agent/tools/db_tools.py:1547,1601,1602`、`app/agent/tools/narration_audio_tagger.py:85,137,149`、`app/tasks/shot_task.py:114,167`、`app/tasks/step7_video_prompt_gen_task.py:102`、`app/tasks/step8_video_gen_task.py:566`。
 
@@ -242,22 +488,35 @@ app/prompt/
 - **必须实现 `downgrade()`**（反向映射），且迁移前备份
 - 分批 commit，避免大表长事务
 
+**`character_id` 不回填**（决策 6）：老 narration 的 `role` 值是中文角色名（如 `陶未-青年`），
+迁移只把键名改成 `role`/`content`，`character_id` 留空。
+音色映射的 `role` 字符串兜底分支（Phase 3.5.4）正是为这批数据留的，**不能删**。
+
 ### 4.3 过渡期读兼容
 
 即便做了迁移，**代码里的读取处仍保留一轮兼容**：
 
 ```python
 role = item.get("role") or item.get("角色") or "Narrator"
+character_id = item.get("character_id")          # 老数据为 None，走 role 兜底
 ```
 
-理由：Celery 队列里可能有迁移前入队的任务，携带旧格式 payload。兼容代码在下个版本移除。
+理由：Celery 队列里可能有迁移前入队的任务，携带旧格式 payload。**键名兼容**在下个版本移除。
+
+⚠️ 但 `character_id is None` 时按 `role` 查音色的**值兜底**不能一起移除——
+决策 6 下老 creation 永远没有 `character_id`（见 4.2 与「已知边界」）。
+这两种兼容代码务必分开注释清楚，否则下轮清理会误删。
 
 ### 4.4 前端联动
 
 `mira-fe` 有 **14 个文件**打了 `i18n-ignore-file` 标记专门等这个契约。本 Phase 完成后：
 - 摘掉这些标记，把 `item.内容` 改成 `item.content`
-- 涉及 `shot-edit-modal.tsx`、`storyboard-edit-modal.tsx`、`narration-edit-bottom-sheet.tsx`、`types/index.ts`、`types/scene.ts` 等
+- 涉及 `types/index.ts`、`types/scene.ts`、`shot-item.tsx`、`timeline.tsx`、`shot-edit-modal.tsx`、
+  `storyboard-edit-modal.tsx`、`narration-edit-bottom-sheet.tsx`、`video-generator.tsx`、
+  `storyboard-images.tsx`、`canvas-storyboard-view.tsx`、`canvas-character-view.tsx`、`shot-detail-dialog.tsx`
+  （`mock-video-data.ts` 与 `flow-manager.ts` 两处标记与本契约无关，保留）
 - **前后端必须同批发版**，否则新前端读旧后端（或反之）会拿不到 narration
+- 渲染 narration 时优先用 `item.role`；老数据 `character_id` 为 `null` 是正常的，不要据此判空
 
 ---
 
@@ -275,6 +534,11 @@ role = item.get("role") or item.get("角色") or "Narrator"
 python scripts/check_zh.py          # Phase 0 的闸门，残留应为 0（白名单外）
 pytest tests/ -v                    # 现有测试
 alembic upgrade head && alembic downgrade -1 && alembic upgrade head   # 迁移可逆性
+
+# Phase 3.5 完成后应全部无输出（除注释/文档）
+grep -rn "in db_char_name" app/                        # 子串模糊匹配已删除
+grep -rn "character_state_identifier" app/             # 模块已删除
+grep -rn '"声音角色"' app/ --include=*.py               # 哨兵已换成 character_type
 ```
 
 **端到端人工验收**（对着 3 篇基线小说）：
@@ -285,6 +549,18 @@ alembic upgrade head && alembic downgrade -1 && alembic upgrade head   # 迁移�
 4. 制造各类错误（404 / 权限 / 积分不足 / 文件过大），确认响应含 `code` 字段且 `message` 为英文
 5. 前端 `shot-detail-dialog` 里 narration 正常显示与编辑（验证契约变更 + 前端联动）
 6. 老数据（迁移前创建的 creation）打开后 narration 正常——验证迁移与读兼容
+
+**角色标识体系专项验收**（Phase 3.5）：
+
+7. 角色名全英文、**不含 `-年龄段-状态` 后缀**；`班主任` 这类身份称呼已意译为 `Homeroom Teacher`
+8. 同一人物的多个外观状态 → 多行角色，`name` 相同、`state` 不同（如 `Zhou Yu` × `school uniform` / `drenched`）
+9. **分镜关联角色 100% 命中**：全流程日志中 `未找到角色` / `引用了不存在的 character_id` 应为 0 条
+10. **音色不静默降级**：每条 narration（除 Narrator）都解析到 `character_id` 并用上该角色的 `voice_id`，
+    回落默认音色的 warning 应为 0 条
+11. **跨章节复用**：同一部小说跑第二章，同名同状态角色应复用而非重复建档
+    （英文名不一致会导致重复，这是音译规范最容易翻车的地方）
+12. **视频提示词里的角色标识不再出现 `未知`**（验证 3.5.5 修掉的 bug）
+13. 老 creation（中文角色名、`age_group`/`state` 为 `null`）打开后角色卡片不错位
 
 ---
 
@@ -299,17 +575,36 @@ Phase 2 (报错/状态值)                 ←── 独立，可与 Phase 3 并
    ↓
 Phase 3 (Prompt 英文化)               ←── 主体工作量，B 类需质量回归
    ↓
-Phase 4 (数据契约 + 迁移)             ←── 破坏性，需与前端同批发版
+Phase 3.5 (角色标识体系)  ┐
+Phase 3.6 (关键词表/标签)  │           ←── 3.6 独立，可与 3.5 并行
+   ↓                      │
+Phase 4 (数据契约 + 迁移) ┘           ←── 3.5 与 4 必须同一批发版
    ↓
 Phase 5 (voices / Swagger)
 ```
 
-**Phase 3 的 B 类和 Phase 4 建议各自独立 PR**：前者要挂生成质量对比结果，后者要挂迁移验证结果，混在一起没法 review。
+**Phase 3 的 B 类、Phase 3.5 + 4 建议各自独立 PR**：
+- Phase 3 B 类 → 挂生成质量对比结果
+- Phase 3.5 + Phase 4 → 合成一个 PR（契约变更 + 模型变更 + 前端联动同批），挂迁移验证与专项验收 7-13 的结果
+
+混在一起没法 review。
+
+### Phase 3.5 内部顺序
+
+3.5.1（模型 + 迁移）必须最先——后面所有步骤都依赖新字段存在。
+之后 3.5.2（prompt）与 3.5.3（落库）绑定改，3.5.4（ID 引用）依赖 3.5.3 已经能正确落库。
+3.5.5 / 3.5.6 是清理，随时可做。3.5.7 / 3.5.8 与 Phase 4 一起收尾。
 
 ---
 
 ## 已知边界（本计划不覆盖）
 
+- **存量角色名不翻译**（决策 6）：迁移前创建的 creation，角色名保持 `周宇-少年-校服` 形态，
+  `age_group`/`state` 为 `null`。这些老 creation 继续走 `role` 字符串兜底路径，音色映射可能不准。
+  如果后续要处理，是独立一轮工作（人名翻译无法机械映射，只能靠 LLM 重跑角色分析）
+- **音译一致性无自动校验**：同一汉字串在不同章节被 LLM 译成不同英文名（`Zhou Yu` vs `Zhouyu`）
+  会导致重复建档。本轮只靠 prompt 里「优先复用历史角色库」约束 + 验收项 11 人工检查，
+  没有做 romanization 归一化校验
 - **前端遗留**：27 处缺失 key 仍渲染 key 路径（标签/占位，已决定保留）；e2e 测试未适配英文化（前端 Phase 5 已跳过）
 - **法务**：`terms`/`privacy` 缺 GDPR/CCPA、无 cookie 同意、年龄门槛 13 岁
 - **Supabase 邮件模板**：在控制台配置，不在任何仓库里，需人工去 Dashboard 改英文
