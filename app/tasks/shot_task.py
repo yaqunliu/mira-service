@@ -242,10 +242,12 @@ def _generate_single_shot_image(shot_id: int, creation_id: int, freeze_record_id
             # 构建环境设定描述
             environment_desc = "无"
             if shot.scene:
+                # space_type 现在是 indoor/outdoor 枚举，布局细节在 extra_data.space_description
+                scene_extra = shot.scene.extra_data or {}
                 env_config = {
                     "时间": shot.scene.time_setting or "未知",
                     "地点": shot.scene.location or "未知",
-                    "空间": shot.scene.space_type or "未知",
+                    "空间": scene_extra.get("space_description") or shot.scene.space_type or "未知",
                     "氛围": shot.scene.atmosphere or "未知"
                 }
                 environment_desc = json.dumps(env_config, ensure_ascii=False, indent=2)

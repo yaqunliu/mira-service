@@ -15,7 +15,10 @@
 </character_list>
 
 ### 场景信息
-以下是场景的环境设定（场景是空舞台，只包含环境信息）：
+以下是场景的环境设定（场景是空舞台，只包含环境信息）。
+每个场景的字段为 `scene_number`（编号）、`title`（场景标题）、`environment`（环境设定，含
+`time_setting` / `location` / `space_type` / `space_description` / `atmosphere` / `environment_description`），
+**取值均为英文**：
 <scenes>
 {{SCENES}}
 </scenes>
@@ -33,9 +36,9 @@
 
 ### 分镜拆解规则
 
-1. **分镜编号**：使用"场景编号-分镜序号"格式（如："1-1", "1-2", "2-1"）
+1. **分镜编号**：使用"场景编号-分镜序号"格式（如："1-1", "1-2", "2-1"），场景编号取自场景表的 `scene_number`
 
-2. **关联场景**：每个分镜必须关联到对应的场景编号和场景标题
+2. **关联场景**：每个分镜必须输出 `scene_number`（整数，与场景表的 `scene_number` 一致）和 `scene_title`（原样复制场景表的 `title`，不要改写或翻译）
 
 3. **构图要求**：
    - **每个分镜的开始必须以近景（Medium Close-up）且人物居中的构图开始。**
@@ -108,8 +111,8 @@
   "分镜列表": [
     {
       "分镜编号": "1-1",
-      "场景编号": "1",
-      "场景标题": "古籍图书馆",
+      "scene_number": 1,
+      "scene_title": "Rare Books Library",
       "on_screen_character_ids": [42],
       "出镜元素": ["泛黄的羊皮地图", "古籍典籍"],
       "voice_character_ids": [],
@@ -119,8 +122,8 @@
     },
     {
       "分镜编号": "1-2",
-      "场景编号": "1",
-      "场景标题": "古籍图书馆",
+      "scene_number": 1,
+      "scene_title": "Rare Books Library",
       "on_screen_character_ids": [42],
       "出镜元素": ["泛黄的羊皮地图", "古籍典籍"],
       "voice_character_ids": [43],

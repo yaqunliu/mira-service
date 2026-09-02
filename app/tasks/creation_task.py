@@ -503,7 +503,7 @@ def scene_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, 
                 db.delete(s)
             db.flush()
 
-        scenes_data = scene_result.get("场景列表", [])
+        scenes_data = scene_result.get("scenes", [])
         created_scenes = []
         created_count = 0
         reused_count = 0
@@ -524,15 +524,17 @@ def scene_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, 
             logger.info(f"获取到 {len(historical_scenes)} 个历史场景")
 
         for scene_data in scenes_data:
-            env = scene_data.get("环境设定", {})
+            env = scene_data.get("environment", {})
 
-            # 提取字段
-            title = scene_data.get("场景标题", "") or f"场景 {scene_data.get('场景编号')}"
-            time_setting = env.get("时间", "")
-            location = env.get("地点", "")
-            space_desc = env.get("空间描述") or env.get("空间", "")
-            bg_elements = env.get("背景元素", "")
-            atmosphere = env.get("氛围", "")
+            # 提取字段（LLM 可能输出 null，统一兜成空串再截断）
+            title = scene_data.get("title") or f"Scene {scene_data.get('scene_number')}"
+            time_setting = env.get("time_setting") or ""
+            location = env.get("location") or ""
+            # space_type 是枚举（indoor/outdoor），space_description 是布局描述，两者不再混用
+            space_type = env.get("space_type") or ""
+            space_desc = env.get("space_description") or ""
+            bg_elements = env.get("background_elements") or ""
+            atmosphere = env.get("atmosphere") or ""
 
             # 检查是否可以复用历史场景
             scene_key = f"{title}|{location}|{time_setting}"
@@ -549,18 +551,17 @@ def scene_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, 
                 scene_extra = {
                     "space_description": space_desc,
                     "background_elements": bg_elements,
-                    "environment_description": f"{space_desc}。{bg_elements}" # 组合成环境描述
+                    "environment_description": ". ".join(
+                        p for p in (space_desc, bg_elements) if p
+                    )  # 组合成环境描述
                 }
 
-                # 截断 space_type 以适应 String(50)
-                space_type_short = space_desc[:50] if space_desc else ""
-
                 scene = Scene(
-                    title=title,
-                    time_setting=time_setting,
-                    location=location,
-                    space_type=space_type_short,
-                    atmosphere=atmosphere,
+                    title=title[:200],
+                    time_setting=time_setting[:50],
+                    location=location[:200],
+                    space_type=space_type[:50],
+                    atmosphere=atmosphere[:100],
                     extra_data=scene_extra,
                     creation_id=creation_id,
                     novel_id=novel_id if novel_id > 0 else None,  # 设置novel_id用于场景复用
@@ -798,15 +799,17 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
         scene_id_map = {} # scene_index (1-based) -> scene
         
         for idx, scene in enumerate(scenes, 1):
+            scene_extra = scene.extra_data or {}
             scene_dict = {
-                "场景编号": idx, # 临时编号
-                "场景标题": scene.title,
-                "环境设定": {
-                    "时间": scene.time_setting,
-                    "地点": scene.location,
-                    "空间": scene.space_type,
-                    "氛围": scene.atmosphere,
-                    "环境描述": scene.extra_data.get("environment_description", "") if scene.extra_data else ""
+                "scene_number": idx, # 临时编号
+                "title": scene.title,
+                "environment": {
+                    "time_setting": scene.time_setting,
+                    "location": scene.location,
+                    "space_type": scene.space_type,
+                    "space_description": scene_extra.get("space_description", ""),
+                    "atmosphere": scene.atmosphere,
+                    "environment_description": scene_extra.get("environment_description", "")
                 }
             }
             scenes_data.append(scene_dict)
@@ -873,11 +876,17 @@ def shot_analysis_task(self, novel_id: int, chapter_id: int, creation_id: int, c
             shot_number = total_shots
             
             # 关联场景
-            scene_idx = shot_data.get("场景编号")
-            scene_title = shot_data.get("场景标题")
-            
+            scene_idx = shot_data.get("scene_number")
+            scene_title = shot_data.get("scene_title")
+
+            # LLM 可能把编号输出成字符串 "1"，统一转成 int 再查表
+            try:
+                scene_idx = int(scene_idx) if scene_idx is not None else None
+            except (TypeError, ValueError):
+                scene_idx = None
+
             target_scene = None
-            if scene_idx and isinstance(scene_idx, int) and scene_idx in scene_id_map:
+            if scene_idx is not None and scene_idx in scene_id_map:
                 target_scene = scene_id_map[scene_idx]
             elif scene_title and scene_title in scene_map:
                 target_scene = scene_map[scene_title]

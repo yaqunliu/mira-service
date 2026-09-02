@@ -248,10 +248,12 @@ def generate_single_scene_image_task(self, scene_id: int, creation_id: int, mode
             prompt_template = read_prompt_file("scene_image.md")
             
             # 构建环境设定描述
+            # space_type 现在是 indoor/outdoor 枚举，布局细节在 extra_data.space_description
+            scene_extra = scene.extra_data or {}
             env_config = {
                 "时间": scene.time_setting,
                 "地点": scene.location,
-                "空间": scene.space_type,
+                "空间": scene_extra.get("space_description") or scene.space_type,
                 "氛围": scene.atmosphere
             }
             environment_desc = json.dumps(env_config, ensure_ascii=False, indent=2)

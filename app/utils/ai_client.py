@@ -687,7 +687,7 @@ class AIClient:
                 }
             )
 
-            logger.info(f"场景拆解完成，解析到 {len(parsed_data.get('场景列表', []))} 个场景")
+            logger.info(f"场景拆解完成，解析到 {len(parsed_data.get('scenes', []))} 个场景")
             return parsed_data
 
         except Exception as e:
@@ -849,8 +849,7 @@ class AIClient:
         for scene in scenes_data:
             scene_copy = scene.copy()
             # 移除场景内容字段，只保留环境设定
-            if "场景内容" in scene_copy:
-                del scene_copy["场景内容"]
+            scene_copy.pop("scene_content", None)
             scenes_for_prompt.append(scene_copy)
 
         scenes_json = json.dumps(scenes_for_prompt, ensure_ascii=False, indent=2)

@@ -38,47 +38,57 @@ class ScriptAnalystNode(ReActWorkerNode):
     # 启用 ReAct 模式
     USE_REACT = True
     
-    SYSTEM_PROMPT = """你是一名专业的编剧和导演，负责分析剧本内容，提取角色和场景信息。
+    SYSTEM_PROMPT = """You are a professional screenwriter and director. Your job is to analyse a
+script and extract its characters and scenes.
 
-请按以下 JSON 格式输出：
+## All output must be in English
+
+The script may be in Chinese, English, or any other language. **Every field you output must be in
+English.** Translate Chinese names into English: romanise personal names (`周宇` → `Zhou Yu`), and
+translate forms of address (`班主任` → `Homeroom Teacher`). Translate place names naturally
+(`公交车站` → `Bus Stop`). Never emit a field in the source language.
+
+Output exactly this JSON format:
 {
     "characters": [
         {
-            "name": "角色名称",
-            "basic_info": "角色基本描述（性格、身份等）",
-            "appearance": "外貌特征详细描述（脸型、发型、体型等）"
+            "name": "Character name, in English",
+            "basic_info": "Basic description — personality, role, status",
+            "appearance": "Detailed physical description — face, hair, build"
         }
     ],
     "scenes": [
         {
-            "title": "场景标题（地点名称，如：公交车站、会议室、客厅等）",
-            "location": "具体地点名称（如：城市街道旁的公交车站、公司会议室等）",
-            "space_type": "空间类型（只填：室内 或 室外）",
-            "space_description": "空间描述（空间大小和布局，如：家庭客厅，中央有沙发和茶几，电视墙一面，空间较大以容纳多人）",
-            "atmosphere": "氛围（简短，如：暖间拥挤 或 繁忙安静）",
-            "time_setting": "时间（只填：日间 或 夜间 或 黄昏）",
-            "env_description": "背景元素（固定的环境元素：建筑、家具、装饰等）"
+            "title": "Scene title — the place name, e.g. Bus Stop, Meeting Room, Living Room",
+            "location": "The specific place, e.g. A bus stop beside a city street, A company meeting room",
+            "space_type": "Exactly one of: indoor | outdoor",
+            "space_description": "Size and layout, e.g. A family living room with a sofa and coffee table at its centre, a TV wall on one side, large enough to hold several people",
+            "atmosphere": "Mood, brief — e.g. Warm and crowded, or Busy and quiet",
+            "time_setting": "Exactly one of: day | night | dusk",
+            "env_description": "Background elements — fixed environmental features: architecture, furniture, decoration"
         }
     ],
-    "summary": "剧本简要总结"
+    "summary": "A brief summary of the script"
 }
 
-## 场景划分标准
+## How to Split Scenes
 
-**场景 = 地点**：场景应该按照**地点**来划分，每个不同的地点都是独立的场景。
+**A scene IS a location.** Split by place — every distinct place is its own scene.
 
-注意：
-1. 只输出 JSON，不要其他内容
-2. 确保所有在剧本中出现的主要角色都被提取
-3. **【重要】每个不同的地点必须作为独立的场景！** 例如：
-   - "高铁站出站口" 是一个场景
-   - "出租车内" 是另一个场景  
-   - "客厅" 是另一个场景
-4. **同一地点只有一个场景**：同一地点的不同时间、不同剧情都合并为一个场景
-5. **空舞台原则**：场景是空舞台，env_description 只描述固定设施，不包含剧情道具（手机、文件、食物等）
-6. **字段长度限制**：space_type 只填"室内"或"室外"，atmosphere 控制在20字以内，time_setting 只填"日间"或"夜间"或"黄昏"
-7. 角色 basic_info 应包含性格和身份描述
-8. 角色 appearance 应尽量详细，便于后续生成形象图片"""
+Rules:
+1. Output JSON only, nothing else
+2. Make sure every major character appearing in the script is extracted
+3. **[Important] Every distinct location must be a separate scene.** For example:
+   - "High-speed rail station exit" is one scene
+   - "Inside a taxi" is another scene
+   - "Living room" is another scene
+4. **One location, one scene**: the same place at different times or in different plot beats merges into a single scene
+5. **Empty-stage principle**: a scene is an empty stage. `env_description` describes fixed fixtures
+   only — no plot props (phones, documents, food)
+6. **Field constraints**: `space_type` is exactly `indoor` or `outdoor`; `atmosphere` stays under
+   100 characters; `time_setting` is exactly `day`, `night` or `dusk`
+7. `basic_info` should cover personality and role
+8. `appearance` should be as detailed as possible, so it can drive image generation later"""
     
     def __init__(self):
         """初始化"""
@@ -95,7 +105,7 @@ class ScriptAnalystNode(ReActWorkerNode):
     def get_user_message(self, state: ComicDramaState) -> str:
         """获取用户消息（剧本内容）"""
         script_text = state.get("script_text", "")
-        return f"请分析以下剧本内容：\n\n{script_text}"
+        return f"Analyse the following script:\n\n{script_text}"
     
     async def run(self, state: ComicDramaState) -> Dict[str, Any]:
         """
